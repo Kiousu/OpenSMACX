@@ -510,3 +510,6 @@
 0x0015B820	?agenda_off@@YAXHHI@Z
 0x0015B870	?treaty_on@@YAXHHI@Z
 0x0015BA80	?agenda_on@@YAXHHI@Z
+# --- FACTION: map trade / withdrawal ---
+0x00143A20	?trade_maps@@YAXHH@Z
+0x00148F80	?do_withdrawal@@YAHHH@Z

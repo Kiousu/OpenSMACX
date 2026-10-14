@@ -382,6 +382,126 @@ uint32_t __cdecl energy_value(uint32_t loan_principal) {
 }
 
 /*
+Purpose: Exchange world maps between two factions. Each faction gains visibility of every tile
+         the other can see, including what the other faction knows about the tile. Bases become
+         known to the other side, and the map is redrawn if the player is involved.
+Original Offset: 00543A20
+Return Value: n/a
+Status: Complete
+*/
+void __cdecl trade_maps(int faction_id, int faction_id_with) {
+    *TradeMapsRevealedNew = false;
+    uint32_t traded = PlayersData[faction_id].traded_maps | (1 << faction_id_with)
+        | PlayersData[faction_id_with].traded_maps;
+    PlayersData[faction_id].traded_maps = traded;
+    PlayersData[faction_id_with].traded_maps |= (1 << faction_id) | traded;
+    uint8_t vis_bit = 1 << faction_id;
+    uint8_t vis_bit_with = 1 << faction_id_with;
+    for (uint32_t i = 0; i < *MapArea; i++) {
+        Map *tile = &(*MapTiles)[i];
+        if (tile->visibility & vis_bit) {
+            tile->visibility |= vis_bit_with;
+            if (faction_id && faction_id_with) {
+                tile->bit_visible[faction_id_with - 1] |= tile->bit_visible[faction_id - 1]
+                    & tile->bit;
+            }
+        } else if (tile->visibility & vis_bit_with) {
+            *TradeMapsRevealedNew = true;
+            tile->visibility |= vis_bit;
+            if (faction_id && faction_id_with) {
+                tile->bit_visible[faction_id - 1] |= tile->bit_visible[faction_id_with - 1]
+                    & tile->bit;
+            }
+        }
+    }
+    for (int base_id = 0; base_id < *BaseCurrentCount; base_id++) {
+        if ((Bases[base_id].visibility & vis_bit) || Bases[base_id].faction_id_current == faction_id) {
+            spot_base(base_id, faction_id_with);
+        } else if ((Bases[base_id].visibility & vis_bit_with)
+            || Bases[base_id].faction_id_current == faction_id_with) {
+            spot_base(base_id, faction_id);
+        }
+    }
+    if (faction_id == *FactionIDCurrent || faction_id_with == *FactionIDCurrent) {
+        *UnkBitfield1 |= 4;
+        GraphicWin_redraw(WorldWinVar, NULL);
+        draw_map(1);
+    }
+}
+
+/*
+Purpose: Withdraw a faction's land units from another faction's territory. Each unit standing
+         on the owner's land is moved to an adjacent tile the withdrawing faction may use (own
+         territory, or ocean holding one of its own transports) if it carries cargo capacity,
+         and otherwise to the faction's nearest base. The original code checks every adjacent
+         offset even after a move, so a unit can be moved more than once.
+Original Offset: 00548F80
+Return Value: Number of unit moves carried out
+Status: Complete
+*/
+int __cdecl do_withdrawal(int faction_id_owner, int faction_id) {
+    const uint32_t state_clear = VSTATE_UNK_200 | VSTATE_EXPLORE | VSTATE_UNK_1000000
+        | VSTATE_UNK_2000000;
+    int moved = 0;
+    for (int veh_id = 0; veh_id < *VehCurrentCount; veh_id++) {
+        Veh *veh = &Vehs[veh_id];
+        int proto_id = veh->proto_id;
+        if (veh->faction_id != faction_id || VehPrototypes[proto_id].plan == PLAN_INFO_WARFARE) {
+            continue;
+        }
+        int x = veh->x;
+        int y = veh->y;
+        if (is_ocean(x, y) || map_loc(x, y)->territory != faction_id_owner) {
+            continue;
+        }
+        if (Chassis[VehPrototypes[proto_id].chassis_id].triad == TRIAD_LAND && veh_cargo(veh_id)) {
+            for (int i = 1; i <= 8; i++) {
+                int x_adj = xrange(x + RadiusOffsetX[i]);
+                int y_adj = y + RadiusOffsetY[i];
+                if (!on_map(x_adj, y_adj)) {
+                    continue;
+                }
+                Map *tile = map_loc(x_adj, y_adj);
+                BOOL can_move;
+                if (is_ocean(x_adj, y_adj)) {
+                    can_move = stack_check(stack_fix(veh_at(x_adj, y_adj)), 8, faction_id, -1, -1)
+                        > 0;
+                } else {
+                    can_move = tile->territory == faction_id;
+                }
+                if (!can_move) {
+                    continue;
+                }
+                uint32_t owner = tile->val2 & 0xF;
+                if (!(tile->bit & (BIT_BASE_IN_TILE | BIT_VEH_IN_TILE)) || owner > 7
+                    || owner == (uint32_t)faction_id) {
+                    veh_drop(veh_lift(veh_id), x_adj, y_adj);
+                    veh->visibility = 0;
+                    veh->order = ORDER_NONE;
+                    veh->state &= ~state_clear;
+                    draw_tiles(x, y, 2);
+                    moved++;
+                }
+            }
+        }
+        int base_id = base_find(x, y, (uint32_t)faction_id);
+        if (base_id >= 0) {
+            veh_drop(veh_lift(veh_id), Bases[base_id].x, Bases[base_id].y);
+            veh->visibility = 0;
+            veh->order = ORDER_NONE;
+            veh->state &= ~state_clear;
+            draw_tile_fixup(x, y, has_abil(proto_id, ABL_DEEP_RADAR), 2);
+            moved++;
+        }
+    }
+    if (moved) {
+        set_agenda(faction_id, faction_id_owner, DAGENDA_UNK_2, true);
+        set_treaty(faction_id, faction_id_owner, DTREATY_UNK_100000, true);
+    }
+    return moved;
+}
+
+/*
 Purpose: Clear the specified treaty flags between two factions (both directions). Dropping a
          pact, treaty or truce also records the break; dropping a vendetta also clears the
          related ceasefire flags; dropping a revenge wish clears the matching agenda bits.

@@ -354,19 +354,19 @@ void __cdecl net_pact_ends(int faction_id, int faction_id_with, BOOL await) {
 }
 
 /*
-Purpose: Withdraw one faction's units from another's territory, relayed over the network in a
+Purpose: Withdraw faction_id's units from faction_id_owner's territory, relayed over the network in a
          multiplayer game.
 Original Offset: 005396D0
 Return Value: Whether the withdrawal was carried out (always true for a network game)
 Status: Complete
 */
-BOOL __cdecl net_withdrawal(int faction_id, int faction_id_from, BOOL await) {
+BOOL __cdecl net_withdrawal(int faction_id_owner, int faction_id, BOOL await) {
     if (*IsMultiplayerNet) {
-        net_diplo_send(NET_MSG_WITHDRAWAL, "Sending WITHDRAWAL", faction_id, faction_id_from, 0,
-            faction_id, faction_id_from, 0, 0, await);
+        net_diplo_send(NET_MSG_WITHDRAWAL, "Sending WITHDRAWAL", faction_id_owner, faction_id, 0,
+            faction_id_owner, faction_id, 0, 0, await);
         return true;
     }
-    return do_withdrawal(faction_id, faction_id_from);
+    return do_withdrawal(faction_id_owner, faction_id);
 }
 
 /*

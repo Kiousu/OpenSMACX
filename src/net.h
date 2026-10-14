@@ -142,7 +142,7 @@ DLLEXPORT void __cdecl net_loan(int faction_id, int faction_id_with, int balance
 DLLEXPORT void __cdecl net_maps(int faction_id, int faction_id_with, BOOL await);
 DLLEXPORT void __cdecl net_tech(int faction_id, int tech_id, int faction_id_other, BOOL await);
 DLLEXPORT void __cdecl net_pact_ends(int faction_id, int faction_id_with, BOOL await);
-DLLEXPORT BOOL __cdecl net_withdrawal(int faction_id, int faction_id_from, BOOL await);
+DLLEXPORT BOOL __cdecl net_withdrawal(int faction_id_owner, int faction_id, BOOL await);
 DLLEXPORT void __cdecl net_cede_base(int base_id, int faction_id_to, BOOL await);
 DLLEXPORT void __cdecl net_double_cross(int faction_id_atk, int faction_id_def, int faction_id_other,
                                         BOOL await);

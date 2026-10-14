@@ -157,11 +157,15 @@ extern void *MultiWinVar; // global MultiWin instance (diplomacy/commlink window
 extern int *MultiWinFlag; // non-zero while MultiWin needs redrawing on treaty changes
 extern uint32_t *AmbienceFlags; // bit 0: war ambience playing
 typedef void func_diplo2(int, int);
-extern func_diplo2 *trade_maps;
 extern func_diplo2 *pact_ends;
 extern func_diplo2 *give_a_base;
-typedef int func_diplo2r(int, int);
-extern func_diplo2r *do_withdrawal;
+extern func_diplo2 *spot_base; // spot_base(base_id, faction_id)
+typedef void func_draw3(int, int, int);
+extern func_draw3 *draw_tiles; // draw_tiles(x, y, mode)
+typedef void func_draw4(int, int, int, int);
+extern func_draw4 *draw_tile_fixup; // draw_tile_fixup(x, y, unk, mode)
+extern void *WorldWinVar; // global WorldWin instance (lower right world map view)
+extern BOOL *TradeMapsRevealedNew; // set by trade_maps() and friends when new tiles were revealed
 typedef void func_tech_ach(int, int, int, int);
 extern func_tech_ach *tech_achieved;
 extern func9 *wait_loop;
