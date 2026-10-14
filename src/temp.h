@@ -149,11 +149,13 @@ typedef void __fastcall func_console_update(void *This, void *edx_unused, int un
 extern func_console_update *Console_update_data; // Console::update_data()
 extern void *ConsoleVar; // global Console instance
 typedef void func_diplo3(int, int, int);
-extern func_diplo3 *treaty_on;
-extern func_diplo3 *treaty_off;
-extern func_diplo3 *agenda_on;
-extern func_diplo3 *agenda_off;
 extern func_diplo3 *double_cross;
+extern func5 *ambience; // ambience(sound_id)
+typedef void __fastcall func_win_redraw(void *This, void *edx_unused);
+extern func_win_redraw *GraphicWin_redraw; // GraphicWin::redraw()
+extern void *MultiWinVar; // global MultiWin instance (diplomacy/commlink window)
+extern int *MultiWinFlag; // non-zero while MultiWin needs redrawing on treaty changes
+extern uint32_t *AmbienceFlags; // bit 0: war ambience playing
 typedef void func_diplo2(int, int);
 extern func_diplo2 *trade_maps;
 extern func_diplo2 *pact_ends;

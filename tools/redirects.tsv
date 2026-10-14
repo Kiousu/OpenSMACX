@@ -505,3 +505,8 @@
 0x001398C0	?diplo_unlock@@YAXXZ
 0x001398E0	?pop_wait@@YAHXZ
 0x00139920	?pop_expire@@YAHXZ
+# --- FACTION: treaty/agenda flag helpers ---
+0x0015B760	?treaty_off@@YAXHHI@Z
+0x0015B820	?agenda_off@@YAXHHI@Z
+0x0015B870	?treaty_on@@YAXHHI@Z
+0x0015BA80	?agenda_on@@YAXHHI@Z

@@ -563,7 +563,11 @@ DLLEXPORT uint32_t __cdecl get_mood(int friction);
 DLLEXPORT uint32_t __cdecl reputation(uint32_t faction_id, uint32_t faction_id_with);
 DLLEXPORT int __cdecl get_patience(uint32_t faction_id_with, uint32_t faction_id);
 DLLEXPORT uint32_t __cdecl energy_value(uint32_t loan_principal);
-DLLEXPORT void __cdecl set_treaty(uint32_t faction_id, uint32_t faction_id_with, uint32_t treaty, 
+DLLEXPORT void __cdecl treaty_off(int faction_id, int faction_id_with, uint32_t treaty);
+DLLEXPORT void __cdecl agenda_off(int faction_id, int faction_id_with, uint32_t agenda);
+DLLEXPORT void __cdecl treaty_on(int faction_id, int faction_id_with, uint32_t treaty);
+DLLEXPORT void __cdecl agenda_on(int faction_id, int faction_id_with, uint32_t agenda);
+DLLEXPORT void __cdecl set_treaty(uint32_t faction_id, uint32_t faction_id_with, uint32_t treaty,
                                   BOOL set);
 DLLEXPORT void __cdecl set_agenda(uint32_t faction_id, uint32_t faction_id_with, uint32_t agenda, 
                                   BOOL set);

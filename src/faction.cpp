@@ -382,6 +382,108 @@ uint32_t __cdecl energy_value(uint32_t loan_principal) {
 }
 
 /*
+Purpose: Clear the specified treaty flags between two factions (both directions). Dropping a
+         pact, treaty or truce also records the break; dropping a vendetta also clears the
+         related ceasefire flags; dropping a revenge wish clears the matching agenda bits.
+Original Offset: 0055B760
+Return Value: n/a
+Status: Complete
+*/
+void __cdecl treaty_off(int faction_id, int faction_id_with, uint32_t treaty) {
+    if (treaty & (DTREATY_PACT | DTREATY_TREATY | DTREATY_TRUCE)) {
+        treaty |= (DTREATY_UNK_1000000 | DTREATY_UNK_100000);
+    }
+    if (treaty & DTREATY_VENDETTA) {
+        treaty |= (DTREATY_UNK_8000 | DTREATY_UNK_40);
+    }
+    if (treaty & DTREATY_WANT_REVENGE) {
+        PlayersData[faction_id].diplo_agenda[faction_id_with] &= ~(DAGENDA_UNK_800 | DAGENDA_UNK_400);
+        PlayersData[faction_id_with].diplo_agenda[faction_id] &= ~(DAGENDA_UNK_800 | DAGENDA_UNK_400);
+    }
+    PlayersData[faction_id].diplo_treaties[faction_id_with] &= ~treaty;
+    PlayersData[faction_id_with].diplo_treaties[faction_id] &= ~treaty;
+}
+
+/*
+Purpose: Clear the specified agenda flags between two factions (both directions).
+Original Offset: 0055B820
+Return Value: n/a
+Status: Complete
+*/
+void __cdecl agenda_off(int faction_id, int faction_id_with, uint32_t agenda) {
+    PlayersData[faction_id].diplo_agenda[faction_id_with] &= ~agenda;
+    PlayersData[faction_id_with].diplo_agenda[faction_id] &= ~agenda;
+}
+
+/*
+Purpose: Set the specified treaty flags between two factions (both directions). Making peace
+         (pact, treaty or truce) clears the war related flags; a pact implies a treaty; a
+         vendetta clears the peace related flags, resets the combat counters if the factions
+         were at peace, and plays the war ambience if the player is involved.
+Original Offset: 0055B870
+Return Value: n/a
+Status: Complete
+*/
+void __cdecl treaty_on(int faction_id, int faction_id_with, uint32_t treaty) {
+    BOOL is_player = (faction_id == *FactionIDCurrent || faction_id_with == *FactionIDCurrent);
+    if (treaty & (DTREATY_PACT | DTREATY_TREATY | DTREATY_TRUCE)) {
+        if (is_player && PlayersData[faction_id].diplo_treaties[faction_id_with] & DTREATY_VENDETTA) {
+            *AmbienceFlags &= ~1;
+        }
+        const uint32_t war_flags = DTREATY_VENDETTA | DTREATY_UNK_40 | DTREATY_UNK_8000
+            | DTREATY_UNK_10000 | DTREATY_UNK_100000;
+        PlayersData[faction_id].diplo_treaties[faction_id_with] &= ~war_flags;
+        PlayersData[faction_id_with].diplo_treaties[faction_id] &= ~war_flags;
+    }
+    if (treaty & DTREATY_PACT) {
+        treaty |= DTREATY_TREATY;
+    }
+    if (treaty & DTREATY_VENDETTA) {
+        if (PlayersData[faction_id].diplo_treaties[faction_id_with]
+            & (DTREATY_PACT | DTREATY_TREATY | DTREATY_TRUCE)) {
+            PlayersData[faction_id_with].diplo_unk4[faction_id] = 0;
+            PlayersData[faction_id].diplo_unk4[faction_id_with] = 0;
+        }
+        treaty |= (DTREATY_UNK_80000000 | DTREATY_UNK_100 | DTREATY_COMMLINK);
+        const uint32_t peace_flags = DTREATY_PACT | DTREATY_TREATY | DTREATY_TRUCE | DTREATY_UNK_80
+            | DTREATY_SHALL_BETRAY | DTREATY_UNK_800 | DTREATY_UNK_10000 | DTREATY_UNK_100000
+            | DTREATY_UNK_1000000 | DTREATY_UNK_4000000;
+        PlayersData[faction_id].diplo_treaties[faction_id_with] &= ~peace_flags;
+        PlayersData[faction_id_with].diplo_treaties[faction_id] &= ~peace_flags;
+        if (is_player) {
+            *AmbienceFlags |= 1;
+            ambience(204);
+        }
+    }
+    if (treaty & (DTREATY_PACT | DTREATY_TREATY | DTREATY_TRUCE | DTREATY_VENDETTA)) {
+        PlayersData[faction_id].diplo_treaties[faction_id_with] &= ~DTREATY_UNK_800000;
+        PlayersData[faction_id_with].diplo_treaties[faction_id] &= ~DTREATY_UNK_800000;
+    }
+    PlayersData[faction_id].diplo_treaties[faction_id_with] |= treaty;
+    PlayersData[faction_id_with].diplo_treaties[faction_id] |= treaty;
+    if (is_player && (treaty & (DTREATY_PACT | DTREATY_TREATY | DTREATY_TRUCE | DTREATY_COMMLINK
+        | DTREATY_VENDETTA)) && *MultiWinFlag) {
+        GraphicWin_redraw(MultiWinVar, NULL);
+    }
+}
+
+/*
+Purpose: Set the specified agenda flags between two factions (both directions). Setting flag
+         0x20 clears flag 0x40 first.
+Original Offset: 0055BA80
+Return Value: n/a
+Status: Complete
+*/
+void __cdecl agenda_on(int faction_id, int faction_id_with, uint32_t agenda) {
+    if (agenda & DAGENDA_UNK_20) {
+        PlayersData[faction_id].diplo_agenda[faction_id_with] &= ~DAGENDA_UNK_40;
+        PlayersData[faction_id_with].diplo_agenda[faction_id] &= ~DAGENDA_UNK_40;
+    }
+    PlayersData[faction_id].diplo_agenda[faction_id_with] |= agenda;
+    PlayersData[faction_id_with].diplo_agenda[faction_id] |= agenda;
+}
+
+/*
 Purpose: Set or unset the diplomatic treaty for the specified faction with another faction.
 Original Offset: 0055BB30
 Return Value: n/a
