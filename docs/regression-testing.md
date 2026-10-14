@@ -57,6 +57,27 @@ original does. Worth finding, since battle_compute is called from inside best_de
 intervening game activity, so it depends on something it (or a callee) mutates, or on
 uninitialized stack. Resolve that before reading anything into the 9 mismatches.
 
+## State-mutating functions (snapshot / restore)
+
+For functions that change game state the harness snapshots `PlayersData[8]`, `Bases[]`, `Vehs[]`,
+the whole `MapTiles` array and a few globals (AmbienceFlags, the draw-state bitfield,
+TradeMapsRevealedNew), then for each input: restore, run the original, snapshot; restore, run
+the decompiled version, snapshot; compare the two snapshots byte for byte and report the first
+differing structure, index and field offset. "changed state" counts the inputs where the
+original actually altered something, so a zero-mismatch result is known not to be vacuous.
+Sound cues and window redraws triggered by the player-involved cases are allowed to happen.
+
+Results on the same save (functions decompiled on this branch):
+
+| function | compared | changed state | mismatches |
+|---|---|---|---|
+| treaty_on | 1,680 (42 pairs x 40 flag sets) | 1,470 | 0 |
+| treaty_off | 1,680 | 448 | 0 |
+| agenda_on | 1,680 | 1,634 | 0 |
+| agenda_off | 1,680 | 122 | 0 |
+| trade_maps | 42 pairs | 42 | 0 |
+| do_withdrawal | 42 pairs | 14 pairs moved units, 36 moves | 0 |
+
 ## Not covered yet
 
 - base_mark, social_ai, enemy_capabilities, base_psych, Path::*: side effects on game state;

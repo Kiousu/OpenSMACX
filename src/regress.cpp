@@ -211,6 +211,235 @@ static int test_wants_to_attack() {
     return mismatches;
 }
 
+// ------------------------------------------------------------------------------------------
+// Snapshot / restore of the game state that the state-mutating functions touch.
+// ------------------------------------------------------------------------------------------
+
+static_assert(sizeof(PlayerData) == 0x20CC, "PlayerData size");
+static_assert(sizeof(Base) == 0x134, "Base size");
+static_assert(sizeof(Veh) == 0x34, "Veh size");
+static_assert(sizeof(Map) == 0x2C, "Map size");
+
+struct GameSnapshot {
+    PlayerData players[MaxPlayerNum];
+    Base *bases;
+    int base_count;
+    Veh *vehs;
+    int veh_count;
+    Map *tiles;
+    uint32_t tile_count;
+    uint32_t ambience_flags;
+    uint32_t draw_state;
+    BOOL maps_revealed;
+};
+
+static void snap_alloc(GameSnapshot *s) {
+    s->base_count = *BaseCurrentCount;
+    s->veh_count = *VehCurrentCount;
+    s->tile_count = *MapArea;
+    s->bases = (Base *)malloc(sizeof(Base) * (s->base_count ? s->base_count : 1));
+    s->vehs = (Veh *)malloc(sizeof(Veh) * (s->veh_count ? s->veh_count : 1));
+    s->tiles = (Map *)malloc(sizeof(Map) * (s->tile_count ? s->tile_count : 1));
+}
+
+static void snap_free(GameSnapshot *s) {
+    free(s->bases);
+    free(s->vehs);
+    free(s->tiles);
+}
+
+static void snap_take(GameSnapshot *s) {
+    memcpy(s->players, PlayersData, sizeof(s->players));
+    memcpy(s->bases, Bases, sizeof(Base) * s->base_count);
+    memcpy(s->vehs, Vehs, sizeof(Veh) * s->veh_count);
+    memcpy(s->tiles, *MapTiles, sizeof(Map) * s->tile_count);
+    s->ambience_flags = *AmbienceFlags;
+    s->draw_state = *UnkBitfield1;
+    s->maps_revealed = *TradeMapsRevealedNew;
+}
+
+static void snap_restore(const GameSnapshot *s) {
+    memcpy(PlayersData, s->players, sizeof(s->players));
+    memcpy(Bases, s->bases, sizeof(Base) * s->base_count);
+    memcpy(Vehs, s->vehs, sizeof(Veh) * s->veh_count);
+    memcpy(*MapTiles, s->tiles, sizeof(Map) * s->tile_count);
+    *AmbienceFlags = s->ambience_flags;
+    *UnkBitfield1 = s->draw_state;
+    *TradeMapsRevealedNew = s->maps_revealed;
+}
+
+static size_t first_diff(const void *a, const void *b, size_t n) {
+    const uint8_t *x = (const uint8_t *)a, *y = (const uint8_t *)b;
+    for (size_t i = 0; i < n; i++) {
+        if (x[i] != y[i]) {
+            return i;
+        }
+    }
+    return (size_t)-1;
+}
+
+/*
+Compare two snapshots taken after the original and after the decompiled version ran from the
+same baseline. Returns true if they differ; logs the first differing region and location.
+*/
+static BOOL snap_differs(const GameSnapshot *o, const GameSnapshot *n, const char *label) {
+#define DLOG(...) do { if (label) logf(__VA_ARGS__); } while (0)
+    size_t d;
+    if ((d = first_diff(o->players, n->players, sizeof(o->players))) != (size_t)-1) {
+        DLOG("  %s: PlayerData[%u] +0x%X differs (orig %02X new %02X)", label,
+            (unsigned)(d / sizeof(PlayerData)), (unsigned)(d % sizeof(PlayerData)),
+            ((const uint8_t *)o->players)[d], ((const uint8_t *)n->players)[d]);
+        return true;
+    }
+    if ((d = first_diff(o->bases, n->bases, sizeof(Base) * o->base_count)) != (size_t)-1) {
+        DLOG("  %s: Base[%u] +0x%X differs", label, (unsigned)(d / sizeof(Base)),
+            (unsigned)(d % sizeof(Base)));
+        return true;
+    }
+    if ((d = first_diff(o->vehs, n->vehs, sizeof(Veh) * o->veh_count)) != (size_t)-1) {
+        DLOG("  %s: Veh[%u] +0x%X differs", label, (unsigned)(d / sizeof(Veh)),
+            (unsigned)(d % sizeof(Veh)));
+        return true;
+    }
+    if ((d = first_diff(o->tiles, n->tiles, sizeof(Map) * o->tile_count)) != (size_t)-1) {
+        DLOG("  %s: Map tile %u +0x%X differs", label, (unsigned)(d / sizeof(Map)),
+            (unsigned)(d % sizeof(Map)));
+        return true;
+    }
+    if (o->ambience_flags != n->ambience_flags || o->draw_state != n->draw_state
+        || o->maps_revealed != n->maps_revealed) {
+        DLOG("  %s: globals differ (ambience %X/%X draw %X/%X revealed %d/%d)", label,
+            o->ambience_flags, n->ambience_flags, o->draw_state, n->draw_state,
+            o->maps_revealed, n->maps_revealed);
+        return true;
+    }
+    return false;
+#undef DLOG
+}
+
+typedef void (*diplo_flag_fn)(int, int, uint32_t);
+
+/*
+Run one treaty/agenda style function (faction, faction, flags) over every faction pair and
+every single flag bit plus a few combinations, comparing the resulting state.
+*/
+static int test_diplo_flag_fn(const char *name, diplo_flag_fn fn_new, diplo_flag_fn fn_orig) {
+    static const uint32_t combos[] = { 0x7, 0x17, 0x3, 0x11, 0x80000108, 0x1100000, 0x8040,
+        0xFFFFFFFF };
+    GameSnapshot base, after_orig, after_new;
+    snap_alloc(&base); snap_alloc(&after_orig); snap_alloc(&after_new);
+    snap_take(&base);
+    int compared = 0, mismatches = 0, effective = 0;
+    char label[96];
+    for (int f1 = 1; f1 < MaxPlayerNum; f1++) {
+        for (int f2 = 1; f2 < MaxPlayerNum; f2++) {
+            if (f1 == f2) {
+                continue;
+            }
+            for (int k = 0; k < 32 + (int)(sizeof(combos) / sizeof(combos[0])); k++) {
+                uint32_t flags = k < 32 ? (1u << k) : combos[k - 32];
+                snap_restore(&base);
+                fn_orig(f1, f2, flags);
+                snap_take(&after_orig);
+                if (snap_differs(&base, &after_orig, NULL)) {
+                    effective++;
+                }
+                snap_restore(&base);
+                fn_new(f1, f2, flags);
+                snap_take(&after_new);
+                compared++;
+                sprintf_s(label, "%s(%d, %d, 0x%X)", name, f1, f2, flags);
+                if (snap_differs(&after_orig, &after_new, mismatches < MAX_DETAIL ? label : NULL)) {
+                    mismatches++;
+                }
+            }
+        }
+    }
+    snap_restore(&base);
+    snap_free(&base); snap_free(&after_orig); snap_free(&after_new);
+    logf("%s: %d compared (%d changed state), %d mismatches", name, compared, effective, mismatches);
+    return mismatches;
+}
+
+static int test_treaty_on() { return test_diplo_flag_fn("treaty_on", treaty_on, treaty_on_OG); }
+static int test_treaty_off() { return test_diplo_flag_fn("treaty_off", treaty_off, treaty_off_OG); }
+static int test_agenda_on() { return test_diplo_flag_fn("agenda_on", agenda_on, agenda_on_OG); }
+static int test_agenda_off() { return test_diplo_flag_fn("agenda_off", agenda_off, agenda_off_OG); }
+
+static int test_trade_maps() {
+    GameSnapshot base, after_orig, after_new;
+    snap_alloc(&base); snap_alloc(&after_orig); snap_alloc(&after_new);
+    snap_take(&base);
+    int compared = 0, mismatches = 0, effective = 0;
+    char label[64];
+    for (int f1 = 1; f1 < MaxPlayerNum; f1++) {
+        for (int f2 = 1; f2 < MaxPlayerNum; f2++) {
+            if (f1 == f2) {
+                continue;
+            }
+            snap_restore(&base);
+            trade_maps_OG(f1, f2);
+            snap_take(&after_orig);
+            if (snap_differs(&base, &after_orig, NULL)) {
+                effective++;
+            }
+            snap_restore(&base);
+            trade_maps(f1, f2);
+            snap_take(&after_new);
+            compared++;
+            sprintf_s(label, "trade_maps(%d, %d)", f1, f2);
+            if (snap_differs(&after_orig, &after_new, mismatches < MAX_DETAIL ? label : NULL)) {
+                mismatches++;
+            }
+        }
+    }
+    snap_restore(&base);
+    snap_free(&base); snap_free(&after_orig); snap_free(&after_new);
+    logf("trade_maps: %d compared (%d changed state), %d mismatches", compared, effective, mismatches);
+    return mismatches;
+}
+
+static int test_do_withdrawal() {
+    GameSnapshot base, after_orig, after_new;
+    snap_alloc(&base); snap_alloc(&after_orig); snap_alloc(&after_new);
+    snap_take(&base);
+    int compared = 0, mismatches = 0, effective = 0, moves = 0;
+    char label[64];
+    for (int owner = 1; owner < MaxPlayerNum; owner++) {
+        for (int f = 1; f < MaxPlayerNum; f++) {
+            if (owner == f) {
+                continue;
+            }
+            snap_restore(&base);
+            int r_orig = do_withdrawal_OG(owner, f);
+            snap_take(&after_orig);
+            if (r_orig) {
+                effective++;
+                moves += r_orig;
+            }
+            snap_restore(&base);
+            int r_new = do_withdrawal(owner, f);
+            snap_take(&after_new);
+            compared++;
+            sprintf_s(label, "do_withdrawal(%d, %d)", owner, f);
+            BOOL bad = snap_differs(&after_orig, &after_new, mismatches < MAX_DETAIL ? label : NULL);
+            if (r_orig != r_new) {
+                if (mismatches < MAX_DETAIL) {
+                    logf("  %s: return orig=%d new=%d", label, r_orig, r_new);
+                }
+                bad = true;
+            }
+            if (bad) {
+                mismatches++;
+            }
+        }
+    }
+    snap_restore(&base);
+    snap_free(&base); snap_free(&after_orig); snap_free(&after_new);
+    logf("do_withdrawal: %d compared (%d moved units, %d moves total), %d mismatches", compared, effective, moves, mismatches);
+    return mismatches;
+}
+
 static int test_world_validate() {
     BOOL a = world_validate();
     BOOL b = world_validate_OG();
@@ -261,6 +490,12 @@ void regress_run() {
     if (test_enabled("battle_compute")) total += test_battle_compute();
     if (test_enabled("wants_to_attack")) total += test_wants_to_attack();
     if (test_enabled("world_validate")) total += test_world_validate();
+    if (test_enabled("treaty_on")) total += test_treaty_on();
+    if (test_enabled("treaty_off")) total += test_treaty_off();
+    if (test_enabled("agenda_on")) total += test_agenda_on();
+    if (test_enabled("agenda_off")) total += test_agenda_off();
+    if (test_enabled("trade_maps")) total += test_trade_maps();
+    if (test_enabled("do_withdrawal")) total += test_do_withdrawal();
     logf("TOTAL mismatches: %d (%lu ms)", total, GetTickCount() - t0);
     fclose(regress_log);
     regress_log = NULL;

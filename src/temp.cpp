@@ -75,6 +75,12 @@ funct4 *best_defender_OG = (funct4 *)0x005044D0;
 func_battle *battle_compute_OG = (func_battle *)0x00501DA0;
 func_wants *wants_to_attack_OG = (func_wants *)0x0055BC80;
 func_bool_void *world_validate_OG = (func_bool_void *)0x005C40F0;
+func_diplo3u *treaty_on_OG = (func_diplo3u *)0x0055B870;
+func_diplo3u *treaty_off_OG = (func_diplo3u *)0x0055B760;
+func_diplo3u *agenda_on_OG = (func_diplo3u *)0x0055BA80;
+func_diplo3u *agenda_off_OG = (func_diplo3u *)0x0055B820;
+func_diplo2 *trade_maps_OG = (func_diplo2 *)0x00543A20;
+func_diplo2r *do_withdrawal_OG = (func_diplo2r *)0x00548F80;
 ///
 char1032 *stringTemp = (char1032 *)0x009B86A0;
 char256 *ParseStrBuffer = (char256 *)0x009BB5E8;

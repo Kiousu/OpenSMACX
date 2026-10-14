@@ -106,6 +106,15 @@ typedef BOOL func_wants(uint32_t, uint32_t, int);
 extern func_wants *wants_to_attack_OG;
 typedef BOOL func_bool_void();
 extern func_bool_void *world_validate_OG;
+typedef void func_diplo3u(int, int, uint32_t);
+extern func_diplo3u *treaty_on_OG;
+extern func_diplo3u *treaty_off_OG;
+extern func_diplo3u *agenda_on_OG;
+extern func_diplo3u *agenda_off_OG;
+typedef void func_diplo2(int, int);
+extern func_diplo2 *trade_maps_OG;
+typedef int func_diplo2r(int, int);
+extern func_diplo2r *do_withdrawal_OG;
 //
 extern char1032 *stringTemp;
 extern char256 *ParseStrBuffer;
