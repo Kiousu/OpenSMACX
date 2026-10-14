@@ -137,6 +137,38 @@ typedef void __fastcall func_net_synch(void *This, void *edx_unused, int16_t typ
     int id2, int unk, char *data, uint32_t delay, int16_t unk2);
 extern func_net_synch *NetDaemon_synch; // NetDaemon::synch()
 extern void *NetDaemonVar; // global NetDaemon instance
+typedef void __fastcall func_net_send_msg(void *This, void *edx_unused, void *msg, uint32_t size,
+    int flags);
+extern func_net_send_msg *NetDaemon_send_message; // NetDaemon::send_message()
+typedef void __fastcall func_net_await(void *This, void *edx_unused, int msg_code);
+extern func_net_await *NetDaemon_await_diplo; // NetDaemon::await_diplo()
+typedef int __fastcall func_net_this_only(void *This, void *edx_unused);
+extern func_net_this_only *NetDaemon_add_global; // NetDaemon::add_global()
+extern func_net_this_only *NetDaemon_unlock; // NetDaemon::unlock()
+typedef void __fastcall func_console_update(void *This, void *edx_unused, int unk);
+extern func_console_update *Console_update_data; // Console::update_data()
+extern void *ConsoleVar; // global Console instance
+typedef void func_diplo3(int, int, int);
+extern func_diplo3 *treaty_on;
+extern func_diplo3 *treaty_off;
+extern func_diplo3 *agenda_on;
+extern func_diplo3 *agenda_off;
+extern func_diplo3 *double_cross;
+typedef void func_diplo2(int, int);
+extern func_diplo2 *trade_maps;
+extern func_diplo2 *pact_ends;
+extern func_diplo2 *give_a_base;
+typedef int func_diplo2r(int, int);
+extern func_diplo2r *do_withdrawal;
+typedef void func_tech_ach(int, int, int, int);
+extern func_tech_ach *tech_achieved;
+extern func9 *wait_loop;
+extern func9 *check_spock;
+extern int *FactionIDCurrent; // faction of the player currently at the controls (MapWin owner)
+extern int *NetMsgSequence; // incremented for each message sent by NetDaemon
+extern int *NetMsgSendDepth; // non-zero while a message is being sent
+extern BOOL *NetPopWaitActive; // set while pop_wait()/pop_expire() spin in wait_loop()
+extern int *ControlTurnA; // name from Thinker; non-zero aborts network waits
 
 DLLEXPORT BOOL __cdecl do_non_input();
 DLLEXPORT void __cdecl do_all_non_input();

@@ -706,6 +706,29 @@ uint32_t *MsgStatus = (uint32_t *)0x009B7B9C;
 // net
 func_net_synch *NetDaemon_synch = (func_net_synch *)0x00532E00;
 void *NetDaemonVar = (void *)0x0093CD90;
+func_net_send_msg *NetDaemon_send_message = (func_net_send_msg *)0x00532940;
+func_net_await *NetDaemon_await_diplo = (func_net_await *)0x005315C0;
+func_net_this_only *NetDaemon_add_global = (func_net_this_only *)0x00530AA0;
+func_net_this_only *NetDaemon_unlock = (func_net_this_only *)0x00530D00;
+func_console_update *Console_update_data = (func_console_update *)0x00514880;
+void *ConsoleVar = (void *)0x009156B0;
+func_diplo3 *treaty_on = (func_diplo3 *)0x0055B870;
+func_diplo3 *treaty_off = (func_diplo3 *)0x0055B760;
+func_diplo3 *agenda_on = (func_diplo3 *)0x0055BA80;
+func_diplo3 *agenda_off = (func_diplo3 *)0x0055B820;
+func_diplo3 *double_cross = (func_diplo3 *)0x0050BCC0;
+func_diplo2 *trade_maps = (func_diplo2 *)0x00543A20;
+func_diplo2 *pact_ends = (func_diplo2 *)0x0053C650;
+func_diplo2 *give_a_base = (func_diplo2 *)0x0054CF40;
+func_diplo2r *do_withdrawal = (func_diplo2r *)0x00548F80;
+func_tech_ach *tech_achieved = (func_tech_ach *)0x005BB000;
+func9 *wait_loop = (func9 *)0x0051F200;
+func9 *check_spock = (func9 *)0x0051F1B0;
+int *FactionIDCurrent = (int *)0x00939284;
+int *NetMsgSequence = (int *)0x0093E8BC;
+int *NetMsgSendDepth = (int *)0x0093F664;
+BOOL *NetPopWaitActive = (BOOL *)0x0093FAC4;
+int *ControlTurnA = (int *)0x009B2068;
 
 /*
 Purpose: Process non-input related message.

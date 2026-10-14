@@ -478,3 +478,30 @@
 0x00193450	?synch_diplo@@YAXHH@Z
 0x001934B0	?synch_template@@YAXH@Z
 0x001934E0	?synch_radius@@YAXH@Z
+# --- NET: message_*() senders ---
+0x00192E10	?message_veh@@YAXFHHH@Z
+0x00192E70	?message_base@@YAXFHPBDH@Z
+0x00192EE0	?message_data@@YAXFHHHHH@Z
+0x00192FF0	?message_big_data@@YAXFHPAHH@Z
+0x00193090	?message_lock@@YAXFHHHHHHH@Z
+0x00193110	?message_landmark@@YAXFHPBDHHHH@Z
+0x00193190	?message_chat@@YAXFHPBD@Z
+# --- NET: net_*() diplomacy relays + locks ---
+0x001391C0	?net_treaty_on@@YAXHHHH@Z
+0x00139230	?net_treaty_off@@YAXHHHH@Z
+0x001392A0	?net_set_treaty@@YAXHHHHH@Z
+0x00139310	?net_agenda_on@@YAXHHHH@Z
+0x00139380	?net_agenda_off@@YAXHHHH@Z
+0x001393F0	?net_set_agenda@@YAXHHHHH@Z
+0x00139460	?net_energy@@YAXHHHHH@Z
+0x00139510	?net_loan@@YAXHHHH@Z
+0x00139580	?net_maps@@YAXHHH@Z
+0x001395F0	?net_tech@@YAXHHHH@Z
+0x00139660	?net_pact_ends@@YAXHHH@Z
+0x001396D0	?net_withdrawal@@YAHHHH@Z
+0x00139740	?net_cede_base@@YAXHHH@Z
+0x001397B0	?net_double_cross@@YAXHHHH@Z
+0x00139820	?diplo_lock@@YAHH@Z
+0x001398C0	?diplo_unlock@@YAXXZ
+0x001398E0	?pop_wait@@YAHXZ
+0x00139920	?pop_expire@@YAHXZ
