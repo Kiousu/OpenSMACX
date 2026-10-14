@@ -131,6 +131,13 @@ extern func_msg *do_non_input_;
 
 extern uint32_t *MsgStatus;
 
+// net
+// __thiscall emulated via __fastcall: 'This' goes in ecx, 'edx_unused' is a placeholder for edx
+typedef void __fastcall func_net_synch(void *This, void *edx_unused, int16_t type, int id,
+    int id2, int unk, char *data, uint32_t delay, int16_t unk2);
+extern func_net_synch *NetDaemon_synch; // NetDaemon::synch()
+extern void *NetDaemonVar; // global NetDaemon instance
+
 DLLEXPORT BOOL __cdecl do_non_input();
 DLLEXPORT void __cdecl do_all_non_input();
 DLLEXPORT BOOL __cdecl do_draw();

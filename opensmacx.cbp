@@ -89,6 +89,8 @@
         <Unit filename="src/map.h" />
         <Unit filename="src/menu.cpp" />
         <Unit filename="src/menu.h" />
+        <Unit filename="src/net.cpp" />
+        <Unit filename="src/net.h" />
         <Unit filename="src/palette.cpp" />
         <Unit filename="src/palette.h" />
         <Unit filename="src/path.cpp" />

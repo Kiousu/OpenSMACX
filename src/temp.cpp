@@ -703,6 +703,10 @@ func_msg *do_non_input_ = (func_msg *)0x005FCA30;
 
 uint32_t *MsgStatus = (uint32_t *)0x009B7B9C;
 
+// net
+func_net_synch *NetDaemon_synch = (func_net_synch *)0x00532E00;
+void *NetDaemonVar = (void *)0x0093CD90;
+
 /*
 Purpose: Process non-input related message.
 Original Offset: 005FCA30
