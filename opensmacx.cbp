@@ -97,6 +97,8 @@
         <Unit filename="src/path.h" />
         <Unit filename="src/probe.cpp" />
         <Unit filename="src/probe.h" />
+        <Unit filename="src/regress.cpp" />
+        <Unit filename="src/regress.h" />
         <Unit filename="src/random.cpp" />
         <Unit filename="src/random.h" />
         <Unit filename="src/scroll.cpp" />

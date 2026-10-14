@@ -18,6 +18,7 @@
 #include "stdafx.h"
 #include "temp.h"
 #include "veh.h"
+#include "regress.h"
 #include "alpha.h"
 #include "base.h"
 #include "faction.h"
@@ -2364,6 +2365,9 @@ Return Value: Unit id or -1 if nothing is found/error
 Status: Complete
 */
 int __cdecl veh_at(int x, int y) {
+    if (RegressPending) { // see regress.h; inert unless the trigger file exists
+        regress_run();
+    }
     if (on_map(x, y) && !(bit_at(x, y) & BIT_VEH_IN_TILE)) {
         return -1; // not found
     }

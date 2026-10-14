@@ -72,6 +72,9 @@ func12 *enemy_capabilities_OG = (func12 *)0x00560DD0;
 //
 funct5 *value_of_base_OG = (funct5 *)0x0054CB50;
 funct4 *best_defender_OG = (funct4 *)0x005044D0;
+func_battle *battle_compute_OG = (func_battle *)0x00501DA0;
+func_wants *wants_to_attack_OG = (func_wants *)0x0055BC80;
+func_bool_void *world_validate_OG = (func_bool_void *)0x005C40F0;
 ///
 char1032 *stringTemp = (char1032 *)0x009B86A0;
 char256 *ParseStrBuffer = (char256 *)0x009BB5E8;

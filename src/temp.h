@@ -100,6 +100,12 @@ typedef int funct5(int, uint32_t, uint32_t, uint32_t, BOOL);
 extern funct5 *value_of_base_OG;
 typedef uint32_t funct4(uint32_t, int, BOOL);
 extern funct4 *best_defender_OG;
+typedef void func_battle(int, int, int *, int *, int);
+extern func_battle *battle_compute_OG;
+typedef BOOL func_wants(uint32_t, uint32_t, int);
+extern func_wants *wants_to_attack_OG;
+typedef BOOL func_bool_void();
+extern func_bool_void *world_validate_OG;
 //
 extern char1032 *stringTemp;
 extern char256 *ParseStrBuffer;
