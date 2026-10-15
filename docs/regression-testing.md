@@ -184,6 +184,22 @@ milliseconds apart and occasionally straddle a timer tick. Pinning the clock dur
   `world_temperature` (bore loop 8 instead of 9 tiles, unsigned orbit term), `world_analysis`
   (byte offset 0x20 read as index 32, thresholds).
 
+## Promotion (548 redirects)
+
+`tools/redirects.tsv` now redirects value_of_base, world_validate, base_mark,
+enemy_capabilities, social_ai, Path::sensors, the 29 world generators and the six `do_*`
+wrappers (41 new rows, 548 in total). Boot-tested with a Quick Start game (map generation,
+founding a base, turns) and with the 2389 save (a turn, then the whole suite: 45 tests, no
+crash). Promoting `do_non_input` exposed one more transcription error that the earlier
+disassembly reading had missed: the three `PeekMessage` ranges are tried in turn and the first
+one that has a message wins; the DLL required all three (`||` on the failure tests instead of
+`&&`), so with the wrapper redirected most non-input messages were never dispatched.
+
+Once a function is redirected its `*_OG` pointer lands on the `jmp` into the DLL, so the
+harness then compares the DLL with itself. To re-test a promoted function, patch a build with a
+table that omits it (`opensmacx_patch.py -t <table>`), e.g. the previous 507-row table from
+`git show 851367d:tools/redirects.tsv`.
+
 ## Verified by disassembly only
 
 `do_non_input`, `do_all_non_input`, `do_draw`, `do_all_draws`, `do_keyboard`,

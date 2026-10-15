@@ -791,11 +791,13 @@ BOOL __cdecl do_non_input() {
     for (int i = 0; i < 3; i++) {
         msg[i].time = 0xFFFFFFFF;
     }
+    // The original checks the three ranges in turn and stops at the first one that has a
+    // message (the others keep time 0xFFFFFFFF, so the selection below picks the one found).
+    // 0x20A: WM_MOUSELAST in the SDK the game was built with (WM_MOUSEWHEEL); newer SDKs
+    // define WM_MOUSELAST as 0x20E, which would skip the mouse wheel and X-button messages.
     if (!PeekMessage(&msg[0], NULL, WM_NULL, WM_INPUT, PM_NOREMOVE)
-        || !PeekMessage(&msg[1], NULL, WM_UNICHAR, WM_KEYDOWN | WM_INPUT, PM_NOREMOVE)
-        || !PeekMessage(&msg[2], NULL, 0x20A, UNICODE_NOCHAR, PM_NOREMOVE)) {
-        // 0x20A: WM_MOUSELAST in the SDK the game was built with (WM_MOUSEWHEEL); newer SDKs
-        // define WM_MOUSELAST as 0x20E, which would skip the mouse wheel and X-button messages
+        && !PeekMessage(&msg[1], NULL, WM_UNICHAR, WM_KEYDOWN | WM_INPUT, PM_NOREMOVE)
+        && !PeekMessage(&msg[2], NULL, 0x20A, UNICODE_NOCHAR, PM_NOREMOVE)) {
         return false;
     }
     int a = 0;
