@@ -917,7 +917,10 @@ Return Value: Bounded random value
 Status: Complete
 */
 uint32_t __cdecl rnd(int bounds, LPSTR UNUSED(input)) {
-    return (bounds - 1 > 0) ? rand() % bounds : 0;
+    // Use the exe's CRT generator: code still running in the exe calls rand() inline, so a
+    // separate DLL generator would split one random stream into two and diverge from the
+    // original game for the same seed (my_srand() seeds both).
+    return (bounds - 1 > 0) ? _rand() % bounds : 0;
 }
 
 /*

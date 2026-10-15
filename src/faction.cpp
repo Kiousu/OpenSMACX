@@ -1296,9 +1296,8 @@ void __cdecl social_ai(uint32_t faction_id, int growth_val, int tech_val, int we
             fight_val = 1;
         }
     }
-    // purpose?? loop to set unk_val2 to 256
-    uint32_t unk_val2 = 4;
-    for (int i = 3; i >= 0; i--) {
+    uint32_t unk_val2 = 4; // 4 << 6 = 256: every combination of 4 models in 4 categories
+    for (int i = 3; i > 0; i--) {
         unk_val2 *= 4;
     }
     // future pop growth
@@ -1309,9 +1308,9 @@ void __cdecl social_ai(uint32_t faction_id, int growth_val, int tech_val, int we
         }
     }
     // plan and enemy region metrics
-    uint32_t unk_sum1 = 0;
-    uint32_t unk_count1 = 0;
-    uint32_t unk_count2 = 0;
+    int unk_sum1 = 0;
+    int unk_count1 = 0;
+    int unk_count2 = 0;
     uint32_t unk_sum2 = 0;
     for (uint32_t region = 1; region < MaxRegionLandNum; region++) {
         if (!bad_reg(region)) {
@@ -1323,7 +1322,7 @@ void __cdecl social_ai(uint32_t faction_id, int growth_val, int tech_val, int we
                 } else if (plan == PLAN_OFFENSIVE) {
                     unk_sum1 += PlayersData[faction_id].region_total_combat_vehs[region];
                     unk_count2++;
-                } else if (plan != PLAN_COLONIZATION) {
+                } else if (plan == PLAN_COLONIZATION) {
                     unk_count1++;
                 }
                 if (plan <= PLAN_DEFENSIVE) {
@@ -1345,7 +1344,7 @@ void __cdecl social_ai(uint32_t faction_id, int growth_val, int tech_val, int we
         unk_sum1 = 1;
     }
     // tech ranking
-    uint32_t unk_val3 = 1;
+    int unk_val3 = 1;
     if (*GameState & 0x200 // set in rankings(), related to intense riv + end game
         && PlayersData[faction_id].ranking < 6) {
         int tech_rank_diff = PlayersData[*RankingFactionIDUnk1].tech_ranking / 2
@@ -1365,17 +1364,22 @@ void __cdecl social_ai(uint32_t faction_id, int growth_val, int tech_val, int we
         SocialCategory soc_cat;
         SocialEffect soc_eff;
         int k = i;
+        BOOL is_valid = true;
         for (int j = 0; j < MaxSocialCatNum; j++) {
             int model = k & 3;
-            *(&soc_cat.politics + i) = model;
+            *(&soc_cat.politics + j) = model;
             if (model) {
-                if (Players[faction_id].soc_anti_ideology_category == j
-                    || Players[faction_id].soc_anti_ideology_model == model
-                    || !has_tech(SocialCategories[model].preq_tech[j], faction_id)) {
+                if ((Players[faction_id].soc_anti_ideology_category == j
+                    && Players[faction_id].soc_anti_ideology_model == model)
+                    || !has_tech(SocialCategories[j].preq_tech[model], faction_id)) {
+                    is_valid = false;
                     break;
                 }
             }
             k >>= 2;
+        }
+        if (!is_valid) {
+            continue; // combination not available to this faction
         }
         do_all_non_input();
         social_calc(&soc_cat, &soc_eff, faction_id, false, false);
@@ -1389,14 +1393,14 @@ void __cdecl social_ai(uint32_t faction_id, int growth_val, int tech_val, int we
             int ideology_mod = Players[faction_id].soc_ideology_model;
             if (ideology_mod) {
                 int unk_val7 = *(&soc_cat.politics + ideology_cat);
-                if (!unk_val7 && unk_val7 == ideology_mod) {
+                if (unk_val7 == ideology_mod) {
                     unk_val6 += PlayersData[faction_id].current_num_bases;
-                } else {
-                    has_ideology = true;
+                } else if (unk_val7) {
+                    has_ideology = true; // a different model was chosen in the ideology's category
                 }
             }
         }
-        int ideology_eff = Players[faction_id].soc_anti_ideology_effect;
+        int ideology_eff = Players[faction_id].soc_ideology_effect;
         if (ideology_eff >= 0) {
             int unk_val8 = *(&soc_eff.economy + ideology_eff);
             if (unk_val8 > 0) {
@@ -1436,7 +1440,7 @@ void __cdecl social_ai(uint32_t faction_id, int growth_val, int tech_val, int we
                 if (econ_val > 4) {
                     econ_val = 4;
                 }
-                econ_weight = PlayersData[faction_id].unk_47 + econ_val * 2 - 4 / (unk_sum1 + 1);
+                econ_weight = (PlayersData[faction_id].unk_47 - 4 + econ_val * 2) / (unk_sum1 + 1);
             }
             for (; econ_weight > 0; econ_weight--, effic_val--) {
                 if (effic_val <= 0) {
@@ -1517,7 +1521,7 @@ void __cdecl social_ai(uint32_t faction_id, int growth_val, int tech_val, int we
                 morale_val--;
             }
             int morale_weight = (unk_val3 * morale_val * (fight_val + 2) * (unk_sum1 + 1)
-                * (PlayersData[faction_id].current_num_bases + PlayersData[faction_id].unk_48)) / 8;
+                * ((int)PlayersData[faction_id].current_num_bases + PlayersData[faction_id].unk_48)) / 8;
             if (output) {
                 if (power_val) {
                     morale_weight *= 3;
@@ -1571,7 +1575,7 @@ void __cdecl social_ai(uint32_t faction_id, int growth_val, int tech_val, int we
             // growth
             int growth_weight = (soc_eff.growth * (unk_count1 + 1) 
                 * ((growth_val + 1) * 2 - wealth_val)
-                * (pop_goal_growth + PlayersData[faction_id].nutrient_surplus_total)) / 5;
+                * (pop_goal_growth + (int)PlayersData[faction_id].nutrient_surplus_total)) / 5;
             if (aah_ooga(faction_id, faction_id)) {
                 growth_weight *= 2;
             }
@@ -1593,16 +1597,16 @@ void __cdecl social_ai(uint32_t faction_id, int growth_val, int tech_val, int we
             unk_val6 += growth_weight;
             // police
             int police_weight 
-                = range(soc_eff.police, -2, 2) * PlayersData[faction_id].current_num_bases 
+                = range(soc_eff.police + 2, -2, 2) * (int)PlayersData[faction_id].current_num_bases 
                 * (unk_count2 * 2 + 1);
             if (PlayersData[faction_id].tech_ranking 
                 < PlayersData[*RankingFactionIDUnk2].tech_ranking
                 && PlayersData[faction_id].ranking < PlayersData[*RankingFactionIDUnk2].ranking) {
                 police_weight *= 2;
             }
-            if (PlayersData[faction_id].tech_ranking 
-                < PlayersData[*RankingFactionIDUnk1].tech_ranking
-                && PlayersData[faction_id].ranking < PlayersData[*RankingFactionIDUnk1].ranking) {
+            if (PlayersData[faction_id].tech_ranking
+                >= PlayersData[*RankingFactionIDUnk1].tech_ranking
+                && PlayersData[faction_id].ranking > PlayersData[*RankingFactionIDUnk1].ranking) {
                 police_weight /= 2;
             }
             if (output && (power_val || growth_val)) {
@@ -1647,101 +1651,88 @@ void __cdecl social_ai(uint32_t faction_id, int growth_val, int tech_val, int we
                 if (wealth_val) {
                     planet_weight /= 2;
                 }
-            } else {
-                if (power_val) {
-                    if (growth_val) {
-                        planet_weight /= 2;
+            } else if (!power_val) {
+                if (growth_val) {
+                    if (!tech_val) {
+                        planet_weight *= 4;
                     }
-                    if ((tech_val || wealth_val) && !growth_val) {
-                        planet_weight /= 2;
-                    }
-                } else {
-                    if (growth_val) {
-                        if (tech_val) {
-                            planet_weight *= 2;
-                            if (!wealth_val && growth_val) {
-                                planet_weight /= 2;
-                            }
-                        } else {
-                            if (growth_val) {
-                                planet_weight /= 2;
-                            }
-                        }
-                    } else {
-                        if ((tech_val || wealth_val) && growth_val) {
-                            planet_weight /= 2;
-                        }
-                    }
+                } else if (tech_val || wealth_val) {
+                    planet_weight /= 2;
                 }
-                unk_val6 -= planet_weight;
-                // research
-                int research_weight = range(soc_eff.research, -5, 5) 
-                    * PlayersData[faction_id].labs_total / 10;
-                if (!unk_sum1) {
+            } else if (!growth_val) {
+                planet_weight /= 2;
+                if (tech_val || wealth_val) {
+                    planet_weight /= 2;
+                }
+            }
+            unk_val6 -= planet_weight;
+            // research
+            int research_weight = range(soc_eff.research, -5, 5)
+                * PlayersData[faction_id].labs_total / 10;
+            if (!unk_sum1) {
+                research_weight *= 2;
+            }
+            if (output) {
+                if (tech_val) {
                     research_weight *= 2;
                 }
-                if (output) {
-                    if (tech_val) {
-                        research_weight *= 2;
-                    }
-                    if (power_val) {
-                        research_weight /= 2;
-                    }
-                }
-                unk_val6 += research_weight;
-                // industry
-                uint32_t unk_val3_temp = range(unk_val3, 1, 2);
-                int industry_weight = soc_eff.industry * unk_val3_temp
-                    * PlayersData[faction_id].pop_total * (2 * (wealth_val + unk_sum1) + 1) / 10;
                 if (power_val) {
-                    industry_weight *= 2;
+                    research_weight /= 2;
                 }
-                if (wealth_val) {
-                    industry_weight += industry_weight / 2;
-                }
-                if (tech_val) {
-                    industry_weight /= 2;
-                }
-                if (fight_val < 0 && !wealth_val) {
-                    industry_weight /= 2;
-                }
-                unk_val6 += industry_weight;
-                // why is this before probe? significance?
-                unk_val6 += social_upheaval(faction_id, &soc_cat) / -3;
-                // probe
-                if (soc_eff.probe) {
-                    int probe_weight;
-                    for (uint32_t f = 0; f < MaxPlayerNum; f++) {
-                        if (f != faction_id) {
-                            probe_weight = PlayersData[i].mind_control_total / 4 + 1;
-                            if (has_treaty(faction_id, i, DTREATY_PACT)) {
+            }
+            unk_val6 += research_weight;
+            // industry
+            int unk_val3_temp = range(unk_val3, 1, 2);
+            int industry_weight = soc_eff.industry * unk_val3_temp
+                * PlayersData[faction_id].pop_total * (2 * (wealth_val + unk_sum1) + 1) / 10;
+            if (power_val) {
+                industry_weight *= 2;
+            }
+            if (wealth_val) {
+                industry_weight += industry_weight / 2;
+            }
+            if (tech_val) {
+                industry_weight /= 2;
+            }
+            if (fight_val < 0 && !wealth_val) {
+                industry_weight /= 2;
+            }
+            unk_val6 += industry_weight;
+            // cost of switching to this combination (signed divide: the cost is a penalty)
+            unk_val6 += (int)social_upheaval(faction_id, &soc_cat) / -3;
+            // probe
+            if (soc_eff.probe) {
+                int probe_weight;
+                for (uint32_t f = 1; f < MaxPlayerNum; f++) {
+                    if (f != faction_id) {
+                        probe_weight = PlayersData[f].mind_control_total / 4 + 1;
+                        if (has_treaty(faction_id, f, DTREATY_PACT)) {
+                            probe_weight /= 2;
+                        }
+                        if (!has_treaty(faction_id, f, DTREATY_WANT_REVENGE)) {
+                            if (has_treaty(faction_id, f, DTREATY_TREATY)) {
                                 probe_weight /= 2;
                             }
-                            if (!has_treaty(faction_id, i, DTREATY_WANT_REVENGE)) {
-                                if (has_treaty(faction_id, i, DTREATY_TREATY)) {
-                                    probe_weight /= 2;
-                                }
-                                if (!has_treaty(faction_id, i, DTREATY_COMMLINK)) {
-                                    probe_weight /= 2;
-                                }
-                                if (!has_treaty(faction_id, i, DTREATY_VENDETTA)) {
-                                    probe_weight /= 2;
-                                }
+                            if (!has_treaty(faction_id, f, DTREATY_COMMLINK)) {
+                                probe_weight /= 2;
                             }
-                            probe_weight = ((PlayersData[i].current_num_bases
-                                + PlayersData[faction_id].current_num_bases)
-                                * range(soc_eff.probe, -2, 3) * probe_weight) / 2;
-                            if (tech_val || wealth_val) {
-                                probe_weight *= 2;
+                            if (!has_treaty(faction_id, f, DTREATY_VENDETTA)) {
+                                probe_weight /= 2;
                             }
-                            unk_val6 += probe_weight;
                         }
+                        probe_weight = ((int)(PlayersData[f].current_num_bases
+                            + PlayersData[faction_id].current_num_bases)
+                            * range(soc_eff.probe, -2, 3) * probe_weight) / 2;
+                        if (tech_val || wealth_val) {
+                            probe_weight *= 2;
+                        }
+                        unk_val6 += probe_weight;
                     }
                 }
-                if (unk_val6 >= unk_val4) {
-                    unk_val4 = unk_val6;
-                    soc_cat_bits = unk_sum2;
-                }
+            }
+            if (unk_val6 >= unk_val4) {
+                unk_val4 = unk_val6;
+                soc_cat_bits = i; // the SE combination being evaluated
             }
         }
     }
@@ -1842,12 +1833,12 @@ void __cdecl enemy_capabilities(uint32_t faction_id) {
         // 4th pass: any non-pact faction
         for (uint32_t j = 1; j < MaxPlayerNum; j++) {
             if (j != faction_id
-                && !has_treaty(i, j, DTREATY_PACT)
-                && ((!i && has_treaty(i, j, DTREATY_VENDETTA) && !has_treaty(i, j, DTREATY_TREATY)
-                    && has_treaty(i, j, DTREATY_COMMLINK)) 
-                    || (i == 1 && !has_treaty(i, j, DTREATY_TREATY) 
-                        && has_treaty(i, j, DTREATY_COMMLINK))
-                    || (i == 2 && has_treaty(i, j, DTREATY_COMMLINK)) || (i == 3))) {
+                && !has_treaty(faction_id, j, DTREATY_PACT)
+                && ((!i && has_treaty(faction_id, j, DTREATY_VENDETTA) && !has_treaty(faction_id, j, DTREATY_TREATY)
+                    && has_treaty(faction_id, j, DTREATY_COMMLINK)) 
+                    || (i == 1 && !has_treaty(faction_id, j, DTREATY_TREATY) 
+                        && has_treaty(faction_id, j, DTREATY_COMMLINK))
+                    || (i == 2 && has_treaty(faction_id, j, DTREATY_COMMLINK)) || (i == 3))) {
                 if (PlayersData[faction_id].enemy_best_weapon_value 
                     < PlayersData[j].best_weapon_value) {
                     PlayersData[faction_id].enemy_best_weapon_value 

@@ -37,6 +37,8 @@ typedef FILE *func3(LPCSTR, LPCSTR);
 extern func3 *_fopen;
 typedef void *func4(unsigned int);
 extern func4 *_srand;
+typedef int func_rand(void);
+extern func_rand *_rand; // the exe's CRT rand(); code still in the exe calls it inline
 
 typedef int *func10(void *, size_t, size_t, FILE *);
 extern func10 *_fread;
@@ -115,6 +117,49 @@ typedef void func_diplo2(int, int);
 extern func_diplo2 *trade_maps_OG;
 typedef int func_diplo2r(int, int);
 extern func_diplo2r *do_withdrawal_OG;
+typedef void func_void(void);
+typedef void func_u32(uint32_t);
+typedef void func_xy(int, int);
+typedef void func_xyb(int, int, BOOL);
+typedef void func_xyi(int, int, int);
+typedef void func_xyib(int, int, int, BOOL);
+typedef void func_xyuu(int, int, uint32_t, uint32_t);
+typedef void func_social_ai(uint32_t, int, int, int, int, SocialCategory *);
+typedef BOOL __fastcall func_path_sensors(void *This, void *edx_unused, uint32_t faction_id,
+    int *x_sensor, int *y_sensor);
+extern func_u32 *base_mark_OG;
+extern func_void *base_psych_OG;
+extern func_social_ai *social_ai_OG;
+extern func_path_sensors *Path_sensors_OG; // Path::sensors()
+extern func_xyib *world_alt_set_OG;
+extern func_xy *world_raise_alt_OG;
+extern func_xy *world_lower_alt_OG;
+extern func_xyi *brush_OG;
+extern func_xyuu *paint_land_OG;
+extern func_u32 *build_continent_OG;
+extern func5 *build_hills_OG;
+extern func_void *world_riverbeds_OG;
+extern func_void *world_temperature_OG;
+extern func_void *world_analysis_OG;
+extern func_void *world_polar_caps_OG;
+extern func_void *world_linearize_contours_OG;
+extern func_xy *world_crater_OG;
+extern func_xy *world_monsoon_OG;
+extern func_xy *world_sargasso_OG;
+extern func_xy *world_ruin_OG;
+extern func_xy *world_dune_OG;
+extern func_xy *world_diamond_OG;
+extern func_xy *world_fresh_OG;
+extern func_xyb *world_volcano_OG;
+extern func_xy *world_borehole_OG;
+extern func_xy *world_temple_OG;
+extern func_xy *world_unity_OG;
+extern func_xy *world_fossil_OG;
+extern func_xy *world_canyon_OG;
+extern func_xy *world_mesa_OG;
+extern func_xy *world_ridge_OG;
+extern func_xy *world_geothermal_OG;
+extern func_void *world_landmarks_OG;
 //
 extern char1032 *stringTemp;
 extern char256 *ParseStrBuffer;

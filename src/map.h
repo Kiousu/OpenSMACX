@@ -263,6 +263,7 @@ extern Continent *Continents;
 extern RulesNatural *Natural;
 extern uint32_t *MapLongitude; // halve of MapLongitudeBounds
 extern uint32_t *AltNatural; // Default: { 0, 15, 32, 45, 60,  75,  80, 100, 100, 100, 100 };
+extern uint32_t *AltNaturalDefault; // the constant table the defaults come from (never modified)
 
 DLLEXPORT BOOL __cdecl on_map(int x, int y);
 DLLEXPORT int __cdecl xrange(int x);

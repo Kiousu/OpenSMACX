@@ -31,6 +31,7 @@ func1 *_malloc = (func1 *)0x006470A6;
 func2 *_free = (func2 *)0x00644EF2;
 func3 *_fopen = (func3 *)0x00645646;
 func4 *_srand = (func4 *)0x00646010;
+func_rand *_rand = (func_rand *)0x0064601D;
 func10 *_fread = (func10 *)0x00646178;
 func10 *_fwrite = (func10 *)0x0064603F;
 func17 *_fgetc = (func17 *)0x00646855;
@@ -81,6 +82,39 @@ func_diplo3u *agenda_on_OG = (func_diplo3u *)0x0055BA80;
 func_diplo3u *agenda_off_OG = (func_diplo3u *)0x0055B820;
 func_diplo2 *trade_maps_OG = (func_diplo2 *)0x00543A20;
 func_diplo2r *do_withdrawal_OG = (func_diplo2r *)0x00548F80;
+func_u32 *base_mark_OG = (func_u32 *)0x004E4350;
+func_void *base_psych_OG = (func_void *)0x004EA540;
+func_social_ai *social_ai_OG = (func_social_ai *)0x005B4790;
+func_path_sensors *Path_sensors_OG = (func_path_sensors *)0x0059CCA0;
+func_xyib *world_alt_set_OG = (func_xyib *)0x005C2020;
+func_xy *world_raise_alt_OG = (func_xy *)0x005C2380;
+func_xy *world_lower_alt_OG = (func_xy *)0x005C23E0;
+func_xyi *brush_OG = (func_xyi *)0x005C2440;
+func_xyuu *paint_land_OG = (func_xyuu *)0x005C27F0;
+func_u32 *build_continent_OG = (func_u32 *)0x005C28F0;
+func5 *build_hills_OG = (func5 *)0x005C2B40;
+func_void *world_riverbeds_OG = (func_void *)0x005C3680;
+func_void *world_temperature_OG = (func_void *)0x005C4170;
+func_void *world_analysis_OG = (func_void *)0x005C55C0;
+func_void *world_polar_caps_OG = (func_void *)0x005C58E0;
+func_void *world_linearize_contours_OG = (func_void *)0x005C5AE0;
+func_xy *world_crater_OG = (func_xy *)0x005C5C70;
+func_xy *world_monsoon_OG = (func_xy *)0x005C5EF0;
+func_xy *world_sargasso_OG = (func_xy *)0x005C6200;
+func_xy *world_ruin_OG = (func_xy *)0x005C64A0;
+func_xy *world_dune_OG = (func_xy *)0x005C6740;
+func_xy *world_diamond_OG = (func_xy *)0x005C69E0;
+func_xy *world_fresh_OG = (func_xy *)0x005C6C40;
+func_xyb *world_volcano_OG = (func_xyb *)0x005C6DB0;
+func_xy *world_borehole_OG = (func_xy *)0x005C7020;
+func_xy *world_temple_OG = (func_xy *)0x005C7540;
+func_xy *world_unity_OG = (func_xy *)0x005C7750;
+func_xy *world_fossil_OG = (func_xy *)0x005C7A80;
+func_xy *world_canyon_OG = (func_xy *)0x005C7CB0;
+func_xy *world_mesa_OG = (func_xy *)0x005C7F40;
+func_xy *world_ridge_OG = (func_xy *)0x005C8150;
+func_xy *world_geothermal_OG = (func_xy *)0x005C83B0;
+func_void *world_landmarks_OG = (func_void *)0x005C8630;
 ///
 char1032 *stringTemp = (char1032 *)0x009B86A0;
 char256 *ParseStrBuffer = (char256 *)0x009BB5E8;
@@ -759,7 +793,9 @@ BOOL __cdecl do_non_input() {
     }
     if (!PeekMessage(&msg[0], NULL, WM_NULL, WM_INPUT, PM_NOREMOVE)
         || !PeekMessage(&msg[1], NULL, WM_UNICHAR, WM_KEYDOWN | WM_INPUT, PM_NOREMOVE)
-        || !PeekMessage(&msg[2], NULL, WM_MOUSELAST, UNICODE_NOCHAR, PM_NOREMOVE)) {
+        || !PeekMessage(&msg[2], NULL, 0x20A, UNICODE_NOCHAR, PM_NOREMOVE)) {
+        // 0x20A: WM_MOUSELAST in the SDK the game was built with (WM_MOUSEWHEEL); newer SDKs
+        // define WM_MOUSELAST as 0x20E, which would skip the mouse wheel and X-button messages
         return false;
     }
     int a = 0;
@@ -800,7 +836,7 @@ BOOL __cdecl do_draw() {
     check_net();
     do_net();
     MSG msg;
-    if (PeekMessage(&msg, NULL, WM_PAINT, WM_PAINT, WM_CREATE)) {
+    if (PeekMessage(&msg, NULL, WM_PAINT, WM_PAINT, PM_REMOVE)) {
         TranslateMessage(&msg);
         DispatchMessage(&msg);
         return true;
@@ -831,7 +867,8 @@ BOOL __cdecl do_keyboard() {
     do_video();
     check_net();
     MSG msg;
-    if (PeekMessage(&msg, NULL, WM_KEYDOWN, WM_KEYLAST, WM_CREATE)) {
+    // 0x108: WM_KEYLAST in the SDK the game was built with; newer SDKs define it as 0x109 (WM_UNICHAR)
+    if (PeekMessage(&msg, NULL, WM_KEYDOWN, 0x108, PM_REMOVE)) {
         TranslateMessage(&msg);
         DispatchMessage(&msg);
         return true;
