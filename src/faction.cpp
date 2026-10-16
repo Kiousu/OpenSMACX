@@ -646,6 +646,30 @@ uint32_t __cdecl has_agenda(uint32_t faction_id, uint32_t faction_id_with, uint3
 }
 
 /*
+Purpose: Check whether the faction at the controls has full intelligence on the specified faction:
+         an infiltrator, the Empath Guild, or the Planetary Governorship (which sees every
+         non-alien faction).
+Original Offset: 0055BC00
+Return Value: Is the faction being spied on? true/false
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch3.log)
+*/
+BOOL __cdecl spying(int faction_id) {
+    int faction_id_current = *FactionIDCurrent;
+    if (PlayersData[faction_id_current].diplo_treaties[faction_id] & DTREATY_HAVE_INFILTRATOR) {
+        return true;
+    }
+    int base_id_empath = SecretProject->empath_guild;
+    if (base_id_empath >= 0 && Bases[base_id_empath].faction_id_current == faction_id_current) {
+        return true;
+    }
+    if (faction_id_current == *GovernorFactionID
+        && !(Players[faction_id].rule_flags & RFLAG_ALIEN)) {
+        return true;
+    }
+    return false;
+}
+
+/*
 Purpose: Determine if the specified faction want to attack the target faction.
 Original Offset: 0055BC80
 Return Value: Does the faction want to attack target? true/false

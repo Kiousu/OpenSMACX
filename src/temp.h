@@ -74,7 +74,6 @@ extern func9 *world_rainfall;
 typedef BOOL func11(int, int, int);
 extern func11 *wants_to_attack_;
 typedef int func14(int, int);
-extern func14 *base_at;
 typedef uint32_t func15(LPCSTR);
 extern func15 *save_daemon;
 typedef uint32_t func16(LPCSTR, BOOL);
@@ -159,6 +158,28 @@ extern func_diplo2 *spot_base_OG;
 extern func_diplo2 *spot_stack_OG;
 extern func_diplo2 *retire_proto_OG;
 extern func_veh_pred *study_artifact_OG;
+// batch 3
+typedef int func_iii(int, int, int);
+extern func14 *base_at_OG;
+extern func_iii *upgrade_cost_OG;
+extern func_xyi *do_upgrade_OG;
+extern func_diplo2 *upgrade_prototypes_OG;
+extern func5 *upgrade_any_prototypes_OG;
+typedef BOOL func_claimed(int, int, int, int, int, int);
+extern func_claimed *base_claimed_OG;
+extern func_iii *site_at_OG;
+extern func_veh_pred *spying_OG;
+extern func_diplo2r *act_of_aggression_OG;
+extern func_iii *council_get_vote_OG;
+extern func_diplo2r *can_call_council_OG;
+typedef int func_i(int);
+extern func_i *pick_top_veh_OG;
+extern func_diplo2r *can_convoy_OG;
+extern func5 *promote_OG;
+extern func_u32 *proto_sort_OG;
+extern func_u32 *proto_sort_2_OG;
+typedef void func_str(LPSTR);
+extern func_str *yearmotize_OG;
 extern func_void *base_psych_OG;
 extern func_social_ai *social_ai_OG;
 extern func_path_sensors *Path_sensors_OG; // Path::sensors()
@@ -264,6 +285,20 @@ extern func_netmsg_pop *NetMsg_pop; // NetMsg::pop()
 extern void *NetMsgVar; // global NetMsg instance
 extern int *BaseIDUnk; // never written by the exe; compared against base ids in study_artifact(),
                        // order_veh(), capture_base(), enemy_move() and Console::go_to()
+extern func_iii *wants_prop; // wants_prop(faction_id, proposal, faction_id_proposer)
+extern func_iii *world_site; // world_site(x, y, unk): base site rating of a tile
+typedef int func_upgrade_proto(int, int, int, int);
+extern func_upgrade_proto *upgrade_prototype; // upgrade_prototype(faction_id, proto_id, proto_id_other, flag)
+typedef int __fastcall func_console_focus(void *This, void *edx_unused, int x, int y, int faction_id);
+extern func_console_focus *Console_focus; // Console::focus()
+extern BOOL *IsLoggingActive; // set by net_end_of_turn() when the per-faction log file could be opened
+extern int *DialogToggle; // Thinker's name; tested before the GetAsyncKeyState() call in base_at()
+extern int *CouncilSessionPending; // hotseat/PBEM: a council session waits for the other players
+extern int *VehDrawBoomID; // unit being blown up by boom(); never picked as the top of a stack
+extern int *MapWinVehIDSelected; // Console::iUnit, the unit selected in the map window
+extern BOOL *MapWinUnitNotViewMode; // Console field after the owner (Thinker: fUnitNotViewMode)
+extern int *MapWinUnkFlag; // Console field +0x23BE4, checked by pick_top_veh()
+extern int *VehUpgradeUnk; // zeroed by upgrade_any_prototypes(), set by upgrade_prototype()
 extern void *WorldWinVar; // global WorldWin instance (lower right world map view)
 extern BOOL *TradeMapsRevealedNew; // set by trade_maps() and friends when new tiles were revealed
 typedef void func_tech_ach(int, int, int, int);

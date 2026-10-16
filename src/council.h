@@ -42,6 +42,9 @@ struct RulesProposal {
 constexpr int MaxProposalNum = 11;
 
 extern RulesProposal *Proposal;
+extern int *GovernorFactionID;
 
 DLLEXPORT uint32_t __cdecl council_votes(uint32_t faction_id);
 DLLEXPORT BOOL __cdecl eligible(uint32_t faction_id);
+DLLEXPORT int __cdecl council_get_vote(int faction_id, int proposal, int faction_id_proposer);
+DLLEXPORT BOOL __cdecl can_call_council(uint32_t faction_id, BOOL announce);

@@ -373,3 +373,47 @@ bunglist ring index (`bunglist_index`); `study_artifact` toggles the unnamed pla
 then 0x4; the tile flag `bit2 & 0x400000` plus `UnkBitfield1 |= 1` mark a tile the current
 player sees for the first time; 0x9A6564 (`BaseIDUnk`) is compared against base ids in five
 functions but never written by the exe. Boot test: the 570-redirect exe loaded Council.SAV and advanced the turn 289 -> 290 (38 s) with the game alive.
+
+## Batch 3, 2026-10-16 (Council.SAV, 570-redirect exe)
+
+Seventeen functions across seven files: `base_at`, `upgrade_cost`, `do_upgrade`,
+`upgrade_prototypes`, `upgrade_any_prototypes`, `base_claimed` (base.cpp), `site_at` (map.cpp),
+`spying` (faction.cpp), `act_of_aggression` (probe.cpp), `council_get_vote`, `can_call_council`
+(council.cpp), `pick_top_veh`, `can_convoy`, `promote`, `proto_sort`, `proto_sort_2` (veh.cpp) and
+`yearmotize` (game.cpp). Trigger group `batch3` runs sixteen tests (`proto_sort` covers both sort
+orders). The upgrade tests and `act_of_aggression` go through exe code on both sides
+(`upgrade_prototype()`, `double_cross()`) and are limited to AI factions other than the one at
+the controls, since that code redraws the map or talks to a human; `base_at` is also fed tiles
+with a stray base bit (debug mode off, so both sides rebuild the base bits). The first run showed
+296 `base_claimed` mismatches: the transcription had the value comparison the wrong way round
+(the original claims an item when the governor pick's value is at or below the requested one).
+
+| function | inputs | compared | mismatches |
+|---|---|---|---|
+| base_at | every tile plus a two-tile ring off the map; 24 stray-bit tiles | 17,448 | 0 |
+| upgrade_cost | factions 1-7 x active old design x every 3rd active new design, with/without the Nano Factory | 24,116 | 0 |
+| do_upgrade | AI factions x designs with units (plus every 8th without) x 4 targets | 998 (771 changed) | 0 |
+| upgrade_prototypes | AI factions x active designs, with/without every other design marked obsolete | 838 (533 changed) | 0 |
+| upgrade_any_prototypes | 7 factions; AI factions also with every built design flagged pending | 13 (12 changed) | 0 |
+| base_claimed | synthetic picks x items -1..14 x values -1..10 x 16 skip masks | 3,072 | 0 |
+| site_at | every tile, three values of the third argument | 8,192 (1,134 computed) | 0 |
+| spying | 7 current factions x governor yes/no x 8 factions x infiltrator yes/no | 224 | 0 |
+| act_of_aggression | AI pairs, with/without an existing treaty | 60 (30 broke an agreement) | 0 |
+| council_get_vote | factions 1-7 x 11 proposals x 7 proposers x 3 pledge states | 1,617 | 0 |
+| can_call_council | factions 1-7 x 64 combinations of sunspots, PBEM, pending session, rule, net, omniscient | 448 (60 allowed) | 0 |
+| pick_top_veh | every unit (and -1) x 8 selection/boom/mode variants | 13,936 | 0 |
+| can_convoy | every tile | 8,192 (2,129 blocked) | 0 |
+| promote | every unit not owned by the human at the controls, as is and reset to green | 2,702 (1,664 promotions) | 0 |
+| proto_sort / proto_sort_2 | factions 0-7 | 16 | 0 |
+| yearmotize | 13 sample strings | 13 | 0 |
+
+Log: `regression-runs/2026-10-16-council-batch3.log`. Notes: `PlayerData+0x400/+0x42C`
+(`unk_29`/`unk_30`) are the council pledge arrays (`council_pledge_vote` /
+`council_pledge_faction`); 0x90EA44/0x90EA54 are the four governor production picks
+(`BaseGovPickID`/`BaseGovPickValue`) written by `base_reset()`; 0x945B40/0x945B44 are
+`ProtoSortCount`/`ProtoSortList`; 0x93A94C (`IsLoggingActive`) is set by `net_end_of_turn()` when
+the per-faction log file could be opened; 0x689F30 (`VehDrawBoomID`) is the unit `boom()` is
+blowing up; 0x9A681C is `GameMoreRules` (bit 4 = no Planetary Council) and 0x9A6614 the
+`GovernorFactionID`. The `has_abil()` mask 0x408418 in `upgrade_prototypes` is amphibious, drop
+pod, antigrav struts, artillery and police 2x. Boot test: the 587-redirect exe loaded Council.SAV and advanced the
+turn 289 -> 290 (38 s) with the game alive.

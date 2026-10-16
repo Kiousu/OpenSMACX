@@ -22,6 +22,7 @@
 #include "game.h"
 
 RulesProposal *Proposal = (RulesProposal *)0x009A6828;
+int *GovernorFactionID = (int *)0x009A6614; // current Planetary Governor, 0 if none
 
 /*
 Purpose: Calculate faction's vote count. Used for Planetary Governor and Supreme Leader.
@@ -75,4 +76,109 @@ BOOL __cdecl eligible(uint32_t faction_id) {
         }
     }
     return faction_count < 2;
+}
+
+/*
+Purpose: Decide a faction's council vote. For the governor election (proposal 0) this is the
+         candidate wanted most, or the one the faction pledged to vote for unless relations have
+         soured; for any other proposal a pledged vote is honored, otherwise -1 (yes) or -2 (no)
+         from wants_prop() adjusted for vendetta, revenge and pact with the proposer, with a
+         turn-based tie breaker between -1 and -3.
+Original Offset: 0052BE60
+Return Value: Vote: candidate faction id for the election, otherwise -1 (yes), -2 (no), -3 (abstain)
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch3.log)
+*/
+int __cdecl council_get_vote(int faction_id, int proposal, int faction_id_proposer) {
+    if (proposal == PROP_ELECT_PLANETARY_GOVERNOR) {
+        int want_best = 0;
+        int vote = -3;
+        for (int candidate = 1; candidate < MaxPlayerNum; candidate++) {
+            int want = wants_prop(faction_id, PROP_ELECT_PLANETARY_GOVERNOR, candidate);
+            if (want > want_best) {
+                want_best = want;
+                vote = candidate;
+            }
+        }
+        if (PlayersData[faction_id].council_pledge_vote[0]) {
+            int pledged = PlayersData[faction_id].council_pledge_faction[0];
+            if (!(PlayersData[faction_id].diplo_treaties[pledged]
+                & (DTREATY_VENDETTA | DTREATY_WANT_REVENGE | DTREATY_SHALL_BETRAY
+                    | DTREATY_UNK_800 | DTREATY_ATROCITY_VICTIM))) {
+                return pledged;
+            }
+        }
+        return vote;
+    }
+    int want = wants_prop(faction_id, proposal, faction_id_proposer);
+    uint32_t treaties = PlayersData[faction_id].diplo_treaties[faction_id_proposer];
+    if (treaties & DTREATY_VENDETTA) {
+        want--;
+    }
+    if (treaties & DTREATY_WANT_REVENGE) {
+        want--;
+    }
+    if (treaties & DTREATY_PACT) {
+        want++;
+    }
+    int pledged = PlayersData[faction_id].council_pledge_vote[proposal];
+    if (pledged) {
+        return pledged;
+    }
+    if (want > 0) {
+        return -1;
+    }
+    if (want < 0) {
+        return -2;
+    }
+    return -1 - (*TurnCurrentNum + faction_id) % 3;
+}
+
+/*
+Purpose: Check whether a faction may call the Planetary Council: not alien, council not disabled
+         by the rules, no sunspots, no session already pending in hotseat/PBEM, and either the
+         Empath Guild or commlinks with every living non-alien faction. With announce set the
+         player at the controls is told why not.
+Original Offset: 0052C670
+Return Value: Can the faction call the council? true/false
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch3.log)
+*/
+BOOL __cdecl can_call_council(uint32_t faction_id, BOOL announce) {
+    if (Players[faction_id].rule_flags & RFLAG_ALIEN) {
+        return false;
+    }
+    if ((*GameMoreRules & MRULES_NO_PLANETARY_COUNCIL)
+        && (!(*GameState & STATE_SCENARIO_EDITOR) || !(*GameState & STATE_OMNISCIENT_VIEW))) {
+        return false;
+    }
+    BOOL tell = announce && faction_id == (uint32_t)*FactionIDCurrent && is_human(faction_id);
+    if (*SunspotDuration > 0) {
+        if (tell) {
+            NetMsg_pop(NetMsgVar, 0, "SUNSPOTSNO2", -5000, 0, "solar_sm.pcx");
+        }
+        return false;
+    }
+    if (*IsMultiplayerPBEM && *CouncilSessionPending) {
+        if (tell) {
+            NetMsg_pop(NetMsgVar, 0, "COUNCILHOT", -5000, 0, NULL);
+        }
+        return false;
+    }
+    int base_id_empath = SecretProject->empath_guild;
+    if (base_id_empath >= 0 && Bases[base_id_empath].faction_id_current == faction_id) {
+        return true;
+    }
+    for (uint32_t i = 1; i < MaxPlayerNum; i++) {
+        if ((Players[i].rule_flags & RFLAG_ALIEN) || !is_alive(i) || i == faction_id
+            || (PlayersData[faction_id].diplo_treaties[i] & (DTREATY_COMMLINK | DTREATY_UNK_8000000))
+            || ((*GameState & STATE_OMNISCIENT_VIEW) && is_human(faction_id)
+                && faction_id == (uint32_t)*FactionIDCurrent)
+            || (*IsMultiplayerNet && is_human(faction_id) && is_human(i))) {
+            continue;
+        }
+        if (tell) {
+            NetMsg_pop(NetMsgVar, 0, "COUNCILNEEDALL", -5000, 0, "council_sm.pcx");
+        }
+        return false;
+    }
+    return true;
 }

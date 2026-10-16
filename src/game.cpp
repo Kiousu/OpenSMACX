@@ -27,6 +27,7 @@ uint32_t *GamePreferences = (uint32_t *)0x009A6490;
 uint32_t *GameMorePreferences = (uint32_t *)0x009A6494;
 uint32_t *GameWarnings = (uint32_t *)0x009A6498;
 uint32_t *GameRules = (uint32_t *)0x009A649C;
+uint32_t *GameMoreRules = (uint32_t *)0x009A681C;
 uint32_t *GameState = (uint32_t *)0x009A64C0;
 int *DiffLevelCurrent = (int *)0x009A64C4;
 int *TurnCurrentNum = (int *)0x009A64D4;
@@ -75,6 +76,31 @@ void __cdecl planetfall(uint32_t faction_id) {
         strcpy_s(script_id, 13, "PLANETFALL");
     }
     X_pop(script_id, NULL);
+}
+
+/*
+Purpose: Replace every standalone four digit number in a string with the current game year.
+Original Offset: 005A9DB0
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch3.log)
+*/
+void __cdecl yearmotize(LPSTR str) {
+    for (LPSTR p = str; *p; p++) {
+        if (strlen(p) < 4) {
+            return;
+        }
+        if (isdigit(p[0]) && isdigit(p[1]) && isdigit(p[2]) && isdigit(p[3]) && !isdigit(p[4])
+            && (p == str || !isdigit(p[-1]))) {
+            char year[80];
+            _itoa_s(game_year(*TurnCurrentNum), year, 80, 10);
+            char digits[80] = "";
+            strcat_s(digits, 80, year);
+            p[0] = digits[0];
+            p[1] = digits[1];
+            p[2] = digits[2];
+            p[3] = digits[3];
+        }
+    }
 }
 
 /*

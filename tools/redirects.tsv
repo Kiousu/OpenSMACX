@@ -581,3 +581,21 @@
 0x001B58E0	?spot_stack@@YAXHH@Z
 0x0017CFA0	?study_artifact@@YAHH@Z
 0x001BADC0	?tech_secret@@YAXHH@Z
+# --- batch 3: base lookup/upgrades/governor picks, site rating, spying, aggression, council votes, stack top, convoy, promotion, prototype sort, year text
+0x000E3A50	?base_at@@YAHHH@Z
+0x000EFD50	?upgrade_cost@@YAHIHH@Z
+0x000EFB50	?do_upgrade@@YAXIHH@Z
+0x000F0460	?upgrade_prototypes@@YAXHI@Z
+0x000F0650	?upgrade_any_prototypes@@YAXH@Z
+0x000F8110	?base_claimed@@YAHHHHHHH@Z
+0x001797D0	?site_at@@YAIHHH@Z
+0x0015BC00	?spying@@YAHH@Z
+0x0010C2E0	?act_of_aggression@@YAHHH@Z
+0x0012BE60	?council_get_vote@@YAHHHH@Z
+0x0012C670	?can_call_council@@YAHIH@Z
+0x001593E0	?pick_top_veh@@YAHH@Z
+0x00164D90	?can_convoy@@YAHHH@Z
+0x001062B0	?promote@@YAXH@Z
+0x001A6270	?proto_sort@@YAXI@Z
+0x001A63D0	?proto_sort_2@@YAXI@Z
+0x001A9DB0	?yearmotize@@YAXPAD@Z

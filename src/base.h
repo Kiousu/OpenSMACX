@@ -503,6 +503,9 @@ extern int *BaseFindDist;
 extern Base **BaseCurrent;
 extern uint32_t *ScnVictFacilityObj;
 extern uint32_t *BaseUpkeepStage;
+extern BOOL *BaseBitsErrorActive;
+extern int *BaseGovPickID; // [4]
+extern int *BaseGovPickValue; // [4]
 extern uint32_t *BaseCurrentConvoyFrom; // resources convoyed from base
 extern uint32_t *BaseCurrentConvoyTo; // resources convoyed/extracted to base
 extern int *BaseCurrentGrowthRate;
@@ -561,6 +564,13 @@ DLLEXPORT BOOL __cdecl is_objective(uint32_t base_id);
 DLLEXPORT int __cdecl get_rating(uint32_t faction_id, int value);
 DLLEXPORT int __cdecl most_objectives(int *faction_id_most, int *tie_count);
 DLLEXPORT void __cdecl spot_base(int base_id, int faction_id);
+DLLEXPORT int __cdecl base_at(int x, int y);
+DLLEXPORT int __cdecl upgrade_cost(uint32_t faction_id, int proto_id_new, int proto_id_old);
+DLLEXPORT void __cdecl do_upgrade(uint32_t faction_id, int proto_id_new, int proto_id_old);
+DLLEXPORT void __cdecl upgrade_prototypes(int faction_id, uint32_t proto_id);
+DLLEXPORT void __cdecl upgrade_any_prototypes(int faction_id);
+DLLEXPORT BOOL __cdecl base_claimed(int item_id, int value, BOOL skip_explore, BOOL skip_discover,
+                                    BOOL skip_build, BOOL skip_conquer);
 DLLEXPORT BOOL __cdecl transcending(int faction_id);
 DLLEXPORT BOOL __cdecl ascending(int faction_id);
 DLLEXPORT BOOL __cdecl redundant(int facility_id, uint32_t faction_id);

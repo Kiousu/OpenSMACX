@@ -90,6 +90,13 @@ enum GameRulesBitfield { // used by GameRules
     RULES_SCN_NO_BUILDING_SP = 0x80000000,
 };
 
+enum GameMoreRulesBitfield { // used by GameMoreRules
+    MRULES_SCN_UNITY_PODS_NO_VEHICLES = 0x1,
+    MRULES_SCN_UNITY_PODS_NO_TECH = 0x2,
+    MRULES_NO_PLANETARY_COUNCIL = 0x4,
+    MRULES_NO_SOCIAL_ENGINEERING = 0x8,
+};
+
 enum GameDifficultyLevel {
     DLVL_CITIZEN = 0,
     DLVL_SPECIALIST = 1,
@@ -104,6 +111,7 @@ extern uint32_t *GamePreferences;
 extern uint32_t *GameMorePreferences;
 extern uint32_t *GameWarnings; // used for setting pop notifications
 extern uint32_t *GameRules; // bitfield
+extern uint32_t *GameMoreRules; // bitfield
 extern uint32_t *GameState; // bitfield
 extern int *DiffLevelCurrent;
 extern int *TurnCurrentNum;
@@ -126,3 +134,4 @@ DLLEXPORT void __cdecl planetfall(uint32_t faction_id);
 DLLEXPORT void __cdecl clear_scenario();
 DLLEXPORT uint32_t __cdecl game_year(int turn);
 DLLEXPORT void __cdecl say_year(LPSTR output);
+DLLEXPORT void __cdecl yearmotize(LPSTR str);

@@ -1156,6 +1156,26 @@ int __cdecl x_dist(int x_point_a, int x_point_b) {
 }
 
 /*
+Purpose: Get the base site rating of a tile, computing and storing it with world_site() the first
+         time. Tiles inside an existing base radius rate zero.
+Original Offset: 005797D0
+Return Value: Site rating (0-15)
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch3.log)
+*/
+uint32_t __cdecl site_at(int x, int y, int unk) {
+    Map *tile = map_loc(x, y);
+    if (tile->bit & BIT_BASE_RADIUS) {
+        return 0;
+    }
+    uint32_t site = tile->val2 >> 4;
+    if (!site) {
+        site = world_site(x, y, unk);
+        site_set(x, y, site);
+    }
+    return site;
+}
+
+/*
 Purpose: Check whether a faction can see the specified tile.
 Original Offset: 00579840
 Return Value: Is tile visible/known to faction? true/false

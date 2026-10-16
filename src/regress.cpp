@@ -25,6 +25,9 @@
 #include "path.h"
 #include "random.h"
 #include "technology.h"
+#include "council.h"
+#include "probe.h"
+#include "alpha.h"
 #include "regress.h"
 
 #ifdef OPENSMACX_REGRESS
@@ -2018,6 +2021,696 @@ static int test_study_artifact() {
     return mismatches;
 }
 
+// ---------------------------------------------------------------- batch 3
+
+static int test_base_at() {
+    int compared = 0, mismatches = 0, synthetic = 0;
+    int w = *MapLongitudeBounds, h = *MapLatitudeBounds;
+    for (int y = -2; y <= h + 1; y++) {
+        for (int x = -2; x <= w + 1; x++) {
+            int b = base_at_OG(x, y);
+            int a = base_at(x, y);
+            compared++;
+            if (a != b) {
+                if (mismatches < MAX_DETAIL) {
+                    logf("  base_at(%d, %d): new=%d orig=%d", x, y, a, b);
+                }
+                mismatches++;
+            }
+        }
+    }
+    // a tile flagged as holding a base without one: with debug mode off both sides log the error
+    // and rebuild the base bits
+    GameSnapshot base, after_orig, after_new;
+    snap_alloc(&base); snap_alloc(&after_orig); snap_alloc(&after_new);
+    snap_take(&base);
+    uint32_t state_saved = *GameState;
+    *GameState &= ~STATE_DEBUG_MODE;
+    char label[64];
+    for (int i = 0; i < base.veh_count; i += 37) {
+        int x = Vehs[i].x, y = Vehs[i].y;
+        if (x < 0 || y < 0 || x >= w || y >= h || base_at_OG(x, y) >= 0) {
+            continue;
+        }
+        snap_restore(&base);
+        map_loc(x, y)->bit |= BIT_BASE_IN_TILE;
+        int b = base_at_OG(x, y);
+        snap_take(&after_orig);
+        snap_restore(&base);
+        map_loc(x, y)->bit |= BIT_BASE_IN_TILE;
+        int a = base_at(x, y);
+        snap_take(&after_new);
+        compared++;
+        synthetic++;
+        sprintf_s(label, "base_at(%d, %d) bad bit", x, y);
+        BOOL diff = false;
+        if (a != b) {
+            if (mismatches < MAX_DETAIL) {
+                logf("  %s: new=%d orig=%d", label, a, b);
+            }
+            diff = true;
+        }
+        if (!diff) {
+            diff = snap_differs(&after_orig, &after_new, mismatches < MAX_DETAIL ? label : NULL);
+        }
+        if (diff) {
+            mismatches++;
+        }
+    }
+    snap_restore(&base);
+    *GameState = state_saved;
+    snap_free(&base); snap_free(&after_orig); snap_free(&after_new);
+    logf("base_at: %d compared (%d with a stray base bit), %d mismatches", compared, synthetic,
+        mismatches);
+    return mismatches;
+}
+
+static int test_upgrade_cost() {
+    int compared = 0, mismatches = 0;
+    int nano_saved = SecretProject->nano_factory;
+    for (int variant = 0; variant < 2; variant++) {
+        for (uint32_t f = 1; f < MaxPlayerNum; f++) {
+            // second pass: the faction's first base owns the Nano Factory
+            int base_id_nano = -1;
+            if (variant) {
+                for (int i = 0; i < *BaseCurrentCount; i++) {
+                    if (Bases[i].faction_id_current == f) {
+                        base_id_nano = i;
+                        break;
+                    }
+                }
+                if (base_id_nano < 0) {
+                    continue;
+                }
+            }
+            SecretProject->nano_factory = base_id_nano;
+            for (int slot_old = 0; slot_old < 2 * MaxVehProtoFactionNum; slot_old++) {
+                int proto_old = slot_old < MaxVehProtoFactionNum ? slot_old
+                    : f * MaxVehProtoFactionNum + (slot_old - MaxVehProtoFactionNum);
+                if (!(VehPrototypes[proto_old].flags & PROTO_ACTIVE)) {
+                    continue;
+                }
+                for (int slot_new = 0; slot_new < 2 * MaxVehProtoFactionNum; slot_new += 3) {
+                    int proto_new = slot_new < MaxVehProtoFactionNum ? slot_new
+                        : f * MaxVehProtoFactionNum + (slot_new - MaxVehProtoFactionNum);
+                    if (!(VehPrototypes[proto_new].flags & PROTO_ACTIVE)) {
+                        continue;
+                    }
+                    int b = upgrade_cost_OG(f, proto_new, proto_old);
+                    int a = upgrade_cost(f, proto_new, proto_old);
+                    compared++;
+                    if (a != b) {
+                        if (mismatches < MAX_DETAIL) {
+                            logf("  upgrade_cost(%u, %d, %d) nano %d: new=%d orig=%d", f, proto_new,
+                                proto_old, base_id_nano, a, b);
+                        }
+                        mismatches++;
+                    }
+                }
+            }
+        }
+    }
+    SecretProject->nano_factory = nano_saved;
+    logf("upgrade_cost: %d compared, %d mismatches", compared, mismatches);
+    return mismatches;
+}
+
+// Snapshot comparison for a call that may also change the prototype table and the upgrade flag.
+struct ProtoCompare {
+    GameSnapshot base, after_orig, after_new;
+    uint8_t *saved, *orig, *fresh;
+    int flag_saved, flag_orig, flag_new;
+    static const size_t size = sizeof(VehPrototype) * MaxVehProtoNum;
+    void init() {
+        snap_alloc(&base); snap_alloc(&after_orig); snap_alloc(&after_new);
+        snap_take(&base);
+        saved = (uint8_t *)malloc(size); orig = (uint8_t *)malloc(size); fresh = (uint8_t *)malloc(size);
+        memcpy(saved, VehPrototypes, size);
+        flag_saved = *VehUpgradeUnk;
+    }
+    void prepare() {
+        snap_restore(&base);
+        memcpy(VehPrototypes, saved, size);
+        *VehUpgradeUnk = flag_saved;
+    }
+    void take_orig() { snap_take(&after_orig); memcpy(orig, VehPrototypes, size); flag_orig = *VehUpgradeUnk; }
+    void take_new() { snap_take(&after_new); memcpy(fresh, VehPrototypes, size); flag_new = *VehUpgradeUnk; }
+    BOOL changed() {
+        return first_diff(after_orig.vehs, base.vehs, sizeof(Veh) * base.veh_count) != (size_t)-1
+            || first_diff(orig, saved, size) != (size_t)-1;
+    }
+    BOOL differs(const char *label, BOOL detail) {
+        BOOL diff = snap_differs(&after_orig, &after_new, detail ? label : NULL);
+        size_t d;
+        if (!diff && (d = first_diff(orig, fresh, size)) != (size_t)-1) {
+            if (detail) {
+                logf("  %s: VehPrototype[%u] +0x%X differs (orig %02X new %02X)", label,
+                    (unsigned)(d / sizeof(VehPrototype)), (unsigned)(d % sizeof(VehPrototype)), orig[d],
+                    fresh[d]);
+            }
+            diff = true;
+        }
+        if (!diff && flag_orig != flag_new) {
+            if (detail) {
+                logf("  %s: upgrade flag differs (orig %d new %d)", label, flag_orig, flag_new);
+            }
+            diff = true;
+        }
+        return diff;
+    }
+    void done() {
+        prepare();
+        snap_free(&base); snap_free(&after_orig); snap_free(&after_new);
+        free(saved); free(orig); free(fresh);
+    }
+};
+
+// AI factions other than the one at the controls: the upgrade code redraws the map and talks to
+// humans, which the harness cannot compare
+static BOOL quiet_faction(uint32_t faction_id) {
+    return faction_id > 0 && faction_id < MaxPlayerNum && !is_human(faction_id)
+        && faction_id != (uint32_t)*FactionIDCurrent;
+}
+
+static int test_do_upgrade() {
+    ProtoCompare pc;
+    pc.init();
+    int compared = 0, mismatches = 0, changed = 0;
+    char label[64];
+    for (uint32_t f = 1; f < MaxPlayerNum; f++) {
+        if (!quiet_faction(f)) {
+            continue;
+        }
+        for (int slot_old = 0; slot_old < 2 * MaxVehProtoFactionNum; slot_old++) {
+            int proto_old = slot_old < MaxVehProtoFactionNum ? slot_old
+                : f * MaxVehProtoFactionNum + (slot_old - MaxVehProtoFactionNum);
+            // designs with units, plus every 8th without so the "nothing paid" branch runs
+            if (!PlayersData[f].proto_id_active[proto_old] && (slot_old % 8)) {
+                continue;
+            }
+            int news[4] = { BSC_SCOUT_PATROL, BSC_UNITY_ROVER, (int)f * MaxVehProtoFactionNum,
+                (int)f * MaxVehProtoFactionNum + 9 };
+            for (int k = 0; k < 4; k++) {
+                int proto_new = news[k];
+                if (proto_new == proto_old) {
+                    continue;
+                }
+                pc.prepare();
+                do_upgrade_OG(f, proto_new, proto_old);
+                pc.take_orig();
+                changed += pc.changed();
+                pc.prepare();
+                do_upgrade(f, proto_new, proto_old);
+                pc.take_new();
+                compared++;
+                sprintf_s(label, "do_upgrade(%u, %d, %d)", f, proto_new, proto_old);
+                if (pc.differs(label, mismatches < MAX_DETAIL)) {
+                    mismatches++;
+                }
+            }
+        }
+    }
+    pc.done();
+    logf("do_upgrade: %d compared (%d changed something), %d mismatches", compared, changed, mismatches);
+    return mismatches;
+}
+
+static int test_upgrade_prototypes() {
+    ProtoCompare pc;
+    pc.init();
+    int compared = 0, mismatches = 0, changed = 0;
+    char label[64];
+    for (uint32_t f = 1; f < MaxPlayerNum; f++) {
+        if (!quiet_faction(f)) {
+            continue;
+        }
+        for (int slot = 0; slot < 2 * MaxVehProtoFactionNum; slot++) {
+            int proto_id = slot < MaxVehProtoFactionNum ? slot
+                : f * MaxVehProtoFactionNum + (slot - MaxVehProtoFactionNum);
+            if (!(((VehPrototype *)pc.saved)[proto_id].flags & PROTO_ACTIVE)) {
+                continue;
+            }
+            for (int variant = 0; variant < 2; variant++) {
+                // second pass: every other active design of the faction is obsolete for it
+                auto patch = [&]() {
+                    if (variant) {
+                        for (int s = 0; s < 2 * MaxVehProtoFactionNum; s++) {
+                            int id = s < MaxVehProtoFactionNum ? s
+                                : f * MaxVehProtoFactionNum + (s - MaxVehProtoFactionNum);
+                            if (id != proto_id) {
+                                VehPrototypes[id].obsolete_factions |= (uint8_t)(1 << f);
+                            }
+                        }
+                    }
+                    reseed(proto_id * 7 + variant);
+                };
+                pc.prepare(); patch();
+                upgrade_prototypes_OG(f, proto_id);
+                pc.take_orig();
+                changed += pc.changed();
+                pc.prepare(); patch();
+                upgrade_prototypes(f, proto_id);
+                pc.take_new();
+                compared++;
+                sprintf_s(label, "upgrade_prototypes(%u, %d) variant %d", f, proto_id, variant);
+                if (pc.differs(label, mismatches < MAX_DETAIL)) {
+                    mismatches++;
+                }
+            }
+        }
+    }
+    pc.done();
+    logf("upgrade_prototypes: %d compared (%d changed something), %d mismatches", compared, changed,
+        mismatches);
+    return mismatches;
+}
+
+static int test_upgrade_any_prototypes() {
+    ProtoCompare pc;
+    pc.init();
+    uint32_t prefs_saved = *GameMorePreferences;
+    int compared = 0, mismatches = 0, changed = 0;
+    char label[64];
+    for (uint32_t f = 1; f < MaxPlayerNum; f++) {
+        BOOL quiet = quiet_faction(f);
+        for (int variant = 0; variant < 2; variant++) {
+            // humans only run the early return (preference off); the second pass marks every
+            // built design of an AI faction as having an upgrade pending
+            if (!quiet && variant) {
+                continue;
+            }
+            auto patch = [&]() {
+                *GameMorePreferences = prefs_saved & ~MPREF_BSC_AUTO_PRUNE_OBS_VEH;
+                if (variant) {
+                    for (int s = 0; s < 2 * MaxVehProtoFactionNum; s++) {
+                        int id = s < MaxVehProtoFactionNum ? s
+                            : f * MaxVehProtoFactionNum + (s - MaxVehProtoFactionNum);
+                        if ((VehPrototypes[id].flags & PROTO_ACTIVE)
+                            && (VehPrototypes[id].flags & PROTO_TYPED_COMPLETE)) {
+                            VehPrototypes[id].flags |= PROTO_UNK_100;
+                            if (s % 2) {
+                                VehPrototypes[id].obsolete_factions |= (uint8_t)(1 << f);
+                            }
+                        }
+                    }
+                }
+                reseed(f * 13 + variant);
+            };
+            pc.prepare(); patch();
+            upgrade_any_prototypes_OG(f);
+            pc.take_orig();
+            changed += pc.changed();
+            pc.prepare(); patch();
+            upgrade_any_prototypes(f);
+            pc.take_new();
+            compared++;
+            sprintf_s(label, "upgrade_any_prototypes(%u) variant %d", f, variant);
+            if (pc.differs(label, mismatches < MAX_DETAIL)) {
+                mismatches++;
+            }
+        }
+    }
+    pc.done();
+    *GameMorePreferences = prefs_saved;
+    logf("upgrade_any_prototypes: %d compared (%d changed something), %d mismatches", compared, changed,
+        mismatches);
+    return mismatches;
+}
+
+static int test_base_claimed() {
+    int saved_id[4], saved_val[4];
+    memcpy(saved_id, BaseGovPickID, sizeof(saved_id));
+    memcpy(saved_val, BaseGovPickValue, sizeof(saved_val));
+    static const int ids[4] = { 3, 7, 3, 12 };
+    static const int vals[4] = { 5, 9, 2, 0 };
+    memcpy(BaseGovPickID, ids, sizeof(ids));
+    memcpy(BaseGovPickValue, vals, sizeof(vals));
+    int compared = 0, mismatches = 0;
+    for (int item = -1; item <= 14; item++) {
+        for (int value = -1; value <= 10; value++) {
+            for (int skip = 0; skip < 16; skip++) {
+                BOOL b = base_claimed_OG(item, value, skip & 1, skip & 2, skip & 4, skip & 8);
+                BOOL a = base_claimed(item, value, skip & 1, skip & 2, skip & 4, skip & 8);
+                compared++;
+                if ((a != 0) != (b != 0)) {
+                    if (mismatches < MAX_DETAIL) {
+                        logf("  base_claimed(%d, %d, skip %X): new=%d orig=%d", item, value, skip, a, b);
+                    }
+                    mismatches++;
+                }
+            }
+        }
+    }
+    memcpy(BaseGovPickID, saved_id, sizeof(saved_id));
+    memcpy(BaseGovPickValue, saved_val, sizeof(saved_val));
+    logf("base_claimed: %d compared, %d mismatches", compared, mismatches);
+    return mismatches;
+}
+
+static int test_site_at() {
+    int compared = 0, mismatches = 0, computed = 0;
+    int w = *MapLongitudeBounds, h = *MapLatitudeBounds;
+    for (int y = 0; y < h; y++) {
+        for (int x = y & 1; x < w; x += 2) {
+            Map *tile = map_loc(x, y);
+            Map saved = *tile;
+            int unk = 1 + (x + y) % 3;
+            uint32_t b = site_at_OG(x, y, unk);
+            Map tile_orig = *tile;
+            *tile = saved;
+            uint32_t a = site_at(x, y, unk);
+            Map tile_new = *tile;
+            *tile = saved;
+            compared++;
+            computed += (saved.val2 >> 4) == 0 && !(saved.bit & BIT_BASE_RADIUS);
+            if (a != b || memcmp(&tile_orig, &tile_new, sizeof(Map)) != 0) {
+                if (mismatches < MAX_DETAIL) {
+                    logf("  site_at(%d, %d, %d): new=%u orig=%u, tile byte %u", x, y, unk, a, b,
+                        (unsigned)first_diff(&tile_orig, &tile_new, sizeof(Map)));
+                }
+                mismatches++;
+            }
+        }
+    }
+    logf("site_at: %d compared (%d computed by world_site), %d mismatches", compared, computed,
+        mismatches);
+    return mismatches;
+}
+
+static int test_spying() {
+    int current_saved = *FactionIDCurrent;
+    int governor_saved = *GovernorFactionID;
+    int compared = 0, mismatches = 0;
+    for (int current = 1; current < MaxPlayerNum; current++) {
+        *FactionIDCurrent = current;
+        for (int gov = 0; gov < 2; gov++) {
+            *GovernorFactionID = gov ? current : 0;
+            for (int f = 0; f < MaxPlayerNum; f++) {
+                uint32_t treaties_saved = PlayersData[current].diplo_treaties[f];
+                for (int infil = 0; infil < 2; infil++) {
+                    PlayersData[current].diplo_treaties[f] = infil
+                        ? (treaties_saved | DTREATY_HAVE_INFILTRATOR)
+                        : (treaties_saved & ~DTREATY_HAVE_INFILTRATOR);
+                    BOOL b = spying_OG(f);
+                    BOOL a = spying(f);
+                    compared++;
+                    if ((a != 0) != (b != 0)) {
+                        if (mismatches < MAX_DETAIL) {
+                            logf("  spying(%d) current %d governor %d infiltrator %d: new=%d orig=%d",
+                                f, current, gov, infil, a, b);
+                        }
+                        mismatches++;
+                    }
+                }
+                PlayersData[current].diplo_treaties[f] = treaties_saved;
+            }
+        }
+    }
+    *FactionIDCurrent = current_saved;
+    *GovernorFactionID = governor_saved;
+    logf("spying: %d compared, %d mismatches", compared, mismatches);
+    return mismatches;
+}
+
+static int test_act_of_aggression() {
+    GameSnapshot base, after_orig, after_new;
+    snap_alloc(&base); snap_alloc(&after_orig); snap_alloc(&after_new);
+    snap_take(&base);
+    int compared = 0, mismatches = 0, broken = 0;
+    char label[64];
+    for (uint32_t f1 = 1; f1 < MaxPlayerNum; f1++) {
+        for (uint32_t f2 = 1; f2 < MaxPlayerNum; f2++) {
+            // double_cross() is exe code that may address a human; AI pairs only
+            if (f1 == f2 || is_human(f1) || is_human(f2)) {
+                continue;
+            }
+            for (int variant = 0; variant < 2; variant++) {
+                auto prepare = [&]() {
+                    snap_restore(&base);
+                    if (variant) {
+                        PlayersData[f2].diplo_treaties[f1] |= DTREATY_TREATY;
+                        PlayersData[f1].diplo_treaties[f2] |= DTREATY_TREATY;
+                    }
+                    reseed(f1 * 31 + f2 * 7 + variant);
+                };
+                prepare();
+                BOOL b = act_of_aggression_OG(f1, f2);
+                snap_take(&after_orig);
+                prepare();
+                BOOL a = act_of_aggression(f1, f2);
+                snap_take(&after_new);
+                compared++;
+                broken += (b != 0);
+                sprintf_s(label, "act_of_aggression(%u, %u) variant %d", f1, f2, variant);
+                BOOL diff = false;
+                if ((a != 0) != (b != 0)) {
+                    if (mismatches < MAX_DETAIL) {
+                        logf("  %s: new=%d orig=%d", label, a, b);
+                    }
+                    diff = true;
+                }
+                if (!diff) {
+                    diff = snap_differs(&after_orig, &after_new, mismatches < MAX_DETAIL ? label : NULL);
+                }
+                if (diff) {
+                    mismatches++;
+                }
+            }
+        }
+    }
+    snap_restore(&base);
+    snap_free(&base); snap_free(&after_orig); snap_free(&after_new);
+    logf("act_of_aggression: %d compared (%d broke an agreement), %d mismatches", compared, broken,
+        mismatches);
+    return mismatches;
+}
+
+static int test_council_get_vote() {
+    int compared = 0, mismatches = 0;
+    static const int pledges[3] = { 0, -1, 3 };
+    for (int f = 1; f < MaxPlayerNum; f++) {
+        int vote_saved[MaxProposalNum], faction_saved[MaxProposalNum];
+        memcpy(vote_saved, PlayersData[f].council_pledge_vote, sizeof(vote_saved));
+        memcpy(faction_saved, PlayersData[f].council_pledge_faction, sizeof(faction_saved));
+        for (int proposal = 0; proposal < MaxProposalNum; proposal++) {
+            for (int proposer = 1; proposer < MaxPlayerNum; proposer++) {
+                for (int variant = 0; variant < 3; variant++) {
+                    PlayersData[f].council_pledge_vote[proposal] = pledges[variant];
+                    PlayersData[f].council_pledge_faction[proposal] = variant == 2
+                        ? proposer : 1 + (proposer + variant) % (MaxPlayerNum - 1);
+                    int b = council_get_vote_OG(f, proposal, proposer);
+                    int a = council_get_vote(f, proposal, proposer);
+                    compared++;
+                    if (a != b) {
+                        if (mismatches < MAX_DETAIL) {
+                            logf("  council_get_vote(%d, %d, %d) pledge %d: new=%d orig=%d", f, proposal,
+                                proposer, pledges[variant], a, b);
+                        }
+                        mismatches++;
+                    }
+                }
+            }
+        }
+        memcpy(PlayersData[f].council_pledge_vote, vote_saved, sizeof(vote_saved));
+        memcpy(PlayersData[f].council_pledge_faction, faction_saved, sizeof(faction_saved));
+    }
+    logf("council_get_vote: %d compared, %d mismatches", compared, mismatches);
+    return mismatches;
+}
+
+static int test_can_call_council() {
+    int sunspot_saved = *SunspotDuration;
+    BOOL pbem_saved = *IsMultiplayerPBEM;
+    int pending_saved = *CouncilSessionPending;
+    uint32_t more_rules_saved = *GameMoreRules;
+    uint32_t state_saved = *GameState;
+    BOOL net_saved = *IsMultiplayerNet;
+    int compared = 0, mismatches = 0, allowed = 0;
+    for (uint32_t f = 1; f < MaxPlayerNum; f++) {
+        for (int variant = 0; variant < 64; variant++) {
+            *SunspotDuration = (variant & 1) ? 5 : 0;
+            *IsMultiplayerPBEM = (variant & 2) != 0;
+            *CouncilSessionPending = (variant & 4) != 0;
+            *GameMoreRules = (variant & 8) ? (more_rules_saved | MRULES_NO_PLANETARY_COUNCIL)
+                : (more_rules_saved & ~MRULES_NO_PLANETARY_COUNCIL);
+            *IsMultiplayerNet = (variant & 16) != 0;
+            *GameState = (variant & 32) ? (state_saved | STATE_OMNISCIENT_VIEW)
+                : (state_saved & ~STATE_OMNISCIENT_VIEW);
+            // the announcement only pops for the faction at the controls
+            BOOL announce = f != (uint32_t)*FactionIDCurrent;
+            BOOL b = can_call_council_OG(f, announce);
+            BOOL a = can_call_council(f, announce);
+            compared++;
+            allowed += (b != 0);
+            if ((a != 0) != (b != 0)) {
+                if (mismatches < MAX_DETAIL) {
+                    logf("  can_call_council(%u, %d) variant %X: new=%d orig=%d", f, announce, variant, a, b);
+                }
+                mismatches++;
+            }
+        }
+    }
+    *SunspotDuration = sunspot_saved;
+    *IsMultiplayerPBEM = pbem_saved;
+    *CouncilSessionPending = pending_saved;
+    *GameMoreRules = more_rules_saved;
+    *GameState = state_saved;
+    *IsMultiplayerNet = net_saved;
+    logf("can_call_council: %d compared (%d allowed), %d mismatches", compared, allowed, mismatches);
+    return mismatches;
+}
+
+static int test_pick_top_veh() {
+    int selected_saved = *MapWinVehIDSelected;
+    int boom_saved = *VehDrawBoomID;
+    BOOL mode_saved = *MapWinUnitNotViewMode;
+    int flag_saved = *MapWinUnkFlag;
+    int compared = 0, mismatches = 0;
+    for (int veh_id = -1; veh_id < *VehCurrentCount; veh_id++) {
+        for (int variant = 0; variant < 8; variant++) {
+            *MapWinVehIDSelected = (variant & 1) ? veh_id : -1;
+            *VehDrawBoomID = (variant & 2) ? veh_id : -1;
+            *MapWinUnitNotViewMode = (variant & 4) != 0;
+            *MapWinUnkFlag = 1;
+            int b = pick_top_veh_OG(veh_id);
+            int a = pick_top_veh(veh_id);
+            compared++;
+            if (a != b) {
+                if (mismatches < MAX_DETAIL) {
+                    logf("  pick_top_veh(%d) variant %d: new=%d orig=%d", veh_id, variant, a, b);
+                }
+                mismatches++;
+            }
+        }
+    }
+    *MapWinVehIDSelected = selected_saved;
+    *VehDrawBoomID = boom_saved;
+    *MapWinUnitNotViewMode = mode_saved;
+    *MapWinUnkFlag = flag_saved;
+    logf("pick_top_veh: %d compared, %d mismatches", compared, mismatches);
+    return mismatches;
+}
+
+static int test_can_convoy() {
+    int compared = 0, mismatches = 0, blocked = 0;
+    int w = *MapLongitudeBounds, h = *MapLatitudeBounds;
+    for (int y = 0; y < h; y++) {
+        for (int x = y & 1; x < w; x += 2) {
+            BOOL b = can_convoy_OG(x, y);
+            BOOL a = can_convoy(x, y);
+            compared++;
+            blocked += (b == 0);
+            if ((a != 0) != (b != 0)) {
+                if (mismatches < MAX_DETAIL) {
+                    logf("  can_convoy(%d, %d): new=%d orig=%d", x, y, a, b);
+                }
+                mismatches++;
+            }
+        }
+    }
+    logf("can_convoy: %d compared (%d blocked), %d mismatches", compared, blocked, mismatches);
+    return mismatches;
+}
+
+static int test_promote() {
+    GameSnapshot base, after_orig, after_new;
+    snap_alloc(&base); snap_alloc(&after_orig); snap_alloc(&after_new);
+    snap_take(&base);
+    int compared = 0, mismatches = 0, promoted = 0;
+    char label[64];
+    for (int veh_id = 0; veh_id < base.veh_count; veh_id++) {
+        // the faction at the controls gets a popup
+        if (Vehs[veh_id].faction_id == *FactionIDCurrent && is_human(Vehs[veh_id].faction_id)) {
+            continue;
+        }
+        for (int variant = 0; variant < 2; variant++) {
+            auto prepare = [&]() {
+                snap_restore(&base);
+                if (variant) {
+                    Vehs[veh_id].morale = MORALE_GREEN;
+                }
+                reseed(veh_id * 17 + variant);
+            };
+            prepare();
+            promote_OG(veh_id);
+            snap_take(&after_orig);
+            promoted += after_orig.vehs[veh_id].morale != (variant ? MORALE_GREEN : base.vehs[veh_id].morale);
+            prepare();
+            promote(veh_id);
+            snap_take(&after_new);
+            compared++;
+            sprintf_s(label, "promote(%d) variant %d", veh_id, variant);
+            if (snap_differs(&after_orig, &after_new, mismatches < MAX_DETAIL ? label : NULL)) {
+                mismatches++;
+            }
+        }
+    }
+    snap_restore(&base);
+    snap_free(&base); snap_free(&after_orig); snap_free(&after_new);
+    logf("promote: %d compared (%d promotions by the original), %d mismatches", compared, promoted,
+        mismatches);
+    return mismatches;
+}
+
+static int test_proto_sort() {
+    const int n = 2 * MaxVehProtoFactionNum;
+    int count_saved = *ProtoSortCount;
+    int list_saved[n], list_orig[n], list_new[n];
+    memcpy(list_saved, ProtoSortList, sizeof(list_saved));
+    int compared = 0, mismatches = 0;
+    for (int which = 0; which < 2; which++) {
+        for (uint32_t f = 0; f < MaxPlayerNum; f++) {
+            *ProtoSortCount = -1;
+            memset(ProtoSortList, 0xEE, sizeof(list_saved));
+            (which ? proto_sort_2_OG : proto_sort_OG)(f);
+            int count_orig = *ProtoSortCount;
+            memcpy(list_orig, ProtoSortList, sizeof(list_orig));
+            *ProtoSortCount = -1;
+            memset(ProtoSortList, 0xEE, sizeof(list_saved));
+            (which ? proto_sort_2 : proto_sort)(f);
+            int count_new = *ProtoSortCount;
+            memcpy(list_new, ProtoSortList, sizeof(list_new));
+            compared++;
+            if (count_orig != count_new || memcmp(list_orig, list_new, sizeof(list_orig)) != 0) {
+                if (mismatches < MAX_DETAIL) {
+                    int i = 0;
+                    while (i < n && list_orig[i] == list_new[i]) i++;
+                    logf("  proto_sort%s(%u): count orig %d new %d, first list difference at %d (orig %d new %d)",
+                        which ? "_2" : "", f, count_orig, count_new, i, i < n ? list_orig[i] : -1,
+                        i < n ? list_new[i] : -1);
+                }
+                mismatches++;
+            }
+        }
+    }
+    *ProtoSortCount = count_saved;
+    memcpy(ProtoSortList, list_saved, sizeof(list_saved));
+    logf("proto_sort: %d compared, %d mismatches", compared, mismatches);
+    return mismatches;
+}
+
+static int test_yearmotize() {
+    static const char *samples[] = { "", "2101", "In 2200 the", "x12345y 2345 1", "a2101", "2101b 99 999 0000",
+        "12 34 5678 9", "Year 2345 and 2346.", "1234", "123", "M.Y. 2389: Turn 289", "00001", "1000 1001 100" };
+    int compared = 0, mismatches = 0;
+    for (int i = 0; i < (int)(sizeof(samples) / sizeof(samples[0])); i++) {
+        char orig[128], fresh[128];
+        strcpy_s(orig, 128, samples[i]);
+        strcpy_s(fresh, 128, samples[i]);
+        yearmotize_OG(orig);
+        yearmotize(fresh);
+        compared++;
+        if (strcmp(orig, fresh) != 0) {
+            if (mismatches < MAX_DETAIL) {
+                logf("  yearmotize(\"%s\"): new=\"%s\" orig=\"%s\"", samples[i], fresh, orig);
+            }
+            mismatches++;
+        }
+    }
+    logf("yearmotize: %d compared, %d mismatches", compared, mismatches);
+    return mismatches;
+}
+
 static DWORD WINAPI regress_watcher(LPVOID) {
     for (;;) {
         Sleep(1000);
@@ -2084,6 +2777,22 @@ void regress_run() {
     if (test_enabled("batch2", "spot_stack")) total += run_guarded("spot_stack", test_spot_stack);
     if (test_enabled("batch2", "retire_proto")) total += run_guarded("retire_proto", test_retire_proto);
     if (test_enabled("batch2", "study_artifact")) total += run_guarded("study_artifact", test_study_artifact);
+    if (test_enabled("batch3", "base_at")) total += run_guarded("base_at", test_base_at);
+    if (test_enabled("batch3", "upgrade_cost")) total += run_guarded("upgrade_cost", test_upgrade_cost);
+    if (test_enabled("batch3", "do_upgrade")) total += run_guarded("do_upgrade", test_do_upgrade);
+    if (test_enabled("batch3", "upgrade_prototypes")) total += run_guarded("upgrade_prototypes", test_upgrade_prototypes);
+    if (test_enabled("batch3", "upgrade_any_prototypes")) total += run_guarded("upgrade_any_prototypes", test_upgrade_any_prototypes);
+    if (test_enabled("batch3", "base_claimed")) total += run_guarded("base_claimed", test_base_claimed);
+    if (test_enabled("batch3", "site_at")) total += run_guarded("site_at", test_site_at);
+    if (test_enabled("batch3", "spying")) total += run_guarded("spying", test_spying);
+    if (test_enabled("batch3", "act_of_aggression")) total += run_guarded("act_of_aggression", test_act_of_aggression);
+    if (test_enabled("batch3", "council_get_vote")) total += run_guarded("council_get_vote", test_council_get_vote);
+    if (test_enabled("batch3", "can_call_council")) total += run_guarded("can_call_council", test_can_call_council);
+    if (test_enabled("batch3", "pick_top_veh")) total += run_guarded("pick_top_veh", test_pick_top_veh);
+    if (test_enabled("batch3", "can_convoy")) total += run_guarded("can_convoy", test_can_convoy);
+    if (test_enabled("batch3", "promote")) total += run_guarded("promote", test_promote);
+    if (test_enabled("batch3", "proto_sort")) total += run_guarded("proto_sort", test_proto_sort);
+    if (test_enabled("batch3", "yearmotize")) total += run_guarded("yearmotize", test_yearmotize);
     if (test_enabled("enemy_capabilities")) total += run_guarded("enemy_capabilities", test_enemy_capabilities);
     if (test_enabled("social_ai")) total += run_guarded("social_ai", test_social_ai);
     if (test_enabled("Path::sensors") || test_enabled("path_sensors")) total += run_guarded("path_sensors", test_path_sensors);

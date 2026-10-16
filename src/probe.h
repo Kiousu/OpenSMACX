@@ -38,5 +38,6 @@ extern uint32_t *ProbeTargetFactionID;
 extern BOOL *ProbeTargetHasHSA;
 
 DLLEXPORT int __cdecl steal_energy(uint32_t base_id);
+DLLEXPORT BOOL __cdecl act_of_aggression(int faction_id, int faction_id_tgt);
 DLLEXPORT int __cdecl mind_control(uint32_t base_id, uint32_t faction_id, BOOL is_corner_market);
 DLLEXPORT int __cdecl success_rates(uint32_t id, uint32_t morale, int diff_modifier, int base_id);

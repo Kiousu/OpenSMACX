@@ -400,8 +400,9 @@ struct PlayerData {
     int y_target;
     int unk_28;
     int council_call_turn;
-    int unk_29[11]; // used by council code related to buying votes; vote id?
-    int unk_30[11]; // used by council code related to buying votes; factionID
+    int council_pledge_vote[11]; // vote pledged per proposal (0 = none; -1 yes, -2 no); for the
+                                 // governor election non-zero means a pledge, see council_get_vote()
+    int council_pledge_faction[11]; // faction the pledge was made to; [0] is the candidate pledged
     uint8_t facility_announced[4]; // bitfield - used to determine one time play of fac audio blurb
     int unk_32;
     char unk_33;
@@ -549,6 +550,7 @@ extern uint32_t *DiploFrictionFactionID;
 DLLEXPORT BOOL __cdecl is_alien_faction(uint32_t faction_id);
 DLLEXPORT BOOL __cdecl is_human(uint32_t faction_id);
 DLLEXPORT BOOL __cdecl is_alive(uint32_t faction_id);
+DLLEXPORT BOOL __cdecl spying(int faction_id);
 DLLEXPORT void __cdecl psych_check(uint32_t faction_id, int *drones, int *talents);
 DLLEXPORT uint32_t __cdecl has_treaty(uint32_t faction_id, uint32_t faction_id_with, 
                                       uint32_t treaties);

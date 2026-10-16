@@ -38,6 +38,8 @@ RulesArmor *Armor = (RulesArmor *)0x0094F278; // [14]
 RulesReactor *Reactor = (RulesReactor *)0x009527F8; // [4]
 RulesAbility *Ability = (RulesAbility *)0x009AB538; // [29]
 RulesMorale *Morale = (RulesMorale *)0x00952328; // [7]
+int *ProtoSortCount = (int *)0x00945B40; // entries of ProtoSortList counted by proto_sort()
+int *ProtoSortList = (int *)0x00945B44; // [128] prototype ids sorted for the design workshop
 RulesCombatMode *DefenseModes = (RulesCombatMode *)0x00946A00; // [3]
 RulesCombatMode *OffenseModes = (RulesCombatMode *)0x00946178; // [3]
 RulesOrder *Order = (RulesOrder *)0x0096C878; // [9]
@@ -1037,6 +1039,48 @@ uint32_t __cdecl best_defender(uint32_t veh_id_def, int veh_id_atk, BOOL check_a
 }
 
 /*
+Purpose: Promote a unit after a victory. Missiles, units already elite and unarmored non-combat
+         designs (plan colonization or above with armor 1 or less) are skipped; from disciplined
+         upward only half the promotions succeed. The player at the controls is told when the
+         morale level changes.
+Original Offset: 005062B0
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch3.log)
+*/
+void __cdecl promote(int veh_id) {
+    int proto_id = Vehs[veh_id].proto_id;
+    if (Chassis[VehPrototypes[proto_id].chassis_id].missile) {
+        return;
+    }
+    if (VehPrototypes[proto_id].plan >= PLAN_COLONIZATION
+        && Armor[VehPrototypes[proto_id].armor_id].defense_rating <= 1) {
+        return;
+    }
+    if (morale_veh(veh_id, true, 0) >= MORALE_ELITE || Vehs[veh_id].morale >= MORALE_ELITE) {
+        return;
+    }
+    // the exe's CRT generator, like the rest of the game's rolls
+    if (morale_veh(veh_id, true, 0) > MORALE_DISCIPLINED && _rand() % 2 != 0) {
+        return;
+    }
+    uint32_t morale_before = morale_veh(veh_id, true, 0);
+    Vehs[veh_id].morale++;
+    uint32_t faction_id = Vehs[veh_id].faction_id;
+    if (faction_id == (uint32_t)*FactionIDCurrent && is_human(faction_id)
+        && morale_before != morale_veh(veh_id, true, 0)) {
+        parse_says(1, VehPrototypes[proto_id].veh_name, -1, -1);
+        if (proto_id < MaxVehProtoFactionNum
+            && Weapon[VehPrototypes[proto_id].weapon_id].offense_rating < 0) {
+            parse_say(0, (int)Morale[morale_veh(veh_id, true, 0)].name_lifecycle, -1, -1);
+            NetMsg_pop(NetMsgVar, 0, "MORALE2", -5000, 0, "batwon_sm.pcx");
+            return;
+        }
+        parse_say(0, (int)Morale[morale_veh(veh_id, true, 0)].name, -1, -1);
+        NetMsg_pop(NetMsgVar, 0, "MORALE", -5000, 0, "batwon_sm.pcx");
+    }
+}
+
+/*
 Purpose: Determine whether any enemy naval transports are carrying land units within range to 
          attack the specified base. If so, set the units to move towards the base.
 Original Offset: 00506490
@@ -1066,6 +1110,44 @@ void __cdecl invasions(uint32_t base_id) {
 }
 
 /*
+Purpose: Pick the unit to show on top of a stack: the map window's selected unit if it belongs to
+         the player at the controls and is neither exploring nor on an automated order, otherwise
+         the unit with the highest triad, preferring the current player's own units. The unit
+         being blown up by boom() is never picked.
+Original Offset: 005593E0
+Return Value: Veh id of the unit to draw on top (the input when it is negative)
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch3.log)
+*/
+int __cdecl pick_top_veh(int veh_id) {
+    if (veh_id < 0) {
+        return veh_id;
+    }
+    int veh_id_top = veh_id;
+    int score_best = -99;
+    int i = veh_id;
+    while (Vehs[i].prev_veh_id_stack >= 0) {
+        i = Vehs[i].prev_veh_id_stack;
+    }
+    for (; i >= 0; i = Vehs[i].next_veh_id_stack) {
+        if (*VehDrawBoomID != -1 && i == *VehDrawBoomID) {
+            continue;
+        }
+        BOOL is_current = Vehs[i].faction_id == *FactionIDCurrent;
+        if (i == *MapWinVehIDSelected && is_current
+            && !(Vehs[i].state & (VSTATE_EXPLORE | VSTATE_UNK_200)) && *MapWinUnitNotViewMode
+            && *MapWinUnkFlag) {
+            return i;
+        }
+        int score = Chassis[VehPrototypes[Vehs[i].proto_id].chassis_id].triad + (is_current ? 4 : 0);
+        if (score > score_best) {
+            score_best = score;
+            veh_id_top = i;
+        }
+    }
+    return veh_id_top;
+}
+
+/*
 Purpose: Direct the unit to start moving automatically towards the specified tile.
 Original Offset: 00560AD0
 Return Value: n/a
@@ -1079,6 +1161,32 @@ void __cdecl go_to(uint32_t veh_id, uint8_t type, int x, int y) {
     if (VehPrototypes[Vehs[veh_id].proto_id].plan == PLAN_COLONIZATION) {
         Vehs[veh_id].terraforming_turns = 0;
     }
+}
+
+/*
+Purpose: Check whether a supply crawler could convoy resources from a tile: it must hold no unit
+         that would block the convoy, and no base within two tiles may be working the tile.
+Original Offset: 00564D90
+Return Value: Can the tile be convoyed from? true/false
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch3.log)
+*/
+BOOL __cdecl can_convoy(int x, int y) {
+    if (stack_check(veh_at(x, y), 9, 3, -1, -1)) {
+        return false;
+    }
+    for (int i = 0; i < *BaseCurrentCount; i++) {
+        int x_dist = abs(x - Bases[i].x);
+        if (!*MapIsFlat && x_dist > (int)*MapLongitude) {
+            x_dist = *MapLongitudeBounds - x_dist;
+        }
+        if (vector_dist(x_dist, y - Bases[i].y) < 3) {
+            int offset = radius_move(Bases[i].x, Bases[i].y, x, y, 21);
+            if (offset >= 0 && (Bases[i].resource_sqr_radius & (1 << offset))) {
+                return false;
+            }
+        }
+    }
+    return true;
 }
 
 /*
@@ -2177,6 +2285,93 @@ void __cdecl make_proto(int proto_id, uint32_t chassis_id, uint32_t weapon_id, u
     VehPrototypes[proto_id].flags = unk_local_1 
         ? ((unk_local_1 & 2) ? 0x115 : 0x105) : PROTO_ACTIVE;
     VehPrototypes[proto_id].icon_offset = -1;
+}
+
+/*
+Purpose: Fill ProtoSortList with the 64 basic and the faction's 64 custom prototypes, sorted for
+         the design workshop: by plan and triad, then by weapon, speed and armor (best first).
+         Designs that are retired or not yet available sort to the end. ProtoSortCount counts
+         the available designs (retired custom designs included).
+Original Offset: 005A6270
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch3.log)
+*/
+void __cdecl proto_sort(uint32_t faction_id) {
+    int values[2 * MaxVehProtoFactionNum];
+    *ProtoSortCount = 0;
+    for (int i = 0; i < 2 * MaxVehProtoFactionNum; i++) {
+        int proto_id = (i < MaxVehProtoFactionNum ? 0 : faction_id * MaxVehProtoFactionNum)
+            + (i % MaxVehProtoFactionNum);
+        ProtoSortList[i] = proto_id;
+        int value;
+        if (!(VehPrototypes[proto_id].flags & PROTO_ACTIVE)
+            || (proto_id < MaxVehProtoFactionNum
+                && !has_tech(VehPrototypes[proto_id].preq_tech, faction_id))) {
+            if (proto_id < MaxVehProtoFactionNum) {
+                value = 999999999;
+            } else {
+                value = 888888888;
+                (*ProtoSortCount)++;
+            }
+        } else {
+            uint32_t plan = VehPrototypes[proto_id].plan;
+            uint32_t triad = Chassis[VehPrototypes[proto_id].chassis_id].triad;
+            int weapon_value = weap_val(proto_id, faction_id);
+            uint32_t speed = Chassis[VehPrototypes[proto_id].chassis_id].speed;
+            int armor_value = arm_val(VehPrototypes[proto_id].armor_id, faction_id);
+            value = (triad + plan * 16) * 0x40000 + (32 - weapon_value) * 0x200
+                + (8 - speed) * 0x40 + (8 - armor_value);
+            (*ProtoSortCount)++;
+        }
+        values[i] = value;
+    }
+    sort(2 * MaxVehProtoFactionNum, ProtoSortList, values);
+}
+
+/*
+Purpose: Fill ProtoSortList with the 64 basic and the faction's 64 custom prototypes, sorted by id
+         in groups: available designs the faction still uses first, then its obsolete custom
+         designs that still have units, other obsolete custom designs, retired custom designs,
+         obsolete basic designs and finally unavailable basic designs. Basic designs need their
+         prerequisite tech, a non-psi weapon and must not be the Spore Launcher. ProtoSortCount
+         counts everything but the unavailable basic designs.
+Original Offset: 005A63D0
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch3.log)
+*/
+void __cdecl proto_sort_2(uint32_t faction_id) {
+    int values[2 * MaxVehProtoFactionNum];
+    *ProtoSortCount = 0;
+    for (int i = 0; i < 2 * MaxVehProtoFactionNum; i++) {
+        int proto_id = (i < MaxVehProtoFactionNum ? 0 : faction_id * MaxVehProtoFactionNum)
+            + (i % MaxVehProtoFactionNum);
+        ProtoSortList[i] = proto_id;
+        BOOL avail = (VehPrototypes[proto_id].flags & PROTO_ACTIVE)
+            && (proto_id >= MaxVehProtoFactionNum
+                || (Weapon[VehPrototypes[proto_id].weapon_id].offense_rating >= 0
+                    && proto_id != BSC_SPORE_LAUNCHER
+                    && has_tech(VehPrototypes[proto_id].preq_tech, faction_id)));
+        int value;
+        if (!avail) {
+            if (proto_id < MaxVehProtoFactionNum) {
+                value = 999999999;
+            } else {
+                value = proto_id + 0x400;
+                (*ProtoSortCount)++;
+            }
+        } else if (!(VehPrototypes[proto_id].obsolete_factions & (1 << faction_id))) {
+            value = proto_id;
+            (*ProtoSortCount)++;
+        } else if (proto_id < MaxVehProtoFactionNum) {
+            value = proto_id + 0x2000;
+            (*ProtoSortCount)++;
+        } else {
+            value = proto_id + (PlayersData[faction_id].proto_id_active[proto_id] ? 0x800 : 0x1000);
+            (*ProtoSortCount)++;
+        }
+        values[i] = value;
+    }
+    sort(2 * MaxVehProtoFactionNum, ProtoSortList, values);
 }
 
 /*

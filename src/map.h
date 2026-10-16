@@ -303,6 +303,7 @@ DLLEXPORT void __cdecl alt_put_detail(uint32_t x, uint32_t y, uint8_t detail);
 DLLEXPORT uint32_t __cdecl owner_at(uint32_t x, uint32_t y);
 DLLEXPORT void __cdecl owner_set(uint32_t x, uint32_t y, int faction_id);
 DLLEXPORT void __cdecl site_set(uint32_t x, uint32_t y, int site);
+DLLEXPORT uint32_t __cdecl site_at(int x, int y, int unk);
 DLLEXPORT uint32_t __cdecl region_at(uint32_t x, uint32_t y);
 DLLEXPORT void __cdecl region_set(uint32_t x, uint32_t y, uint8_t region);
 DLLEXPORT uint32_t __cdecl using_at(uint32_t x, uint32_t y);

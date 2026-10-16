@@ -18,6 +18,7 @@
 #include "stdafx.h"
 #include "temp.h"
 #include "probe.h"
+#include "faction.h"
 #include "base.h"
 #include "game.h"
 #include "map.h"
@@ -26,6 +27,23 @@
 BOOL *ProbeHasAlgoEnhancement = (BOOL *)0x00945B30;
 uint32_t *ProbeTargetFactionID = (uint32_t *)0x00945B34;
 BOOL *ProbeTargetHasHSA = (BOOL *)0x00945B38;
+
+/*
+Purpose: Record an act of aggression by a faction against another: any pact, treaty or truce the
+         target had with the aggressor is broken as a double cross, and vendetta is declared.
+Original Offset: 0050C2E0
+Return Value: Did the aggression break an agreement? true/false
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch3.log)
+*/
+BOOL __cdecl act_of_aggression(int faction_id, int faction_id_tgt) {
+    BOOL had_agreement = (PlayersData[faction_id_tgt].diplo_treaties[faction_id]
+        & (DTREATY_PACT | DTREATY_TREATY | DTREATY_TRUCE)) != 0;
+    if (had_agreement) {
+        double_cross(faction_id, faction_id_tgt, -1);
+    }
+    treaty_on(faction_id, faction_id_tgt, DTREATY_VENDETTA | DTREATY_UNK_8000);
+    return had_agreement;
+}
 
 /*
 Purpose: Calculate the amount of energy that can be stolen from a base based on its population.

@@ -26,6 +26,7 @@
 #include "text.h"
 #include "technology.h"
 #include "veh.h"
+#include "log.h"
 
 RulesFacility *Facility = (RulesFacility *)0x009A4B68;
 RulesCitizen *Citizen = (RulesCitizen *)0x00946020;
@@ -46,6 +47,10 @@ int *BaseCurrentDronesStage = (int *)0x0090E920; // [5] drones after each base_p
 int *BaseCurrentSuperDronesStage = (int *)0x0090E94C; // [5] super drones after each stage
 uint32_t *BaseCurrentForcesSupported = (uint32_t *)0x0090E8FC;
 uint32_t *BaseCurrentForcesMaintCost = (uint32_t *)0x0090E91C;
+BOOL *BaseBitsErrorActive = (BOOL *)0x0090EA38; // base_at() is reporting a stray base bit
+int *BaseGovPickID = (int *)0x0090EA44; // [4] production item picked by base_reset() for each
+                                        // governor priority (explore, discover, build, conquer)
+int *BaseGovPickValue = (int *)0x0090EA54; // [4] value of each pick; see base_claimed()
 
 /*
 Purpose: Check if the base already has a particular facility built or if it's in the queue.
@@ -93,6 +98,48 @@ void __cdecl say_base(LPSTR base_str, int base_id) {
     std::string output = (base_id >= 0) ? Bases[base_id].name_string : label_get(25); // 'NONE'
     // assumes 1032 char buffer via stringTemp, eventually remove
     strcat_s(base_str, 1032, output.c_str());
+}
+
+/*
+Purpose: Find the base on the specified tile. A tile flagged as holding a base without one is an
+         error: it is logged, the base bits are rebuilt and, in debug mode, the player at the
+         controls is told and the map is centered on the tile.
+Original Offset: 004E3A50
+Return Value: Base id, or -1 if the tile has no base or lies off the map
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch3.log)
+*/
+int __cdecl base_at(int x, int y) {
+    if (y < 0 || y >= *MapLatitudeBounds || x < 0 || x >= *MapLongitudeBounds
+        || !(bit_at(x, y) & BIT_BASE_IN_TILE)) {
+        return -1;
+    }
+    for (int i = 0; i < *BaseCurrentCount; i++) {
+        if (Bases[i].x == x && Bases[i].y == y) {
+            return i;
+        }
+    }
+    if (!*BaseBitsErrorActive) {
+        log_say("Base Bits Error  (x, y)", x, y, 0);
+    }
+    if (!(*GameState & STATE_DEBUG_MODE)) {
+        rebuild_base_bits();
+        return -1;
+    }
+    if (!*BaseBitsErrorActive) {
+        *BaseBitsErrorActive = true;
+        if (*IsLoggingActive) {
+            parse_num(0, x);
+            parse_num(1, y);
+            X_pop("BASEBIT", NULL);
+        }
+        *BaseBitsErrorActive = false;
+        if (!*DialogToggle) {
+            GetAsyncKeyState(VK_CONTROL); // the original discards the result
+        }
+        rebuild_base_bits();
+        Console_focus(ConsoleVar, 0, x, y, *FactionIDCurrent);
+    }
+    return -1;
 }
 
 /*
@@ -1145,6 +1192,168 @@ uint32_t __cdecl pop_goal(uint32_t base_id) {
 }
 
 /*
+Purpose: Calculate the per-unit cost of upgrading one prototype to another: the new design's cost
+         (squared and a half for a custom design whose prototype was never built), plus any
+         gain in speed, weapon cost and armor cost; halved for the Nano Factory's owner.
+Original Offset: 004EFD50
+Return Value: Upgrade cost per unit
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch3.log)
+*/
+int __cdecl upgrade_cost(uint32_t faction_id, int proto_id_new, int proto_id_old) {
+    int cost = VehPrototypes[proto_id_new].cost;
+    if (proto_id_new >= MaxVehProtoFactionNum
+        && !(VehPrototypes[proto_id_new].flags & PROTO_TYPED_COMPLETE)) {
+        int cost_untyped = cost + (cost + 1) / 2;
+        cost = (cost_untyped + 1) * cost_untyped;
+    }
+    int speed_gain = Chassis[VehPrototypes[proto_id_new].chassis_id].speed
+        - Chassis[VehPrototypes[proto_id_old].chassis_id].speed;
+    if (speed_gain < 0) {
+        speed_gain = 0;
+    }
+    int weapon_gain = Weapon[VehPrototypes[proto_id_new].weapon_id].cost
+        - Weapon[VehPrototypes[proto_id_old].weapon_id].cost;
+    if (weapon_gain < 0) {
+        weapon_gain = 0;
+    }
+    int armor_gain = Armor[VehPrototypes[proto_id_new].armor_id].cost
+        - Armor[VehPrototypes[proto_id_old].armor_id].cost;
+    if (armor_gain < 0) {
+        armor_gain = 0;
+    }
+    int total = cost + speed_gain + weapon_gain + armor_gain;
+    int base_id_nano = SecretProject->nano_factory;
+    if (base_id_nano >= 0 && Bases[base_id_nano].faction_id_current == faction_id) {
+        total /= 2;
+    }
+    return total;
+}
+
+/*
+Purpose: Upgrade every unit of one prototype to another: pay the energy, re-type the units
+         (adjusting morale when the Trained ability comes or goes), update the active prototype
+         counts and base production queues, mark the new design as built and retire the old one.
+Original Offset: 004EFB50
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch3.log)
+*/
+void __cdecl do_upgrade(uint32_t faction_id, int proto_id_new, int proto_id_old) {
+    int cost = upgrade_cost(faction_id, proto_id_new, proto_id_old);
+    uint32_t count_old = PlayersData[faction_id].proto_id_active[proto_id_old];
+    PlayersData[faction_id].energy_reserves -= cost * count_old * 10;
+    for (int i = 0; i < *VehCurrentCount; i++) {
+        if (Vehs[i].faction_id == faction_id && Vehs[i].proto_id == proto_id_old) {
+            PlayersData[faction_id].proto_id_active[proto_id_old]--;
+            Vehs[i].proto_id = (int16_t)proto_id_new;
+            PlayersData[faction_id].proto_id_active[proto_id_new]++;
+            if (has_abil(proto_id_new, ABL_TRAINED) && !has_abil(proto_id_old, ABL_TRAINED)) {
+                uint32_t morale = Vehs[i].morale + 1;
+                if (morale > MORALE_ELITE) {
+                    morale = MORALE_ELITE;
+                }
+                Vehs[i].morale = (uint8_t)morale;
+            }
+            if (!has_abil(proto_id_new, ABL_TRAINED) && has_abil(proto_id_old, ABL_TRAINED)) {
+                int morale = Vehs[i].morale - 1;
+                if (morale < 0) {
+                    morale = 0;
+                } else if (morale > MORALE_ELITE) {
+                    morale = MORALE_ELITE;
+                }
+                Vehs[i].morale = (uint8_t)morale;
+            }
+        }
+    }
+    for (int i = 0; i < *BaseCurrentCount; i++) {
+        if (Bases[i].faction_id_current == faction_id && (int)Bases[i].queue_size >= 0) {
+            // the original walks one slot past the queue size
+            for (int j = 0; j <= (int)Bases[i].queue_size; j++) {
+                if (Bases[i].queue_production_id[j] == proto_id_old) {
+                    Bases[i].queue_production_id[j] = proto_id_new;
+                }
+            }
+        }
+    }
+    if (proto_id_new >= MaxVehProtoFactionNum && cost * count_old * 10 != 0) {
+        VehPrototypes[proto_id_new].flags |= PROTO_TYPED_COMPLETE;
+    }
+    if (proto_id_old >= MaxVehProtoFactionNum) {
+        VehPrototypes[proto_id_old].flags &= ~PROTO_ACTIVE;
+    }
+    if (is_human(faction_id)) {
+        draw_map(1);
+    }
+    if (faction_id == (uint32_t)*FactionIDCurrent) {
+        Console_update_data(ConsoleVar, 0, 0);
+    }
+}
+
+/*
+Purpose: Offer upgrades from the specified prototype: every active design the faction still has
+         units of that is marked obsolete for it, has the same plan, class, triad and chassis and
+         is at least as good in weapon, armor and speed goes through upgrade_prototype().
+Original Offset: 004F0460
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch3.log)
+*/
+void __cdecl upgrade_prototypes(int faction_id, uint32_t proto_id) {
+    VehPrototype *proto = &VehPrototypes[proto_id];
+    proto->flags &= ~PROTO_UNK_100;
+    const uint32_t ability_roles = ABL_AMPHIBIOUS | ABL_DROP_POD | ABL_ANTIGRAV_STRUTS
+        | ABL_ARTILLERY | ABL_POLICE_2X;
+    for (int i = 0; i < 2 * MaxVehProtoFactionNum; i++) {
+        uint32_t id = i < MaxVehProtoFactionNum ? i
+            : faction_id * MaxVehProtoFactionNum + (i % MaxVehProtoFactionNum);
+        VehPrototype *other = &VehPrototypes[id];
+        if (id == proto_id || !(other->flags & PROTO_ACTIVE)
+            || !(other->obsolete_factions & (1 << faction_id)) || other->plan != proto->plan
+            || other->unk_1 != proto->unk_1
+            || Chassis[other->chassis_id].triad != Chassis[proto->chassis_id].triad
+            || !PlayersData[faction_id].proto_id_active[id]) {
+            continue;
+        }
+        if (Weapon[proto->weapon_id].offense_rating == 0) {
+            if (proto->weapon_id != other->weapon_id) {
+                continue;
+            }
+        } else if (Weapon[proto->weapon_id].offense_rating
+            > Weapon[other->weapon_id].offense_rating) {
+            continue;
+        }
+        BOOL roles_other = has_abil(id, ability_roles);
+        BOOL roles_proto = has_abil(proto_id, ability_roles);
+        if (roles_proto == roles_other
+            && Armor[proto->armor_id].defense_rating <= Armor[other->armor_id].defense_rating
+            && Chassis[proto->chassis_id].speed <= Chassis[other->chassis_id].speed
+            && proto->chassis_id == other->chassis_id) {
+            upgrade_prototype(faction_id, proto_id, id, 1);
+        }
+    }
+}
+
+/*
+Purpose: Run upgrade_prototypes() for every active, built design of the faction that has an
+         upgrade pending. Humans only get this with the "auto prune obsolete units" preference.
+Original Offset: 004F0650
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch3.log)
+*/
+void __cdecl upgrade_any_prototypes(int faction_id) {
+    *VehUpgradeUnk = 0;
+    if (is_human(faction_id) && !(*GameMorePreferences & MPREF_BSC_AUTO_PRUNE_OBS_VEH)) {
+        return;
+    }
+    for (int i = 0; i < 2 * MaxVehProtoFactionNum; i++) {
+        uint32_t id = i < MaxVehProtoFactionNum ? i
+            : faction_id * MaxVehProtoFactionNum + (i % MaxVehProtoFactionNum);
+        uint32_t flags = VehPrototypes[id].flags;
+        if ((flags & PROTO_ACTIVE) && (flags & PROTO_TYPED_COMPLETE) && (flags & PROTO_UNK_100)) {
+            upgrade_prototypes(faction_id, id);
+        }
+    }
+}
+
+/*
 Purpose: Move the specified base's production queue forward if applicable.
 Original Offset: 004F06E0
 Return Value: Is there a valid item in queue to be built? true/false
@@ -1297,6 +1506,31 @@ Status: Complete
 BOOL __cdecl has_project(uint32_t project_id, uint32_t faction_id) {
     int base_id = base_project(project_id);
     return (base_id < 0) ? false : (Bases[base_id].faction_id_current == faction_id);
+}
+
+/*
+Purpose: Check whether a production item has already been picked by base_reset() for one of the
+         governor priorities (explore, discover, build, conquer) at a value no higher than the one
+         specified. Each skip flag leaves that priority's pick out of the check.
+Original Offset: 004F8110
+Return Value: Is the item claimed by an earlier pick? true/false
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch3.log)
+*/
+BOOL __cdecl base_claimed(int item_id, int value, BOOL skip_explore, BOOL skip_discover,
+                          BOOL skip_build, BOOL skip_conquer) {
+    if (!skip_explore && item_id == BaseGovPickID[0] && value >= BaseGovPickValue[0]) {
+        return true;
+    }
+    if (!skip_discover && item_id == BaseGovPickID[1] && value >= BaseGovPickValue[1]) {
+        return true;
+    }
+    if (!skip_build && item_id == BaseGovPickID[2] && value >= BaseGovPickValue[2]) {
+        return true;
+    }
+    if (!skip_conquer && item_id == BaseGovPickID[3] && value >= BaseGovPickValue[3]) {
+        return true;
+    }
+    return false;
 }
 
 /*
