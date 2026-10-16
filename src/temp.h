@@ -197,6 +197,13 @@ extern func_void *clear_monuments_OG;
 extern func_xy *mon_tech_discovered_OG;
 extern func_u32 *social_set_OG;
 extern func_xyi *bases_reset_OG;
+// batch 7
+typedef int func_yield5(uint32_t, int, int, int, BOOL);
+extern func_yield5 *crop_yield_OG;
+extern func_yield5 *mine_yield_OG;
+extern func_yield5 *energy_yield_OG;
+typedef int func_rsc_yield(uint32_t, uint32_t, int, int, int);
+extern func_rsc_yield *resource_yield_OG;
 extern func_void *base_psych_OG;
 extern func_social_ai *social_ai_OG;
 extern func_path_sensors *Path_sensors_OG; // Path::sensors()

@@ -3330,6 +3330,96 @@ static int test_bases_reset() {
     return mismatches;
 }
 
+// ---------------------------------------------------------------- batch 7: tile yields
+
+typedef int func_yield(uint32_t, int, int, int, BOOL);
+
+static int test_yields() {
+    struct YieldFn { const char *name; func_yield *orig; func_yield *neu; };
+    static const YieldFn fns[3] = {
+        { "crop_yield", (func_yield *)crop_yield_OG, (func_yield *)crop_yield },
+        { "mine_yield", (func_yield *)mine_yield_OG, (func_yield *)mine_yield },
+        { "energy_yield", (func_yield *)energy_yield_OG, (func_yield *)energy_yield },
+    };
+    int reduce_saved = *BaseTerraformReduce, energy_saved = *BaseTerraformEnergy;
+    int selected_saved = *BaseIDCurrentSelected;
+    set_base(0); // energy_yield reads the current base's owner for echelon mirrors
+    int total = 0;
+    int w = *MapLongitudeBounds, h = *MapLatitudeBounds;
+    for (int k = 0; k < 3; k++) {
+        int compared = 0, mismatches = 0, nonzero = 0;
+        for (uint32_t f = 1; f < MaxPlayerNum; f++) {
+            int base_ids[2] = { -1, -1 };
+            for (int i = 0; i < *BaseCurrentCount; i++) {
+                if (Bases[i].faction_id_current == f) {
+                    base_ids[1] = i;
+                    break;
+                }
+            }
+            for (int b = 0; b < 2; b++) {
+                if (b == 1 && base_ids[1] < 0) {
+                    continue;
+                }
+                for (int flag = 0; flag < 2; flag++) {
+                    for (int y = (int)(f + k) % 2; y < h; y += 2) {
+                        for (int x = y & 1; x < w; x += 2) {
+                            *BaseTerraformReduce = 0; *BaseTerraformEnergy = -7;
+                            int r_o = fns[k].orig(f, base_ids[b], x, y, flag);
+                            int red_o = *BaseTerraformReduce, en_o = *BaseTerraformEnergy;
+                            *BaseTerraformReduce = 0; *BaseTerraformEnergy = -7;
+                            int r_n = fns[k].neu(f, base_ids[b], x, y, flag);
+                            int red_n = *BaseTerraformReduce, en_n = *BaseTerraformEnergy;
+                            compared++;
+                            nonzero += (r_o != 0);
+                            if (r_o != r_n || red_o != red_n || en_o != en_n) {
+                                if (mismatches < MAX_DETAIL) {
+                                    logf("  %s(%u, %d, %d, %d, %d): orig %d (reduce %d energy %d) new %d (reduce %d energy %d)",
+                                        fns[k].name, f, base_ids[b], x, y, flag, r_o, red_o, en_o, r_n, red_n, en_n);
+                                }
+                                mismatches++;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        logf("%s: %d compared (%d non-zero), %d mismatches", fns[k].name, compared, nonzero, mismatches);
+        total += mismatches;
+    }
+    // resource_yield: the dispatcher, every type on a sample of tiles
+    {
+        int compared = 0, mismatches = 0;
+        for (uint32_t type = 0; type < 5; type++) {
+            for (int y = 0; y < h; y += 7) {
+                for (int x = y & 1; x < w; x += 6) {
+                    *BaseTerraformReduce = 5;
+                    int r_o = resource_yield_OG(type, 2, -1, x, y);
+                    int red_o = *BaseTerraformReduce;
+                    *BaseTerraformReduce = 5;
+                    int r_n = resource_yield(type, 2, -1, x, y);
+                    int red_n = *BaseTerraformReduce;
+                    compared++;
+                    if (r_o != r_n || red_o != red_n) {
+                        if (mismatches < MAX_DETAIL) {
+                            logf("  resource_yield(%u, 2, -1, %d, %d): orig %d (reduce %d) new %d (reduce %d)",
+                                type, x, y, r_o, red_o, r_n, red_n);
+                        }
+                        mismatches++;
+                    }
+                }
+            }
+        }
+        logf("resource_yield: %d compared, %d mismatches", compared, mismatches);
+        total += mismatches;
+    }
+    *BaseTerraformReduce = reduce_saved;
+    *BaseTerraformEnergy = energy_saved;
+    if (selected_saved >= 0 && selected_saved < *BaseCurrentCount) {
+        set_base(selected_saved);
+    }
+    return total;
+}
+
 static DWORD WINAPI regress_watcher(LPVOID) {
     for (;;) {
         Sleep(1000);
@@ -3424,6 +3514,7 @@ void regress_run() {
     if (test_enabled("batch6", "monuments")) total += run_guarded("monuments", test_monuments);
     if (test_enabled("batch6", "social_set")) total += run_guarded("social_set", test_social_set);
     if (test_enabled("batch6", "bases_reset")) total += run_guarded("bases_reset", test_bases_reset);
+    if (test_enabled("batch7", "yields")) total += run_guarded("yields", test_yields);
     if (test_enabled("enemy_capabilities")) total += run_guarded("enemy_capabilities", test_enemy_capabilities);
     if (test_enabled("social_ai")) total += run_guarded("social_ai", test_social_ai);
     if (test_enabled("Path::sensors") || test_enabled("path_sensors")) total += run_guarded("path_sensors", test_path_sensors);

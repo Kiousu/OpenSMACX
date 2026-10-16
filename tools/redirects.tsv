@@ -617,3 +617,8 @@
 0x00076C90	?mon_tech_discovered@@YAXHH@Z
 0x001B4600	?social_set@@YAXI@Z
 0x000E6300	?bases_reset@@YAXHIH@Z
+# --- batch 7: tile yields
+0x000E6E50	?crop_yield@@YAIIHIIH@Z
+0x000E7310	?mine_yield@@YAHIHIIH@Z
+0x000E7750	?energy_yield@@YAIIHHIH@Z
+0x000E7DC0	?resource_yield@@YAHIIHHH@Z

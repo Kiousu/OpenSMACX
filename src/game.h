@@ -134,6 +134,8 @@ struct Monument {
 };
 
 extern Monument *Monuments; // [8]
+extern int *ControlUpkeepA;
+extern uint32_t *SolarFlaresEvent;
 extern uint32_t *GameState; // bitfield
 extern int *DiffLevelCurrent;
 extern int *TurnCurrentNum;

@@ -496,3 +496,28 @@ objective units destroyed (`objective_kills`); the monument table at 0x94CA08 is
 like best_defender, and the C++ keeps that.
 Boot test: the 602-redirect exe loaded Council.SAV and advanced the turn 289 -> 290 (38 s) with
 the game alive.
+
+## Batch 7, 2026-10-16 (Council.SAV, 602-redirect exe): tile yields
+
+`crop_yield`, `mine_yield`, `energy_yield` and `resource_yield` (base.cpp). Trigger group `batch7`,
+one test. Each yield function runs for factions 1-7, with no base and with the faction's first
+base, with the improvement flag off and on, over every other row of the map, comparing the
+return value and the two side-effect globals (`BaseTerraformReduce`, the yield lost to the
+three-per-square caps, and `BaseTerraformEnergy`, the base square energy). The dispatcher is
+checked for all five types on a tile sample.
+
+| function | compared | non-zero yields | mismatches |
+|---|---|---|---|
+| crop_yield | 106,496 | 91,234 | 0 |
+| mine_yield | 106,496 | 69,045 | 0 |
+| energy_yield | 106,496 | 79,470 | 0 |
+| resource_yield | 2,090 | - | 0 |
+
+Log: `regression-runs/2026-10-16-council-batch7.log`. Notes: the yield functions test facilities
+with `bitmask()` on `Bases[base_id]` without checking the base id, so a base id of -1 reads the
+memory before the array; the C++ does the same (`yield_fac`). 0x90E914/0x90E998 are
+`BaseTerraformEnergy`/`BaseTerraformReduce` (Thinker's names), 0x9A6818 `SolarFlaresEvent` (energy
+tripled) and 0x93A934 `ControlUpkeepA` selects which of its two bits applies. The Manifold
+Harmonics owner gets the planet-rating bonuses on fungus and monoliths.
+Boot test: the 606-redirect exe loaded Council.SAV and advanced the turn 289 -> 290 (38 s) with
+the game alive.

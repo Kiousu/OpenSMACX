@@ -27,6 +27,7 @@
 #include "technology.h"
 #include "veh.h"
 #include "log.h"
+#include "council.h"
 
 RulesFacility *Facility = (RulesFacility *)0x009A4B68;
 RulesCitizen *Citizen = (RulesCitizen *)0x00946020;
@@ -51,6 +52,8 @@ BOOL *BaseBitsErrorActive = (BOOL *)0x0090EA38; // base_at() is reporting a stra
 int *BaseGovPickID = (int *)0x0090EA44; // [4] production item picked by base_reset() for each
                                         // governor priority (explore, discover, build, conquer)
 int *BaseGovPickValue = (int *)0x0090EA54; // [4] value of each pick; see base_claimed()
+int *BaseTerraformEnergy = (int *)0x0090E914; // energy_yield() of the base square, clamped to 0-99
+int *BaseTerraformReduce = (int *)0x0090E998; // yield lost to the three-per-square caps; see resource_yield()
 
 /*
 Purpose: Check if the base already has a particular facility built or if it's in the queue.
@@ -714,6 +717,489 @@ uint32_t __cdecl worm_mod(uint32_t base_id, uint32_t faction_id) {
         worm_modifier_count++;
     }
     return worm_modifier_count;
+}
+
+// Facility test the yield functions inline: no base id check, so a base id of -1 reads the memory
+// before the base array exactly like the original (the callers never let that matter).
+static BOOL yield_fac(int base_id, uint32_t facility_id) {
+    uint32_t offset, mask;
+    bitmask(facility_id, &offset, &mask);
+    return (Bases[base_id].facilities_built[offset] & mask) != 0;
+}
+
+// Planet rating as the fungus yields use it: positive ratings count as zero, negative ones down to -3.
+static int yield_planet_penalty(uint32_t faction_id) {
+    int planet = PlayersData[faction_id].soc_effect_pending.planet;
+    if (planet < -3) {
+        return -3;
+    }
+    return planet > 0 ? 0 : planet;
+}
+
+/*
+Purpose: Calculate the nutrients a tile yields for a faction (and base): base squares, boreholes,
+         monoliths, fungus, land by rainfall (zero on rocky ground) with farms and the mine
+         penalty, forests with tree farm facilities, ocean with kelp farms and the aquafarm, plus
+         bonus resources, landmarks, soil enrichers and condensers, capped at two without the
+         prerequisite tech (the excess goes to BaseTerraformReduce) and adjusted for bumper
+         crops and famine. With assume_improved the fungus yield is skipped.
+Original Offset: 004E6E50
+Return Value: Nutrient yield
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch7.log)
+*/
+uint32_t __cdecl crop_yield(uint32_t faction_id, int base_id, uint32_t x, uint32_t y,
+                            BOOL assume_improved) {
+    Map *tile = map_loc(x, y);
+    uint32_t bit = tile->bit;
+    BOOL is_ocean = (tile->climate & 0xE0) < ALT_BIT_SHORE_LINE;
+    BOOL has_base = (bit & BIT_BASE_IN_TILE) && (tile->val2 & 0xF) <= 7;
+    BOOL bonus = bonus_at(x, y, 0) == 1;
+    uint32_t bit2 = tile->bit2;
+    BOOL landmark = ((bit2 & (BIT2_JUNGLE | BIT2_UNK_80000000)) == BIT2_JUNGLE && !is_ocean)
+        || ((bit2 & (BIT2_FRESH | BIT2_UNK_80000000)) == BIT2_FRESH && is_ocean);
+    int yield;
+    if (has_base) {
+        yield = ResourceInfo[RSCINFO_BASE_SQ].nutrients;
+        if (bonus) {
+            yield *= 2;
+        }
+        if (landmark) {
+            yield++;
+        }
+        if (base_id < 0) {
+            return yield;
+        }
+        if (yield_fac(base_id, FAC_RECYCLING_TANKS) || yield_fac(base_id, FAC_PRESSURE_DOME)) {
+            yield += ResourceInfo[RSCINFO_RECYCLING_TANKS].nutrients;
+        }
+    } else if (bit & BIT_THERMAL_BORE) {
+        yield = ResourceInfo[RSCINFO_BOREHOLE_SQ].nutrients;
+        if (yield) {
+            yield += ResourceInfo[RSCINFO_BONUS_SQ].nutrients;
+        }
+    } else if (bit & BIT_MONOLITH) {
+        yield = ResourceInfo[RSCINFO_MONOLITH].nutrients;
+        if (bonus) {
+            yield += ResourceInfo[RSCINFO_BONUS_SQ].nutrients;
+        }
+        int base_id_harmonics = SecretProject->manifold_harmonics;
+        if (base_id_harmonics >= 0 && Bases[base_id_harmonics].faction_id_current == faction_id
+            && PlayersData[faction_id].soc_effect_pending.planet > 0) {
+            yield++;
+        }
+    } else if ((bit & BIT_FUNGUS) && !assume_improved
+        && (tile->climate & 0xE0) >= ALT_BIT_OCEAN_SHELF) {
+        yield = PlayersData[faction_id].tech_fungus_nutrient + yield_planet_penalty(faction_id);
+        if (yield < 0) {
+            yield = 0;
+        } else if (yield > 99) {
+            yield = 99;
+        }
+        int base_id_harmonics = SecretProject->manifold_harmonics;
+        if (base_id_harmonics >= 0 && Bases[base_id_harmonics].faction_id_current == faction_id
+            && PlayersData[faction_id].soc_effect_pending.planet > 0) {
+            yield++;
+        }
+    } else {
+        BOOL mine_check = false;
+        if (!is_ocean) {
+            if (!(bit & BIT_FOREST)) {
+                yield = (tile->climate & 0x18) >> 3;
+                if ((tile->val3 >> 6) > 1) {
+                    yield = 0;
+                }
+                if (bonus) {
+                    yield += ResourceInfo[RSCINFO_BONUS_SQ].nutrients;
+                }
+                if (landmark) {
+                    yield++;
+                }
+                if (yield < 0) {
+                    yield = 0;
+                }
+                if ((bit & BIT_FARM) && (tile->val3 >> 6) < 2) {
+                    yield += ResourceInfo[RSCINFO_IMPROVED_LAND].nutrients;
+                }
+                mine_check = true;
+            } else {
+                yield = (bonus ? ResourceInfo[RSCINFO_BONUS_SQ].nutrients : 0)
+                    + ResourceInfo[RSCINFO_FOREST_SQ].nutrients;
+                if (base_id >= 0) {
+                    if (yield_fac(base_id, FAC_HYBRID_FOREST)) {
+                        yield++;
+                    }
+                    if (yield_fac(base_id, FAC_TREE_FARM)) {
+                        yield++;
+                    }
+                }
+                if (landmark) {
+                    yield++;
+                }
+            }
+        } else {
+            yield = ResourceInfo[RSCINFO_OCEAN_SQ].nutrients;
+            if (bonus) {
+                yield += ResourceInfo[RSCINFO_BONUS_SQ].nutrients;
+            }
+            if (landmark) {
+                yield++;
+            }
+            if ((tile->climate & 0xE0) == ALT_BIT_OCEAN_SHELF || *ExpansionEnabled) {
+                if (bit & BIT_FARM) {
+                    yield += ResourceInfo[RSCINFO_IMPROVED_SEA].nutrients;
+                    if (yield_fac(base_id, FAC_AQUAFARM)) {
+                        yield++;
+                    }
+                }
+                mine_check = true;
+            }
+        }
+        if (mine_check && (bit & BIT_MINE) && yield > 1) {
+            yield += Rules->tgl_nutrient_effect_with_mine;
+        }
+        if (bit & BIT_SOIL_ENRICHER) {
+            yield += yield / 2;
+        }
+        BOOL condenser = (bit & BIT_CONDENSER) != 0;
+        if (condenser) {
+            yield += yield / 2;
+        }
+        if (yield > 2 && !has_tech(Rules->tech_three_nutrients_sqr, faction_id) && !bonus
+            && !condenser) {
+            *BaseTerraformReduce += yield - 2;
+            yield = 2;
+        }
+    }
+    if (base_id >= 0) {
+        if (Bases[base_id].event & BEVENT_BUMPER) {
+            yield++;
+        }
+        if ((Bases[base_id].event & BEVENT_FAMINE) && yield) {
+            yield--;
+        }
+    }
+    return yield;
+}
+
+/*
+Purpose: Calculate the minerals a tile yields for a faction (and base): base squares, monoliths,
+         boreholes, fungus, land by rockiness with mines (limited without a road) or unimproved
+         rolling/rocky ground, forests, and ocean with mining platforms (shelf, or anywhere in the
+         expansion), plus bonus resources and mineral landmarks, capped at two without the
+         prerequisite tech and adjusted for industry booms and busts. With assume_improved the
+         tile is treated as mined.
+Original Offset: 004E7310
+Return Value: Mineral yield
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch7.log)
+*/
+int __cdecl mine_yield(uint32_t faction_id, int base_id, uint32_t x, uint32_t y, BOOL assume_improved) {
+    Map *tile = map_loc(x, y);
+    int code = (int)tile->bit2 >> 24;
+    uint32_t bit = tile->bit;
+    BOOL bonus = bonus_at(x, y, 0) == 2;
+    uint32_t bit2 = tile->bit2;
+    BOOL landmark = ((bit2 & (BIT2_VOLCANO | BIT2_UNK_80000000)) == BIT2_VOLCANO && code < 9)
+        || ((bit2 & (BIT2_CRATER | BIT2_UNK_80000000)) == BIT2_CRATER && code < 9)
+        || ((bit2 & (BIT2_FOSSIL | BIT2_UNK_80000000)) == BIT2_FOSSIL && code < 6)
+        || (bit2 & (BIT2_CANYON | BIT2_UNK_80000000)) == BIT2_CANYON;
+    int yield = (bonus ? ResourceInfo[RSCINFO_BONUS_SQ].minerals : 0) + (landmark ? 1 : 0);
+    if ((bit & BIT_BASE_IN_TILE) && (tile->val2 & 0xF) < 8) {
+        yield += ResourceInfo[RSCINFO_BASE_SQ].minerals;
+        if (base_id < 0) {
+            return yield;
+        }
+        if (yield_fac(base_id, FAC_RECYCLING_TANKS) || yield_fac(base_id, FAC_PRESSURE_DOME)) {
+            yield += ResourceInfo[RSCINFO_RECYCLING_TANKS].minerals;
+        }
+    } else if (bit & BIT_MONOLITH) {
+        yield = ResourceInfo[RSCINFO_MONOLITH].minerals;
+        if (bonus) {
+            yield += ResourceInfo[RSCINFO_BONUS_SQ].minerals;
+        }
+        int base_id_harmonics = SecretProject->manifold_harmonics;
+        if (base_id_harmonics >= 0 && Bases[base_id_harmonics].faction_id_current == faction_id
+            && PlayersData[faction_id].soc_effect_pending.planet > 1) {
+            yield++;
+        }
+    } else {
+        BOOL capped = true;
+        if (bit & BIT_THERMAL_BORE) {
+            yield = ResourceInfo[RSCINFO_BOREHOLE_SQ].minerals;
+            if (bonus) {
+                yield += ResourceInfo[RSCINFO_BONUS_SQ].minerals;
+            }
+        } else if ((bit & BIT_FUNGUS) && (tile->climate & 0xE0) >= ALT_BIT_OCEAN_SHELF) {
+            int planet = PlayersData[faction_id].soc_effect_pending.planet;
+            yield = PlayersData[faction_id].tech_fungus_mineral + yield_planet_penalty(faction_id);
+            if (yield < 0) {
+                yield = 0;
+            } else if (yield > 99) {
+                yield = 99;
+            }
+            int base_id_harmonics = SecretProject->manifold_harmonics;
+            if (base_id_harmonics >= 0 && Bases[base_id_harmonics].faction_id_current == faction_id
+                && planet > 1) {
+                yield++;
+            }
+            capped = false;
+        } else if ((tile->climate & 0xE0) >= ALT_BIT_SHORE_LINE) {
+            uint32_t rocky = tile->val3 >> 6;
+            int add = ResourceInfo[RSCINFO_FOREST_SQ].minerals;
+            if (!(bit & BIT_FOREST)) {
+                if (!(bit & (BIT_THERMAL_BORE | BIT_MINE)) && !assume_improved) {
+                    if (rocky) {
+                        yield++;
+                    }
+                    add = 0;
+                } else {
+                    yield += rocky;
+                    if (!rocky) {
+                        rocky = 1;
+                    }
+                    if (bonus || landmark) {
+                        rocky++;
+                    }
+                    add = rocky;
+                    if (!(bit & BIT_ROAD) && !assume_improved
+                        && (int)Rules->limit_mineral_mine_sans_road < (int)rocky) {
+                        *BaseTerraformReduce += rocky - Rules->limit_mineral_mine_sans_road;
+                        add = Rules->limit_mineral_mine_sans_road;
+                    }
+                }
+            }
+            yield += add;
+        } else {
+            yield += ResourceInfo[RSCINFO_OCEAN_SQ].minerals;
+            BOOL is_shelf = (tile->climate & 0xE0) == ALT_BIT_OCEAN_SHELF;
+            if ((Players[Bases[base_id].faction_id_current].rule_flags & RFLAG_AQUATIC) && is_shelf) {
+                yield++;
+            }
+            if ((is_shelf || *ExpansionEnabled) && ((bit & BIT_MINE) || assume_improved)) {
+                yield += ResourceInfo[RSCINFO_IMPROVED_SEA].minerals;
+                if (has_tech(Rules->tech_mining_platform_bonus, faction_id)) {
+                    yield++;
+                }
+                if (yield_fac(base_id, FAC_SUBSEA_TRUNKLINE)) {
+                    yield++;
+                }
+            }
+        }
+        if (capped && yield > 2 && !has_tech(Rules->tech_three_minerals_sqr, faction_id) && !bonus) {
+            *BaseTerraformReduce += yield - 2;
+            yield = 2;
+        }
+    }
+    if (base_id >= 0) {
+        if (Bases[base_id].event & BEVENT_INDUSTRY) {
+            yield++;
+        }
+        if ((Bases[base_id].event & BEVENT_BUST) && yield) {
+            yield--;
+        }
+    }
+    return yield;
+}
+
+/*
+Purpose: Calculate the energy a tile yields for a faction (and base): base squares by economy
+         rating, headquarters, golden ages and the governorship; monoliths, boreholes, fungus,
+         land by altitude with solar collectors (plus adjacent echelon mirrors of the current
+         base's owner), forests, and ocean with tidal harnesses; plus rivers, bonus resources,
+         energy landmarks and the Merchant Exchange; capped at two without the prerequisite tech
+         (base squares are clamped to 0-99 and recorded in BaseTerraformEnergy); adjusted for
+         heat waves, cloud cover, dust clouds and tripled during solar flares.
+Original Offset: 004E7750
+Return Value: Energy yield
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch7.log)
+*/
+uint32_t __cdecl energy_yield(uint32_t faction_id, int base_id, int x, uint32_t y,
+                              BOOL assume_improved) {
+    Map *tile = map_loc(x, y);
+    uint32_t bit = tile->bit;
+    uint32_t bit2 = tile->bit2;
+    BOOL is_land = (tile->climate & 0xE0) >= ALT_BIT_SHORE_LINE;
+    BOOL has_base = (bit & BIT_BASE_IN_TILE) && (tile->val2 & 0xF) <= 7;
+    int bonus_type = bonus_at(x, y, 0);
+    BOOL landmark = ((bit2 & (BIT2_VOLCANO | BIT2_UNK_80000000)) == BIT2_VOLCANO
+            && ((int)bit2 >> 24) < 9)
+        || (bit2 & (BIT2_URANIUM | BIT2_UNK_80000000)) == BIT2_URANIUM
+        || (bit2 & (BIT2_GEOTHERMAL | BIT2_UNK_80000000)) == BIT2_GEOTHERMAL
+        || (bit2 & (BIT2_RIDGE | BIT2_UNK_80000000)) == BIT2_RIDGE;
+    int yield = 0;
+    if (!has_base) {
+        if (bit & BIT_MONOLITH) {
+            yield = ResourceInfo[RSCINFO_MONOLITH].energy;
+            int base_id_harmonics = SecretProject->manifold_harmonics;
+            if (base_id_harmonics >= 0 && Bases[base_id_harmonics].faction_id_current == faction_id) {
+                if (PlayersData[faction_id].soc_effect_pending.planet >= 0) {
+                    yield++;
+                }
+                if (PlayersData[faction_id].soc_effect_pending.planet > 2) {
+                    yield++;
+                }
+            }
+        } else if (bit & BIT_THERMAL_BORE) {
+            yield = ResourceInfo[RSCINFO_BOREHOLE_SQ].energy;
+        } else if ((bit & BIT_FUNGUS) && (tile->climate & 0xE0) >= ALT_BIT_OCEAN_SHELF) {
+            int planet = PlayersData[faction_id].soc_effect_pending.planet;
+            yield = PlayersData[faction_id].tech_fungus_energy + yield_planet_penalty(faction_id);
+            if (yield < 0) {
+                yield = 0;
+            } else if (yield > 99) {
+                yield = 99;
+            }
+            int base_id_harmonics = SecretProject->manifold_harmonics;
+            if (base_id_harmonics >= 0 && Bases[base_id_harmonics].faction_id_current == faction_id) {
+                if (planet >= 0) {
+                    yield++;
+                }
+                if (planet > 2) {
+                    yield++;
+                }
+            }
+            goto events;
+        } else if (is_land) {
+            if (!(bit & BIT_FOREST)) {
+                int altitude = (tile->climate >> 5) - 2;
+                if ((bit & (BIT_THERMAL_BORE | BIT_ECH_MIRROR | BIT_SOLAR_TIDAL)) || assume_improved) {
+                    yield = altitude < 0 ? 0 : altitude;
+                }
+                if (bit & BIT_SOLAR_TIDAL) {
+                    for (int i = 0; i < 8; i++) {
+                        int x_radius = xrange(x + RadiusBaseX[i]);
+                        int y_radius = y + RadiusBaseY[i];
+                        if (y_radius >= 0 && y_radius < (int)*MapLatitudeBounds && x_radius >= 0
+                            && x_radius < (int)*MapLongitudeBounds) {
+                            Map *mirror = map_loc(x_radius, y_radius);
+                            if ((mirror->bit & BIT_ECH_MIRROR)
+                                && mirror->territory == (int)(*BaseCurrent)->faction_id_current) {
+                                yield++;
+                            }
+                        }
+                    }
+                }
+            } else {
+                yield = ResourceInfo[RSCINFO_FOREST_SQ].energy;
+                if (base_id >= 0 && yield_fac(base_id, FAC_HYBRID_FOREST)) {
+                    yield = ResourceInfo[RSCINFO_FOREST_SQ].energy + 1;
+                }
+            }
+        } else {
+            if ((tile->climate & 0xE0) == ALT_BIT_OCEAN_SHELF || *ExpansionEnabled) {
+                yield = ResourceInfo[RSCINFO_OCEAN_SQ].energy;
+                if ((bit & BIT_SOLAR_TIDAL) || assume_improved) {
+                    yield += ResourceInfo[RSCINFO_IMPROVED_SEA].energy;
+                    if (yield_fac(base_id, FAC_THERMOCLINE_TRANSDUCER)) {
+                        yield++;
+                    }
+                }
+            }
+            if (bit & BIT_FOREST) {
+                yield--;
+            }
+        }
+    } else {
+        int base_sq = ResourceInfo[RSCINFO_BASE_SQ].energy;
+        if (yield_fac(base_id, FAC_HEADQUARTERS)) {
+            base_sq++;
+        }
+        yield = base_sq;
+        int golden_age = 0;
+        if (base_id >= 0) {
+            if (yield_fac(base_id, FAC_RECYCLING_TANKS) || yield_fac(base_id, FAC_PRESSURE_DOME)) {
+                yield = base_sq + ResourceInfo[RSCINFO_RECYCLING_TANKS].energy;
+            }
+            golden_age = (Bases[base_id].state & BSTATE_GOLDEN_AGE_ACTIVE) ? 1 : 0;
+        }
+        int economy = PlayersData[faction_id].soc_effect_pending.economy + golden_age;
+        if (economy < 0) {
+            if (!yield_fac(base_id, FAC_HEADQUARTERS) || economy < -1
+                || PlayersData[faction_id].current_num_bases == 1) {
+                economy++;
+            }
+        } else if (economy > 1) {
+            if (economy > 4) {
+                economy = 4;
+            }
+            economy = economy * 2 - 4;
+        }
+        yield += economy;
+        if (*GovernorFactionID == (int)faction_id) {
+            yield++;
+        }
+    }
+    if ((bit & BIT_RIVER) && is_land) {
+        yield++;
+    }
+    if (bonus_type == 3) {
+        yield += ResourceInfo[RSCINFO_BONUS_SQ].energy;
+    }
+    if (landmark) {
+        yield++;
+    }
+    {
+        int golden_age = 0;
+        if (base_id >= 0) {
+            if (SecretProject->merchant_exchange == base_id) {
+                yield++;
+            }
+            golden_age = (Bases[base_id].state & BSTATE_GOLDEN_AGE_ACTIVE) ? 1 : 0;
+        }
+        if (PlayersData[faction_id].soc_effect_pending.economy + golden_age > 1) {
+            yield++;
+        }
+    }
+    if (!has_base) {
+        if (yield > 2 && !has_tech(Rules->tech_three_energy_sqr, faction_id) && bonus_type != 3) {
+            *BaseTerraformReduce += yield - 2;
+            yield = 2;
+        }
+    } else if (yield < 0) {
+        yield = 0;
+        *BaseTerraformEnergy = 0;
+    } else {
+        *BaseTerraformEnergy = yield;
+        if (yield > 99) {
+            yield = 99;
+            *BaseTerraformEnergy = 99;
+        }
+    }
+events:
+    if (base_id >= 0) {
+        if (Bases[base_id].event & BEVENT_HEAT_WAVE) {
+            yield++;
+        }
+        if ((Bases[base_id].event & BEVENT_CLOUD_COVER) && yield) {
+            yield--;
+        }
+    }
+    if (*DustCloudDuration && yield) {
+        yield--;
+    }
+    uint32_t flares = *ControlUpkeepA ? (*SolarFlaresEvent & 2) : (*SolarFlaresEvent & 1);
+    return flares ? yield * 3 : yield;
+}
+
+/*
+Purpose: Yield of a tile for one resource type: 0 nutrients, 1 minerals, 2 energy. Type 3 resets
+         BaseTerraformReduce (the yield lost to the "three per square" caps).
+Original Offset: 004E7DC0
+Return Value: Yield (0 for type 3 and unknown types)
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch7.log)
+*/
+int __cdecl resource_yield(uint32_t rsc_type, uint32_t faction_id, int base_id, int x, int y) {
+    switch (rsc_type) {
+    case 0:
+        return crop_yield(faction_id, base_id, x, y, false);
+    case 1:
+        return mine_yield(faction_id, base_id, x, y, false);
+    case 2:
+        return energy_yield(faction_id, base_id, x, y, false);
+    case 3:
+        *BaseTerraformReduce = 0;
+        break;
+    }
+    return 0;
 }
 
 /*
