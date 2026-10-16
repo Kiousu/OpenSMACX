@@ -28,6 +28,7 @@
 #include "veh.h"
 #include "log.h"
 #include "council.h"
+#include "general.h"
 
 RulesFacility *Facility = (RulesFacility *)0x009A4B68;
 RulesCitizen *Citizen = (RulesCitizen *)0x00946020;
@@ -1900,6 +1901,126 @@ BOOL __cdecl base_queue(uint32_t base_id) {
 }
 
 /*
+Purpose: Make the current base pay for its units. While the mineral intake can't cover the forces
+         maintenance, it first calls off mineral convoys parked in bases (each saving a mineral),
+         then disbands the supported unit farthest away. A human player is warned instead; an AI
+         colony pod is dropped from support and charged off twice before being disbanded. Units
+         with a clean reactor stop the purge. A rioting base under weak police that the AI runs
+         (or a human governor set to do so) also disbands its most distant pacifism drone unit,
+         a roll weighted by the faction's appetite for war deciding which units are eligible.
+Original Offset: 004F4830
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch12.log)
+*/
+void __cdecl base_check_support() {
+    Base *base = *BaseCurrent;
+    uint32_t faction_id = base->faction_id_current;
+    int base_id = *BaseIDCurrentSelected;
+    while ((*BaseCurrent)->mineral_intake_2 < (int)*BaseCurrentForcesMaintCost) {
+        base = *BaseCurrent;
+        int score_best = -1;
+        int veh_id_best = -1;
+        for (int veh_id = 0; veh_id < *VehCurrentCount; veh_id++) {
+            Veh *veh = &Vehs[veh_id];
+            if (veh->faction_id != base->faction_id_current || veh->home_base_id != base_id) {
+                continue;
+            }
+            int score;
+            uint8_t plan = VehPrototypes[veh->proto_id].plan;
+            if (plan == PLAN_SUPPLY_CONVOY) {
+                if (veh->order != ORDER_CONVOY || veh->order_auto_type != RSC_MINERALS
+                    || base_who(veh->x, veh->y) < 0) {
+                    continue;
+                }
+                score = 99999;
+            } else if ((veh->state & VSTATE_REQUIRES_SUPPORT) && plan < PLAN_SUPPLY_CONVOY) {
+                score = vector_dist(base->x, base->y, veh->x, veh->y);
+            } else {
+                continue;
+            }
+            if (score_best < score) {
+                veh_id_best = veh_id;
+                score_best = score;
+            }
+        }
+        if (score_best < 0) {
+            break;
+        }
+        Veh *veh = &Vehs[veh_id_best];
+        uint8_t plan = VehPrototypes[veh->proto_id].plan;
+        if (plan == PLAN_SUPPLY_CONVOY) {
+            veh->order = ORDER_NONE;
+            (*BaseCurrentForcesMaintCost)--;
+            continue;
+        }
+        if (is_human(faction_id)) {
+            parse_says(1, VehPrototypes[veh->proto_id].veh_name, -1, -1);
+            popb("NOSUPPORT", 0x8000, 13, "genwarning_sm.pcx", 0);
+        } else if (plan == PLAN_COLONIZATION) {
+            veh->state &= ~VSTATE_REQUIRES_SUPPORT;
+            int support = PlayersData[faction_id].soc_effect_pending.support;
+            if (!has_abil(veh->proto_id, ABL_CLEAN_REACTOR)) {
+                *BaseCurrentForcesMaintCost -= (support < -3) + 1;
+            }
+        }
+        int support = PlayersData[faction_id].soc_effect_pending.support;
+        if (has_abil(veh->proto_id, ABL_CLEAN_REACTOR)) {
+            break;
+        }
+        *BaseCurrentForcesMaintCost -= (support < -3) + 1;
+        kill(veh_id_best);
+    }
+    base = *BaseCurrent;
+    if ((!is_human(faction_id)
+        || ((base->governor & GOV_MANAGES_CITIZENS_SPECS) && (base->governor & GOV_ACTIVE)))
+        && (base->state & BSTATE_DRONE_RIOTS_ACTIVE)
+        && PlayersData[faction_id].soc_effect_pending.police
+            + (has_fac_built(FAC_BROOD_PIT, base_id) ? 2 : 0) < -2
+        && (base->talent_total < base->drone_total || base->nutrient_surplus < 0)) {
+        int score_best = -1;
+        int veh_id_best = -1;
+        for (int veh_id = 0; veh_id < *VehCurrentCount; veh_id++) {
+            Veh *veh = &Vehs[veh_id];
+            uint32_t state = veh->state;
+            if (veh->faction_id != faction_id || veh->home_base_id != base_id
+                || !(state & VSTATE_PACIFISM_DRONE)) {
+                continue;
+            }
+            if (is_human(faction_id)
+                && (!(state & VSTATE_UNK_200) || (state & VSTATE_UNK_1000000)
+                    || ((state & VSTATE_UNK_2000000)
+                        && veh->patrol_current_point < veh->waypoint_count)
+                    || veh->order_auto_type)) {
+                continue;
+            }
+            int ai_fight = PlayersData[faction_id].ai_fight;
+            if (ai_fight != -1 && ai_fight + 1 >= 0 && _rand() % (ai_fight + 2)) {
+                continue;
+            }
+            int dist = x_dist(veh->x, (*BaseCurrent)->x) + abs(veh->y - (*BaseCurrent)->y);
+            int cost = VehPrototypes[veh->proto_id].cost;
+            cost = cost < 1 ? 1 : (cost > 99 ? 99 : cost);
+            int score = ((dist >> 1) * 100) / cost;
+            uint8_t plan = VehPrototypes[veh->proto_id].plan;
+            if (plan == PLAN_DEFENSIVE) {
+                score *= 2;
+            }
+            if (plan == PLAN_COMBAT) {
+                score /= 2;
+            }
+            if (score_best < score) {
+                veh_id_best = veh_id;
+                score_best = score;
+            }
+        }
+        if (veh_id_best >= 0) {
+            kill(veh_id_best);
+            (*BaseCurrent)->state &= ~BSTATE_DRONE_RIOTS_ACTIVE;
+        }
+    }
+}
+
+/*
 Purpose: Check if current base has had an energy shortfall. If so, reset all existing energy convoy
          orders for the faction. TODO: Revisit and find a way to only reset specific base convoys.
 Original Offset: 004F4DC0
@@ -1919,6 +2040,44 @@ void __cdecl base_energy_costs() {
             Vehs[i].order = ORDER_NONE;
         }
     }
+}
+
+/*
+Purpose: Add the current base's labs to its faction's research. A punishment sphere halves them,
+         and none count early on: before turn 5 on the two easiest levels, or for five turns per
+         point of negative research rating. The rating (clamped to -5..+5) scales the labs by 10%
+         a point, the fractional remainder carrying over between bases and turns.
+Original Offset: 004F4E80
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch12.log)
+*/
+void __cdecl base_research() {
+    if (*GameRules & RULES_SCN_NO_TECH_ADVANCES) {
+        return;
+    }
+    uint32_t faction_id = (*BaseCurrent)->faction_id_current;
+    int labs = (*BaseCurrent)->labs_total;
+    if (has_fac_built(FAC_PUNISHMENT_SPHERE, *BaseIDCurrentSelected)) {
+        labs /= 2;
+    }
+    PlayerData *player = &PlayersData[faction_id];
+    if (*TurnCurrentNum < player->soc_effect_pending.research * -5) {
+        labs = 0;
+    }
+    if (*TurnCurrentNum < 5 && player->diff_level < DLVL_TALENT) {
+        labs = 0;
+    }
+    player->labs_total += labs;
+    int rating = player->soc_effect_pending.research;
+    rating = rating < -5 ? -5 : (rating > 5 ? 5 : rating);
+    int value = (rating + 10) * labs * 10;
+    int remainder = player->net_random_event + value % 100;
+    player->net_random_event = remainder;
+    if (remainder > 99) {
+        value += 100;
+        player->net_random_event = remainder - 100;
+    }
+    tech_research(faction_id, value / 100);
 }
 
 /*

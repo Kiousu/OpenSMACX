@@ -1175,6 +1175,128 @@ int __cdecl veh_who(uint32_t x, uint32_t y) {
 }
 
 /*
+Purpose: Recount every region's territory statistics from scratch. Each tile goes to the faction
+         whose base is nearest within the territory distance (half of it at sea, where a base on or
+         next to the tile also claims it); a change of owner flags the tile for redraw. Per region
+         and owner this tallies territory, visible tiles, good land (moist, not rocky, no fungus)
+         and the part of it inside base radii, the best site rating and supply pods. Pods in a
+         faction's territory, or unclaimed pods near a faction's bases, become AI scouting sites.
+Original Offset: 00523DD0
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch12.log)
+*/
+void __cdecl reset_territory() {
+    for (int faction_id = 0; faction_id < MaxPlayerNum; faction_id++) {
+        for (int region = 0; region < MaxContinentNum; region++) {
+            PlayersData[faction_id].region_territory_tiles[region] = 0;
+            PlayersData[faction_id].region_visible_tiles[region] = 0;
+            PlayersData[faction_id].region_good_tiles[region] = 0;
+            PlayersData[faction_id].region_good_radius_tiles[region] = 0;
+            PlayersData[faction_id].region_best_site[region] = 0;
+            PlayersData[faction_id].region_territory_pods[region] = 0;
+        }
+    }
+    for (int region = 0; region < MaxContinentNum; region++) {
+        Continents[region].unk_3 = 0;
+        Continents[region].pods = 0;
+    }
+    for (int y = 0; y < (int)*MapLatitudeBounds; y++) {
+        for (int x = y & 1; x < (int)*MapLongitudeBounds; x += 2) {
+            Map *tile = map_loc(x, y);
+            uint32_t region = tile->region;
+            for (uint32_t faction_id = 1; faction_id < MaxPlayerNum; faction_id++) {
+                uint32_t flags = PlayersData[faction_id].flags;
+                if ((flags & PFLAG_STRAT_SEARCH_OBJECTIVES)
+                    ? (tile->bit & BIT_SUPPLY_REMOVE) != 0
+                    : ((flags & PFLAG_MAP_REVEALED) || (tile->visibility & (1 << faction_id)))) {
+                    PlayersData[faction_id].region_visible_tiles[region]++;
+                }
+            }
+            int owner = -1;
+            int base_id = base_find(x, y, -1, region, -1, -1);
+            BOOL ocean = (tile->climate & 0xE0) < ALT_BIT_SHORE_LINE;
+            if (base_id >= 0) {
+                int dist = Rules->territory_max_dist_base;
+                if (ocean) {
+                    dist >>= 1;
+                }
+                if (*BaseFindDist < dist) {
+                    owner = Bases[base_id].faction_id_current;
+                }
+            }
+            if (ocean) {
+                for (int i = 0; i < RadiusRange[1]; i++) {
+                    int x_radius = x + RadiusOffsetX[i];
+                    if (!*MapIsFlat) {
+                        if (x_radius < 0) {
+                            x_radius += *MapLongitudeBounds;
+                        } else if (x_radius >= (int)*MapLongitudeBounds) {
+                            x_radius -= *MapLongitudeBounds;
+                        }
+                    }
+                    int y_radius = y + RadiusOffsetY[i];
+                    if (y_radius >= 0 && y_radius < (int)*MapLatitudeBounds && x_radius >= 0
+                        && x_radius < (int)*MapLongitudeBounds) {
+                        int base_id_adj = base_at(x_radius, y_radius);
+                        if (base_id_adj >= 0) {
+                            owner = Bases[base_id_adj].faction_id_current;
+                            break;
+                        }
+                    }
+                }
+            }
+            if (owner != tile->territory) {
+                tile->bit2 |= BIT2_UNK_400000;
+                *UnkBitfield1 |= 1;
+            }
+            tile->territory = (int8_t)owner;
+            if (owner < 0) {
+                owner = 0;
+            }
+            PlayerData *player = &PlayersData[owner];
+            player->region_territory_tiles[region]++;
+            if ((tile->climate & (RAINFALL_RAINY | RAINFALL_MOIST)) && (tile->val3 & 0xC0) < 0x80
+                && !(tile->bit & BIT_FUNGUS)) {
+                player->region_good_tiles[region]++;
+                if (tile->bit & BIT_BASE_RADIUS) {
+                    player->region_good_radius_tiles[region]++;
+                }
+            }
+            int site = site_at(x, y, 0);
+            if ((int)Continents[region].unk_3 < site) {
+                Continents[region].unk_3 = site;
+            }
+            if (owner && player->region_best_site[region] < site) {
+                player->region_best_site[region] = (uint8_t)site;
+            }
+            if (!goody_at(x, y)) {
+                continue;
+            }
+            Continents[region].pods++;
+            player->region_territory_pods[region]++;
+            if (owner) {
+                if ((tile->visibility & (1 << owner))
+                    || (!is_human(owner) && *DiffLevelCurrent > DLVL_LIBRARIAN)) {
+                    add_site(owner, AI_GOAL_SCOUT, 1, x, y);
+                }
+                continue;
+            }
+            for (uint32_t faction_id = 1; faction_id < MaxPlayerNum; faction_id++) {
+                if (PlayersData[faction_id].region_total_bases[region]
+                    && ((tile->visibility & (1 << faction_id))
+                        || (!is_human(faction_id) && *DiffLevelCurrent > DLVL_LIBRARIAN))
+                    && !at_site(faction_id, AI_GOAL_SCOUT, x, y)
+                    && base_find(x, y, faction_id, region, -1, -1) >= 0
+                    && (int)Rules->territory_max_dist_base <= *BaseFindDist
+                    && *BaseFindDist <= (int)Rules->territory_max_dist_base * 2) {
+                    add_site(faction_id, AI_GOAL_SCOUT, 1, x, y);
+                }
+            }
+        }
+    }
+}
+
+/*
 Purpose: Rebuild the Map's unit related values.
 Original Offset: 00532A90
 Return Value: n/a

@@ -4050,6 +4050,240 @@ static int test_stack_veh() {
     return mismatches;
 }
 
+// ---------------------------------------------------------------- batch 12
+
+static int test_reset_territory() {
+    GameSnapshot base, after_orig, after_new;
+    snap_alloc(&base); snap_alloc(&after_orig); snap_alloc(&after_new);
+    snap_take(&base);
+    int diff_saved = *DiffLevelCurrent;
+    uint32_t dist_saved = Rules->territory_max_dist_base;
+    int compared = 0, mismatches = 0, pods = 0, flagged = 0;
+    char label[64];
+    for (int variant = 0; variant < 6; variant++) {
+        // as loaded; every tile unclaimed and unflagged; every site rating unknown; pods on every
+        // fourth tile (hard AI); the same on easy with a revealed map and the objectives flag;
+        // a doubled territory distance
+        auto prepare = [&]() {
+            snap_restore(&base);
+            *DiffLevelCurrent = diff_saved;
+            Rules->territory_max_dist_base = dist_saved;
+            reseed(variant);
+            for (uint32_t i = 0; i < base.tile_count; i++) {
+                Map *tile = &(*MapTiles)[i];
+                if (variant == 1) {
+                    tile->territory = -1;
+                    tile->bit2 &= ~BIT2_UNK_400000;
+                } else if (variant == 2) {
+                    tile->val2 &= 0x0F;
+                } else if ((variant == 3 || variant == 4) && i % 4 == 0) {
+                    tile->bit &= ~BIT_SUPPLY_REMOVE;
+                }
+            }
+            if (variant == 1) {
+                *UnkBitfield1 &= ~1;
+            } else if (variant == 3) {
+                *DiffLevelCurrent = DLVL_TRANSCEND;
+            } else if (variant == 4) {
+                *DiffLevelCurrent = DLVL_CITIZEN;
+                PlayersData[1].flags |= PFLAG_MAP_REVEALED;
+                PlayersData[2].flags |= PFLAG_STRAT_SEARCH_OBJECTIVES;
+            } else if (variant == 5) {
+                Rules->territory_max_dist_base = dist_saved * 2;
+            }
+        };
+        prepare();
+        reset_territory_OG();
+        snap_take(&after_orig);
+        for (int r = 0; r < MaxContinentNum; r++) {
+            pods += after_orig.continents[r].pods;
+        }
+        flagged += (after_orig.draw_state & 1) != 0;
+        prepare();
+        reset_territory();
+        snap_take(&after_new);
+        compared++;
+        sprintf_s(label, "reset_territory variant %d", variant);
+        if (snap_differs(&after_orig, &after_new, mismatches < MAX_DETAIL ? label : NULL)) {
+            mismatches++;
+        }
+    }
+    snap_restore(&base);
+    *DiffLevelCurrent = diff_saved;
+    Rules->territory_max_dist_base = dist_saved;
+    snap_free(&base); snap_free(&after_orig); snap_free(&after_new);
+    logf("reset_territory: %d compared (%d pods counted, %d redraws flagged by the original), %d mismatches",
+        compared, pods, flagged, mismatches);
+    return mismatches;
+}
+
+static int test_base_research() {
+    TechAchievedStub stub;
+    if (!stub.ok) {
+        return 1;
+    }
+    TechCompare tc;
+    tc.init();
+    int turn_saved = *TurnCurrentNum;
+    uint32_t rules_saved = *GameRules;
+    int compared = 0, mismatches = 0, awarded = 0;
+    char label[80];
+    for (int base_id = 0; base_id < *BaseCurrentCount; base_id++) {
+        uint32_t f = Bases[base_id].faction_id_current;
+        if (!quiet_faction(f)) {
+            continue;
+        }
+        for (int variant = 0; variant < 6; variant++) {
+            // as loaded; enough labs for an advance; a research penalty still running; the first
+            // turns on an easy level; a punishment sphere, top rating and a big carried remainder;
+            // a scenario without research
+            auto patch = [&]() {
+                *TurnCurrentNum = turn_saved;
+                *GameRules = rules_saved;
+                set_base(base_id);
+                PlayerData *p = &PlayersData[f];
+                if (variant == 1) {
+                    Bases[base_id].labs_total = p->tech_cost + 7;
+                } else if (variant == 2) {
+                    p->soc_effect_pending.research = -5;
+                    *TurnCurrentNum = 20;
+                } else if (variant == 3) {
+                    *TurnCurrentNum = 3;
+                    p->diff_level = DLVL_SPECIALIST;
+                    Bases[base_id].labs_total += 11;
+                } else if (variant == 4) {
+                    uint32_t offset, mask;
+                    bitmask(FAC_PUNISHMENT_SPHERE, &offset, &mask);
+                    Bases[base_id].facilities_built[offset] |= mask;
+                    Bases[base_id].labs_total += 13;
+                    p->soc_effect_pending.research = 7;
+                    p->net_random_event = 95;
+                } else if (variant == 5) {
+                    *GameRules |= RULES_SCN_NO_TECH_ADVANCES;
+                    Bases[base_id].labs_total = p->tech_cost + 7;
+                }
+            };
+            tc.prepare(base_id * 7 + variant); patch();
+            base_research_OG();
+            tc.take_orig();
+            awarded += (tc.tech_orig >= 0);
+            tc.prepare(base_id * 7 + variant); patch();
+            base_research();
+            tc.take_new();
+            compared++;
+            sprintf_s(label, "base_research(%d) variant %d", base_id, variant);
+            if (tc.differs(label, mismatches < MAX_DETAIL)) {
+                mismatches++;
+            }
+        }
+    }
+    *TurnCurrentNum = turn_saved;
+    *GameRules = rules_saved;
+    tc.done();
+    logf("base_research: %d compared (%d awards by the original), %d mismatches", compared, awarded,
+        mismatches);
+    return mismatches;
+}
+
+static int test_base_check_support() {
+    GameSnapshot base, after_orig, after_new;
+    snap_alloc(&base); snap_alloc(&after_orig); snap_alloc(&after_new);
+    snap_take(&base);
+    int selected_saved = *BaseIDCurrentSelected;
+    Base *current_saved = *BaseCurrent;
+    uint32_t maint_saved = *BaseCurrentForcesMaintCost;
+    int compared = 0, mismatches = 0, disbanded = 0, convoys = 0;
+    char label[80];
+    for (int base_id = 0; base_id < base.base_count; base_id++) {
+        uint32_t f = base.bases[base_id].faction_id_current;
+        for (int variant = 0; variant < 7; variant++) {
+            // a shortfall of 1, 4 and 12 minerals; a mineral convoy parked in the base with a
+            // shortfall of 3; a riot under weak police (all units pacifism drones), the same with
+            // a human governor and a warlike AI, the same with a rioting nutrient deficit
+            BOOL shortfall = variant <= 3;
+            if (shortfall && !quiet_faction(f)) {
+                continue; // a human player gets a popup
+            }
+            int convoy_id = -1;
+            auto prepare = [&]() {
+                snap_restore(&base);
+                reseed(base_id * 11 + variant);
+                set_base(base_id);
+                Base *b = &Bases[base_id];
+                int extra[4] = { 1, 4, 12, 3 };
+                *BaseCurrentForcesMaintCost = b->mineral_intake_2 + (shortfall ? extra[variant] : 0);
+                if (variant == 3) {
+                    for (int v = 0; v < *VehCurrentCount; v++) {
+                        if (Vehs[v].home_base_id == base_id
+                            && VehPrototypes[Vehs[v].proto_id].plan == PLAN_SUPPLY_CONVOY) {
+                            Vehs[v].order = ORDER_CONVOY;
+                            Vehs[v].order_auto_type = RSC_MINERALS;
+                            Vehs[v].x = b->x;
+                            Vehs[v].y = b->y;
+                            convoy_id = v;
+                            break;
+                        }
+                    }
+                }
+                if (!shortfall) {
+                    b->state |= BSTATE_DRONE_RIOTS_ACTIVE;
+                    b->drone_total = b->talent_total + 2;
+                    PlayersData[f].soc_effect_pending.police = -3;
+                    if (variant >= 5) {
+                        b->governor |= GOV_MANAGES_CITIZENS_SPECS | GOV_ACTIVE;
+                        PlayersData[f].ai_fight = variant == 5 ? 1 : -1;
+                    }
+                    if (variant == 6) {
+                        b->drone_total = b->talent_total;
+                        b->nutrient_surplus = -2;
+                    }
+                    for (int v = 0; v < *VehCurrentCount; v++) {
+                        if (Vehs[v].home_base_id == base_id) {
+                            Vehs[v].state |= VSTATE_PACIFISM_DRONE;
+                            if (v % 2) {
+                                Vehs[v].state |= VSTATE_UNK_200;
+                            }
+                        }
+                    }
+                }
+            };
+            prepare();
+            base_check_support_OG();
+            snap_take(&after_orig);
+            uint32_t maint_o = *BaseCurrentForcesMaintCost;
+            disbanded += base.veh_count_global - *VehCurrentCount;
+            convoys += convoy_id >= 0 && after_orig.vehs[convoy_id].order == ORDER_NONE;
+            prepare();
+            base_check_support();
+            snap_take(&after_new);
+            uint32_t maint_n = *BaseCurrentForcesMaintCost;
+            compared++;
+            sprintf_s(label, "base_check_support(%d) variant %d", base_id, variant);
+            BOOL diff = false;
+            if (maint_o != maint_n) {
+                if (mismatches < MAX_DETAIL) {
+                    logf("  %s: maintenance orig %u new %u", label, maint_o, maint_n);
+                }
+                diff = true;
+            }
+            if (!diff) {
+                diff = snap_differs(&after_orig, &after_new, mismatches < MAX_DETAIL ? label : NULL);
+            }
+            if (diff) {
+                mismatches++;
+            }
+        }
+    }
+    snap_restore(&base);
+    *BaseIDCurrentSelected = selected_saved;
+    *BaseCurrent = current_saved;
+    *BaseCurrentForcesMaintCost = maint_saved;
+    snap_free(&base); snap_free(&after_orig); snap_free(&after_new);
+    logf("base_check_support: %d compared (%d units disbanded, %d convoys recalled by the original), %d mismatches",
+        compared, disbanded, convoys, mismatches);
+    return mismatches;
+}
+
 static DWORD WINAPI regress_watcher(LPVOID) {
     for (;;) {
         Sleep(1000);
@@ -4156,6 +4390,9 @@ void regress_run() {
     if (test_enabled("batch10", "tech_analysis")) total += run_guarded("tech_analysis", test_tech_analysis);
     if (test_enabled("batch11", "rankings")) total += run_guarded("rankings", test_rankings);
     if (test_enabled("batch11", "stack_veh")) total += run_guarded("stack_veh", test_stack_veh);
+    if (test_enabled("batch12", "reset_territory")) total += run_guarded("reset_territory", test_reset_territory);
+    if (test_enabled("batch12", "base_research")) total += run_guarded("base_research", test_base_research);
+    if (test_enabled("batch12", "base_check_support")) total += run_guarded("base_check_support", test_base_check_support);
     if (test_enabled("enemy_capabilities")) total += run_guarded("enemy_capabilities", test_enemy_capabilities);
     if (test_enabled("social_ai")) total += run_guarded("social_ai", test_social_ai);
     if (test_enabled("Path::sensors") || test_enabled("path_sensors")) total += run_guarded("path_sensors", test_path_sensors);

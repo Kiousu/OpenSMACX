@@ -548,6 +548,8 @@ DLLEXPORT uint32_t __cdecl pop_goal_fac(uint32_t base_id);
 DLLEXPORT uint32_t __cdecl pop_goal(uint32_t base_id);
 DLLEXPORT BOOL __cdecl base_queue(uint32_t base_id);
 DLLEXPORT void __cdecl base_energy_costs();
+DLLEXPORT void __cdecl base_check_support();
+DLLEXPORT void __cdecl base_research();
 DLLEXPORT uint32_t __cdecl fac_maint(uint32_t facility_id, uint32_t faction_id);
 DLLEXPORT void __cdecl base_maint();
 DLLEXPORT void __cdecl make_base_unique(uint32_t base_id);

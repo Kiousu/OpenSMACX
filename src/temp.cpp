@@ -146,6 +146,9 @@ func_xy *enemies_trade_tech_OG = (func_xy *)0x0055D430;
 func_iu *tech_analysis_OG = (func_iu *)0x0053E800;
 func_b *rankings_OG = (func_b *)0x005AC690;
 func_stack_veh *stack_veh_OG = (func_stack_veh *)0x005B8EE0;
+func_void *reset_territory_OG = (func_void *)0x00523DD0;
+func_void *base_check_support_OG = (func_void *)0x004F4830;
+func_void *base_research_OG = (func_void *)0x004F4E80;
 func_void *base_psych_OG = (func_void *)0x004EA540;
 func_social_ai *social_ai_OG = (func_social_ai *)0x005B4790;
 func_path_sensors *Path_sensors_OG = (func_path_sensors *)0x0059CCA0;
@@ -607,8 +610,8 @@ int __cdecl tester() {
 
                 for (int i = 0; i < MaxPlayerNum; i++) {
                     for (int j = 0; j < 128; j++) {
-                        if (PlayersData[i].unk_81[j]) {
-                            log_say(Players[i].search_key, "? unk_81 ?", j, PlayersData[i].unk_81[j], 0);
+                        if (PlayersData[i].region_good_radius_tiles[j]) {
+                            log_say(Players[i].search_key, "? region_good_radius_tiles ?", j, PlayersData[i].region_good_radius_tiles[j], 0);
                         }
                     }
                 }

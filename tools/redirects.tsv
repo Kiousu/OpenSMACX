@@ -637,3 +637,7 @@
 # --- batch 11: faction rankings, transport loading
 0x001AC690	?rankings@@YAXH@Z
 0x001B8EE0	?stack_veh@@YAIIH@Z
+# --- batch 12: territory recount, base research and unit support
+0x00123DD0	?reset_territory@@YAXXZ
+0x000F4830	?base_check_support@@YAXXZ
+0x000F4E80	?base_research@@YAXXZ

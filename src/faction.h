@@ -467,12 +467,12 @@ struct PlayerData {
     uint8_t region_total_offensive_vehs[128];
     uint16_t region_force_rating[128]; // Combined offensive/morale rating of all units in the area
     uint16_t unk_77[128]; // Movement planning flags
-    uint16_t unk_78[128]; // controlled territory by region?
-    uint16_t unk_79[128]; // territory related to scenario obj or visible by region?
-    uint16_t unk_80[128]; // good quality controlled territory count by region?
-    uint16_t unk_81[128]; // something to do with territory / base radius by region?
-    uint8_t unk_82[128]; // world site territory by region?
-    uint8_t unk_83[128]; // related to goody_at()?
+    uint16_t region_territory_tiles[128]; // territory tiles by region, unclaimed under faction 0
+    uint16_t region_visible_tiles[128]; // tiles the faction can see by region
+    uint16_t region_good_tiles[128]; // moist, non-rocky, fungus-free territory tiles by region
+    uint16_t region_good_radius_tiles[128]; // the part of region_good_tiles inside base radii
+    uint8_t region_best_site[128]; // best site rating of the faction's territory by region
+    uint8_t region_territory_pods[128]; // supply pods in the faction's territory by region
     uint8_t region_base_plan[128]; // visible in map UI with omni view + debug mode under base name
     /* End of block */
     Goal goals[75];

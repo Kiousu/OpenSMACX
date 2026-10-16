@@ -311,6 +311,7 @@ DLLEXPORT void __cdecl site_set(uint32_t x, uint32_t y, int site);
 DLLEXPORT uint32_t __cdecl site_at(int x, int y, int unk);
 DLLEXPORT int __cdecl world_site(int x, int y, uint32_t sea);
 DLLEXPORT BOOL __cdecl good_sensor(uint32_t faction_id, int x, int y);
+DLLEXPORT void __cdecl reset_territory();
 DLLEXPORT uint32_t __cdecl region_at(uint32_t x, uint32_t y);
 DLLEXPORT void __cdecl region_set(uint32_t x, uint32_t y, uint8_t region);
 DLLEXPORT uint32_t __cdecl using_at(uint32_t x, uint32_t y);

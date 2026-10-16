@@ -614,3 +614,34 @@ scored (original behaviour, kept); `stack_veh` mode 0 only marks units with `VST
 modes 1+ lift and drop them and clear `VSTATE_UNK_10000`.
 Boot test: the 617-redirect exe loaded Council.SAV and advanced the turn 289 -> 290 (38 s) with
 the game alive.
+
+## Batch 12, 2026-10-16 (Council.SAV, 617-redirect exe)
+
+`reset_territory` (map.cpp), `base_check_support` and `base_research` (base.cpp). Trigger group
+`batch12`, three snapshot tests. `reset_territory` runs as loaded, with every tile unclaimed and
+its redraw flag cleared, with every site rating unknown (so `world_site` rates them all), with
+supply pods restored on every fourth tile at the hardest and easiest levels (the latter with one
+faction's map revealed and another's objectives flag set) and with the territory distance doubled.
+`base_research` runs every AI base as loaded and in five variants (enough labs for an advance, a
+research penalty still running, the first turns on an easy level, a punishment sphere with a
+top rating and a carried remainder, a scenario without research) with `tech_achieved` stubbed as
+in batch 5. `base_check_support` runs every AI base with mineral shortfalls of 1, 4 and 12 and
+with a mineral convoy parked in the base, and every base (humans included, where no popup can
+run) in three riot variants under weak police, comparing the forces maintenance total and the
+snapshot.
+
+| function | inputs | compared | mismatches |
+|---|---|---|---|
+| reset_territory | 6 world variants (500 pods counted) | 6 | 0 |
+| base_research | 246 AI bases x 6 variants (163 advances) | 1,476 | 0 |
+| base_check_support | 281 bases x up to 7 variants (2,532 units disbanded, 66 convoys recalled) | 1,827 | 0 |
+
+Log: `regression-runs/2026-10-16-council-batch12.log`. Notes: PlayerData 0x147C-0x18FC renamed
+from `unk_78`..`unk_83` to the region tallies `reset_territory` fills (territory, visible, good
+and good-in-radius tiles, best site rating, pods); the pod rule reuses `add_site` with
+`AI_GOAL_SCOUT`. Original behaviour kept: an AI colony pod that loses support is charged off
+the maintenance total twice before it is disbanded, and a unit with a clean reactor ends the
+purge even when the shortfall remains. `base_research` keeps its fractional carry in the field
+named `net_random_event` (PlayerData 0x3D8).
+Boot test: the 620-redirect exe loaded Council.SAV and advanced the turn 289 -> 290 (38 s) with
+the game alive.
