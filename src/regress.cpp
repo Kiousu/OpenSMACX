@@ -1358,6 +1358,316 @@ static void log_survey() {
     }
 }
 
+// ------------------------------------------------------------------------------------------
+// VEH helper batch: veh_selectable/unmoved/ready, veh_find, is_bunged/clear_bunglist, add_abil,
+// unspot_stack, stack_kill, get_rating, most_objectives.
+// ------------------------------------------------------------------------------------------
+
+/*
+The three selection predicates over every unit with every faction as the current player (they are
+all read-only, so only *FactionIDCurrent has to be restored).
+*/
+static int test_veh_predicates() {
+    int compared = 0, mismatches = 0, selectable = 0, unmoved = 0, ready = 0;
+    int faction_saved = *FactionIDCurrent;
+    for (int f = 0; f < MaxPlayerNum; f++) {
+        *FactionIDCurrent = f;
+        for (int veh_id = -1; veh_id < *VehCurrentCount; veh_id++) {
+            BOOL s_orig = veh_selectable_OG(veh_id), s_new = veh_selectable(veh_id);
+            BOOL u_orig = veh_unmoved_OG(veh_id), u_new = veh_unmoved(veh_id);
+            BOOL r_orig = veh_ready_OG(veh_id), r_new = veh_ready(veh_id);
+            compared++;
+            selectable += s_orig != 0;
+            unmoved += u_orig != 0;
+            ready += r_orig != 0;
+            if (s_orig != s_new || u_orig != u_new || r_orig != r_new) {
+                if (mismatches < MAX_DETAIL) {
+                    logf("  veh %d faction %d: selectable new=%d orig=%d, unmoved new=%d orig=%d, "
+                        "ready new=%d orig=%d", veh_id, f, s_new, s_orig, u_new, u_orig, r_new, r_orig);
+                }
+                mismatches++;
+            }
+        }
+    }
+    *FactionIDCurrent = faction_saved;
+    logf("veh_selectable/unmoved/ready: %d compared (%d/%d/%d true), %d mismatches", compared,
+        selectable, unmoved, ready, mismatches);
+    return mismatches;
+}
+
+static int test_veh_find() {
+    int compared = 0, mismatches = 0, found = 0;
+    const int skips[] = { -1, 0, *VehCurrentCount / 2, *VehCurrentCount - 1 };
+    for (int f = -1; f < MaxPlayerNum; f++) {
+        for (int k = 0; k < (int)(sizeof(skips) / sizeof(skips[0])); k++) {
+            for (int y = 0; y < *MapLatitudeBounds; y += 7) {
+                for (int x = 0; x < *MapLongitudeBounds; x += 6) {
+                    int b = veh_find_OG(x, y, f, skips[k]);
+                    int b_dist = *VehFindDist;
+                    int a = veh_find(x, y, f, skips[k]);
+                    int a_dist = *VehFindDist;
+                    compared++;
+                    found += b >= 0;
+                    if (a != b || a_dist != b_dist) {
+                        if (mismatches < MAX_DETAIL) {
+                            logf("  veh_find(%d, %d, %d, %d): new=%d dist %d, orig=%d dist %d", x, y,
+                                f, skips[k], a, a_dist, b, b_dist);
+                        }
+                        mismatches++;
+                    }
+                }
+            }
+        }
+    }
+    logf("veh_find: %d compared (%d found), %d mismatches", compared, found, mismatches);
+    return mismatches;
+}
+
+/*
+Every list entry is queried with its own values, with one field changed at a time and with the
+"empty" wildcard, for every faction including the inactive ones.
+*/
+static int test_is_bunged() {
+    int compared = 0, mismatches = 0, hits = 0, entries = 0;
+    for (uint32_t f = 0; f < MaxPlayerNum; f++) {
+        int entries_f = 0;
+        for (int i = 0; i < MaxBungedDesignNum; i++) {
+            const BungedDesign d = BungList[f * MaxBungedDesignNum + i];
+            entries_f += d.ability_flags != -1 || d.chassis_id != 0xFF;
+            const struct { uint32_t c, w, a; int ab; uint32_t r; } cases[] = {
+                { d.chassis_id, d.weapon_id, d.armor_id, d.ability_flags, d.reactor_id },
+                { d.chassis_id + 1u, d.weapon_id, d.armor_id, d.ability_flags, d.reactor_id },
+                { d.chassis_id, d.weapon_id + 1u, d.armor_id, d.ability_flags, d.reactor_id },
+                { d.chassis_id, d.weapon_id, d.armor_id + 1u, d.ability_flags, d.reactor_id },
+                { d.chassis_id, d.weapon_id, d.armor_id, d.ability_flags ^ 1, d.reactor_id },
+                { d.chassis_id, d.weapon_id, d.armor_id, d.ability_flags, d.reactor_id + 1u },
+                { 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, -1, 0xFFFFFFFF },
+                { 0xFF, 0xFF, 0xFF, -1, 0xFF },
+            };
+            for (int k = 0; k < (int)(sizeof(cases) / sizeof(cases[0])); k++) {
+                BOOL b = is_bunged_OG(f, cases[k].c, cases[k].w, cases[k].a, cases[k].ab, cases[k].r);
+                BOOL a = is_bunged(f, cases[k].c, cases[k].w, cases[k].a, cases[k].ab, cases[k].r);
+                compared++;
+                hits += b != 0;
+                if (a != b) {
+                    if (mismatches < MAX_DETAIL) {
+                        logf("  is_bunged(%u, %u, %u, %u, %d, %u): new=%d orig=%d", f, cases[k].c,
+                            cases[k].w, cases[k].a, cases[k].ab, cases[k].r, a, b);
+                    }
+                    mismatches++;
+                }
+            }
+        }
+        entries += entries_f;
+        logf("  bunglist faction %u: %d used entries, status %s", f, entries_f,
+            (*FactionsStatus & (1 << f)) ? "active" : "inactive");
+    }
+    logf("is_bunged: %d compared (%d true, %d list entries), %d mismatches", compared, hits, entries,
+        mismatches);
+    return mismatches;
+}
+
+static int test_clear_bunglist() {
+    const size_t size = sizeof(BungedDesign) * MaxBungedDesignNum * MaxPlayerNum;
+    BungedDesign *saved = (BungedDesign *)malloc(size);
+    BungedDesign *after_orig = (BungedDesign *)malloc(size);
+    memcpy(saved, BungList, size);
+    int mismatches = 0;
+    for (uint32_t f = 0; f < MaxPlayerNum; f++) {
+        memcpy(BungList, saved, size);
+        clear_bunglist_OG(f);
+        memcpy(after_orig, BungList, size);
+        memcpy(BungList, saved, size);
+        clear_bunglist(f);
+        size_t d = first_diff(after_orig, BungList, size);
+        if (d != (size_t)-1) {
+            logf("  clear_bunglist(%u): byte %u differs (orig %02X new %02X)", f, (unsigned)d,
+                ((uint8_t *)after_orig)[d], ((uint8_t *)BungList)[d]);
+            mismatches++;
+        }
+    }
+    memcpy(BungList, saved, size);
+    free(saved);
+    free(after_orig);
+    logf("clear_bunglist: %d compared, %d mismatches", MaxPlayerNum, mismatches);
+    return mismatches;
+}
+
+static int test_add_abil() {
+    int compared = 0, mismatches = 0, added = 0;
+    for (uint32_t f = 1; f < MaxPlayerNum; f++) {
+        for (int k = 0; k < MaxAbilityNum; k++) {
+            for (uint32_t init = 0; init <= 1; init++) {
+                uint32_t flags_orig = init, flags_new = init;
+                add_abil_OG(&flags_orig, 1u << k, f);
+                add_abil(&flags_new, 1u << k, f);
+                compared++;
+                added += flags_orig != init;
+                if (flags_orig != flags_new) {
+                    if (mismatches < MAX_DETAIL) {
+                        logf("  add_abil(0x%X, 0x%X, %u): new=0x%X orig=0x%X", init, 1u << k, f,
+                            flags_new, flags_orig);
+                    }
+                    mismatches++;
+                }
+            }
+        }
+    }
+    logf("add_abil: %d compared (%d added), %d mismatches", compared, added, mismatches);
+    return mismatches;
+}
+
+static int test_unspot_stack() {
+    const int count = *VehCurrentCount;
+    const size_t size = sizeof(Veh) * count;
+    Veh *saved = (Veh *)malloc(size);
+    Veh *after_orig = (Veh *)malloc(size);
+    memcpy(saved, Vehs, size);
+    int compared = 0, mismatches = 0, effective = 0;
+    for (int veh_id = -1; veh_id < count; veh_id++) {
+        memcpy(Vehs, saved, size);
+        unspot_stack_OG(veh_id);
+        memcpy(after_orig, Vehs, size);
+        effective += memcmp(after_orig, saved, size) != 0;
+        memcpy(Vehs, saved, size);
+        unspot_stack(veh_id);
+        compared++;
+        size_t d = first_diff(after_orig, Vehs, size);
+        if (d != (size_t)-1) {
+            if (mismatches < MAX_DETAIL) {
+                logf("  unspot_stack(%d): Veh[%u] +0x%X differs (orig %02X new %02X)", veh_id,
+                    (unsigned)(d / sizeof(Veh)), (unsigned)(d % sizeof(Veh)),
+                    ((uint8_t *)after_orig)[d], ((uint8_t *)Vehs)[d]);
+            }
+            mismatches++;
+        }
+    }
+    memcpy(Vehs, saved, size);
+    free(saved);
+    free(after_orig);
+    logf("unspot_stack: %d compared (%d changed state), %d mismatches", compared, effective, mismatches);
+    return mismatches;
+}
+
+/*
+stack_kill() goes through the original veh_kill() on both sides; the whole game state is snapshot
+around each call. veh_kill() also renumbers a few selection globals the snapshot doesn't cover, so
+those are saved by hand. Every 5th stack is tried to keep the run short.
+*/
+static int test_stack_kill() {
+    static int *const extra_globals[] = { (int *)0x0093928C, (int *)0x00939290, (int *)0x008C6B2C,
+        (int *)0x008C6B34, (int *)0x009A64DC };
+    const int extra_count = (int)(sizeof(extra_globals) / sizeof(extra_globals[0]));
+    int extra_saved[5];
+    for (int i = 0; i < extra_count; i++) {
+        extra_saved[i] = *extra_globals[i];
+    }
+    GameSnapshot base, after_orig, after_new;
+    snap_alloc(&base); snap_alloc(&after_orig); snap_alloc(&after_new);
+    snap_take(&base);
+    int compared = 0, mismatches = 0, killed = 0;
+    char label[64];
+    for (int veh_id = -1; veh_id < base.veh_count; veh_id += (veh_id < 0) ? 1 : 5) {
+        snap_restore(&base);
+        for (int i = 0; i < extra_count; i++) {
+            *extra_globals[i] = extra_saved[i];
+        }
+        stack_kill_OG(veh_id);
+        snap_take(&after_orig);
+        killed += base.veh_count_global - after_orig.veh_count_global;
+        snap_restore(&base);
+        for (int i = 0; i < extra_count; i++) {
+            *extra_globals[i] = extra_saved[i];
+        }
+        stack_kill(veh_id);
+        snap_take(&after_new);
+        compared++;
+        sprintf_s(label, "stack_kill(%d)", veh_id);
+        if (snap_differs(&after_orig, &after_new, mismatches < MAX_DETAIL ? label : NULL)) {
+            mismatches++;
+        }
+    }
+    snap_restore(&base);
+    for (int i = 0; i < extra_count; i++) {
+        *extra_globals[i] = extra_saved[i];
+    }
+    snap_free(&base); snap_free(&after_orig); snap_free(&after_new);
+    logf("stack_kill: %d compared (%d units killed by the original), %d mismatches", compared, killed,
+        mismatches);
+    return mismatches;
+}
+
+/*
+get_rating() over every faction, difficulty level 0-6 and both Intense Rivalry settings; the
+difficulty and rules are restored afterwards.
+*/
+static int test_get_rating() {
+    int compared = 0, mismatches = 0;
+    uint32_t rules_saved = *GameRules;
+    for (uint32_t f = 0; f < MaxPlayerNum; f++) {
+        int diff_saved = PlayersData[f].diff_level;
+        for (int diff = 0; diff <= 6; diff++) {
+            PlayersData[f].diff_level = diff;
+            for (int rivalry = 0; rivalry <= 1; rivalry++) {
+                *GameRules = rivalry ? (rules_saved | RULES_INTENSE_RIVALRY)
+                    : (rules_saved & ~RULES_INTENSE_RIVALRY);
+                for (int value = -2000; value <= 2000; value += 13) {
+                    int b = get_rating_OG(f, value);
+                    int a = get_rating(f, value);
+                    compared++;
+                    if (a != b) {
+                        if (mismatches < MAX_DETAIL) {
+                            logf("  get_rating(%u, %d) diff %d rivalry %d: new=%d orig=%d", f, value,
+                                diff, rivalry, a, b);
+                        }
+                        mismatches++;
+                    }
+                }
+            }
+        }
+        PlayersData[f].diff_level = diff_saved;
+    }
+    *GameRules = rules_saved;
+    logf("get_rating: %d compared, %d mismatches", compared, mismatches);
+    return mismatches;
+}
+
+/*
+most_objectives() with every combination of output pointers, cooperative victory on/off and the
+"all bases count" rule on/off (so that the tie logic sees real objective counts).
+*/
+static int test_most_objectives() {
+    int compared = 0, mismatches = 0;
+    uint32_t rules_saved = *GameRules;
+    for (int coop = 0; coop <= 1; coop++) {
+        for (int all_bases = 0; all_bases <= 1; all_bases++) {
+            *GameRules = rules_saved;
+            *GameRules = coop ? (*GameRules | RULES_VICTORY_COOPERATIVE)
+                : (*GameRules & ~RULES_VICTORY_COOPERATIVE);
+            *GameRules = all_bases ? (*GameRules | RULES_SCN_VICT_ALL_BASE_COUNT_OBJ)
+                : (*GameRules & ~RULES_SCN_VICT_ALL_BASE_COUNT_OBJ);
+            for (int mode = 0; mode < 4; mode++) {
+                int f_orig = -99, t_orig = -99, f_new = -99, t_new = -99;
+                int b = most_objectives_OG((mode & 1) ? &f_orig : NULL, (mode & 2) ? &t_orig : NULL);
+                int a = most_objectives((mode & 1) ? &f_new : NULL, (mode & 2) ? &t_new : NULL);
+                compared++;
+                if (a != b || f_orig != f_new || t_orig != t_new) {
+                    logf("  most_objectives coop %d all_bases %d mode %d: new=%d (f %d, ties %d) "
+                        "orig=%d (f %d, ties %d)", coop, all_bases, mode, a, f_new, t_new, b, f_orig,
+                        t_orig);
+                    mismatches++;
+                } else if (mode == 3) {
+                    logf("  most_objectives coop %d all_bases %d: %d objectives, faction %d, ties %d",
+                        coop, all_bases, b, f_orig, t_orig);
+                }
+            }
+        }
+    }
+    *GameRules = rules_saved;
+    logf("most_objectives: %d compared, %d mismatches", compared, mismatches);
+    return mismatches;
+}
+
 static DWORD WINAPI regress_watcher(LPVOID) {
     for (;;) {
         Sleep(1000);
@@ -1409,6 +1719,15 @@ void regress_run() {
     if (test_enabled("base_mark")) total += run_guarded("base_mark", test_base_mark);
     if (test_enabled("base_psych")) total += run_guarded("base_psych", test_base_psych);
     if (test_enabled("do_wrappers")) total += run_guarded("do_wrappers", test_do_wrappers);
+    if (test_enabled("veh", "veh_predicates")) total += run_guarded("veh_predicates", test_veh_predicates);
+    if (test_enabled("veh", "veh_find")) total += run_guarded("veh_find", test_veh_find);
+    if (test_enabled("veh", "is_bunged")) total += run_guarded("is_bunged", test_is_bunged);
+    if (test_enabled("veh", "clear_bunglist")) total += run_guarded("clear_bunglist", test_clear_bunglist);
+    if (test_enabled("veh", "add_abil")) total += run_guarded("add_abil", test_add_abil);
+    if (test_enabled("veh", "unspot_stack")) total += run_guarded("unspot_stack", test_unspot_stack);
+    if (test_enabled("veh", "stack_kill")) total += run_guarded("stack_kill", test_stack_kill);
+    if (test_enabled("veh", "get_rating")) total += run_guarded("get_rating", test_get_rating);
+    if (test_enabled("veh", "most_objectives")) total += run_guarded("most_objectives", test_most_objectives);
     if (test_enabled("enemy_capabilities")) total += run_guarded("enemy_capabilities", test_enemy_capabilities);
     if (test_enabled("social_ai")) total += run_guarded("social_ai", test_social_ai);
     if (test_enabled("Path::sensors") || test_enabled("path_sensors")) total += run_guarded("path_sensors", test_path_sensors);

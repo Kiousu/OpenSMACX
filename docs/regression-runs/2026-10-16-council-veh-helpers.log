@@ -1,0 +1,30 @@
+OpenSMACX regression run: turn 289, 281 bases, 1741 vehs, filter='veh'
+survey: map 128x128, SP owners: SAC 83 LV 0 HGP 21 CI 0 VW 35 PTS 17
+survey: faction 1 Consciousness human diff 2 bases 35 units 390 away 6 | SE talent 0 police 1 econ 3 eff 6 | rules talent 0 drone 0 | staple 0 punish 0 brood 28 rec 30 holo 2 paradise 0 assim 8
+survey: faction 2 Pirates      AI diff 3 bases 79 units 409 away 18 | SE talent 0 police 0 econ 0 eff -1 | rules talent 0 drone 0 | staple 0 punish 0 brood 0 rec 58 holo 21 paradise 0 assim 16
+survey: faction 3 Drones       AI diff 3 bases 77 units 505 away 6 | SE talent 0 police 0 econ 0 eff 2 | rules talent 0 drone 0 | staple 0 punish 0 brood 0 rec 62 holo 17 paradise 0 assim 22
+survey: faction 4 Angels       AI diff 3 bases 68 units 365 away 14 | SE talent 0 police -1 econ 3 eff 5 | rules talent 0 drone 0 | staple 0 punish 1 brood 0 rec 42 holo 19 paradise 0 assim 19
+survey: faction 6 Caretakers   AI diff 3 bases 3 units 3 away 0 | SE talent 0 police 0 econ 2 eff -2 | rules talent 0 drone 0 | staple 0 punish 0 brood 0 rec 1 holo 1 paradise 0 assim 0
+survey: faction 7 Usurpers     AI diff 3 bases 19 units 62 away 2 | SE talent 0 police 0 econ 2 eff -2 | rules talent 0 drone 0 | staple 0 punish 0 brood 0 rec 13 holo 1 paradise 0 assim 2
+veh_selectable/unmoved/ready: 13936 compared (1741/516/65 true), 0 mismatches
+veh_find: 15048 compared (13376 found), 0 mismatches
+  bunglist faction 0: 0 used entries, status inactive
+  bunglist faction 1: 64 used entries, status active
+  bunglist faction 2: 64 used entries, status inactive
+  bunglist faction 3: 64 used entries, status inactive
+  bunglist faction 4: 64 used entries, status inactive
+  bunglist faction 5: 50 used entries, status inactive
+  bunglist faction 6: 64 used entries, status inactive
+  bunglist faction 7: 64 used entries, status inactive
+is_bunged: 4096 compared (90 true, 434 list entries), 0 mismatches
+clear_bunglist: 8 compared, 0 mismatches
+add_abil: 406 compared (96 added), 0 mismatches
+unspot_stack: 1742 compared (509 changed state), 0 mismatches
+stack_kill: 350 compared (1105 units killed by the original), 0 mismatches
+get_rating: 34496 compared, 0 mismatches
+  most_objectives coop 0 all_bases 0: 0 objectives, faction 7, ties 7
+  most_objectives coop 0 all_bases 1: 79 objectives, faction 2, ties 0
+  most_objectives coop 1 all_bases 0: 0 objectives, faction 7, ties 7
+  most_objectives coop 1 all_bases 1: 79 objectives, faction 2, ties 0
+most_objectives: 16 compared, 0 mismatches
+TOTAL mismatches: 0 (219 ms)

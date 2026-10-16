@@ -44,6 +44,8 @@ func18 *_fputc = (func18 *)0x00646886;
 func5 *load_faction_art = (func5 *)0x00453710;
 func5 *draw_map = (func5 *)0x0046B190;
 func5 *wave_it = (func5 *)0x004455F0;
+func5 *veh_kill = (func5 *)0x005C08C0;
+func_num_obj *num_objectives = (func_num_obj *)0x005AC110;
 // TODO: crash bug; X_pop > . > BasePop::start > text_close > NULLs 009B7CF4 (FILE *Txt.text_file_)
 // Next call to text_get() tries to access 009B7CF4 and the game crashes.
 func6 *X_pop = (func6 *)0x005BF310;
@@ -83,6 +85,17 @@ func_diplo3u *agenda_off_OG = (func_diplo3u *)0x0055B820;
 func_diplo2 *trade_maps_OG = (func_diplo2 *)0x00543A20;
 func_diplo2r *do_withdrawal_OG = (func_diplo2r *)0x00548F80;
 func_u32 *base_mark_OG = (func_u32 *)0x004E4350;
+func_veh_pred *veh_selectable_OG = (func_veh_pred *)0x005C1A20;
+func_veh_pred *veh_unmoved_OG = (func_veh_pred *)0x005C1AB0;
+func_veh_pred *veh_ready_OG = (func_veh_pred *)0x005C1B70;
+func_veh_find *veh_find_OG = (func_veh_find *)0x005C0CB0;
+func_bunged *is_bunged_OG = (func_bunged *)0x0057DFC0;
+func_u32 *clear_bunglist_OG = (func_u32 *)0x0057DF00;
+func_add_abil *add_abil_OG = (func_add_abil *)0x00581190;
+func5 *unspot_stack_OG = (func5 *)0x005B5A70;
+func5 *stack_kill_OG = (func5 *)0x005B9510;
+func_rating *get_rating_OG = (func_rating *)0x005ABFF0;
+func_most_obj *most_objectives_OG = (func_most_obj *)0x005AC5A0;
 func_void *base_psych_OG = (func_void *)0x004EA540;
 func_social_ai *social_ai_OG = (func_social_ai *)0x005B4790;
 func_path_sensors *Path_sensors_OG = (func_path_sensors *)0x0059CCA0;

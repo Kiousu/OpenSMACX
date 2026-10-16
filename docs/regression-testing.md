@@ -320,3 +320,29 @@ the call and a case is retried up to three times. 62 cases, 0 mismatches, 0 retr
 ## Not covered
 
 - `Path::find` and `Path::move` are stubs upstream (`return 0`), nothing to test yet.
+
+## VEH helper batch, 2026-10-16 (Council.SAV, 552-redirect exe)
+
+Eleven small functions decompiled from Ghidra output and checked against the originals before
+being added to the redirect table: `veh_selectable`, `veh_unmoved`, `veh_ready`, `veh_find`,
+`is_bunged`, `clear_bunglist`, `add_abil`, `unspot_stack`, `stack_kill`, `get_rating` and
+`most_objectives`. Trigger group `veh` runs all nine tests (`stack_kill` goes through the original
+`veh_kill()` on both sides and snapshots the whole game state around every call; it also saves the
+five selection globals `veh_kill()` renumbers, which the snapshot does not cover).
+
+| function | inputs | compared | mismatches |
+|---|---|---|---|
+| veh_selectable / veh_unmoved / veh_ready | every unit x every faction as current player | 13,936 | 0 |
+| veh_find | 9 faction filters x 4 skip ids x map grid (step 6/7) | 15,048 | 0 |
+| is_bunged | every list entry x (own values, 5 single-field changes, 2 wildcards) | 4,096 | 0 |
+| clear_bunglist | every faction | 8 | 0 |
+| add_abil | 7 factions x 29 abilities x empty/non-empty bitfield | 406 | 0 |
+| unspot_stack | every unit | 1,742 | 0 |
+| stack_kill | every 5th unit | 350 (1,105 units killed) | 0 |
+| get_rating | 8 factions x difficulty 0-6 x Intense Rivalry on/off x values -2000..2000 | 34,496 | 0 |
+| most_objectives | cooperative victory on/off x "all bases count" on/off x 4 pointer combos | 16 | 0 |
+
+Log: `regression-runs/2026-10-16-council-veh-helpers.log`. Notes: the bunglist (0x94B558, 8 x 64
+entries of `{ability_flags, chassis, weapon, armor, reactor}`) is only consulted for human players
+(`FactionsStatus[0]`); the odd `< 1000` test Ghidra shows in `veh_unmoved`/`veh_ready` is the
+compiler's rendering of `speed() - moves_expended > 0`.

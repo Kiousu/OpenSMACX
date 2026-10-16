@@ -1563,6 +1563,25 @@ int __cdecl vulnerable(uint32_t faction_id, int x, int y) {
 }
 
 /*
+Purpose: Scale a value by the specified faction's difficulty level: the rating grows faster at the
+         higher levels and Intense Rivalry adds one more step.
+Original Offset: 005ABFF0
+Return Value: Scaled value
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-veh-helpers.log)
+*/
+int __cdecl get_rating(uint32_t faction_id, int value) {
+    int diff_level = PlayersData[faction_id].diff_level;
+    int rating = diff_level;
+    for (int i = 3; i <= diff_level; i++) {
+        rating += (i - 1) / 2;
+    }
+    if (*GameRules & RULES_INTENSE_RIVALRY) {
+        rating++;
+    }
+    return ((rating + 6) * value) / 160;
+}
+
+/*
 Purpose: Determine whether the specified base is considered an objective.
 Original Offset: 005AC060
 Return Value: Is base an objective? true/false
@@ -1584,6 +1603,41 @@ BOOL __cdecl is_objective(uint32_t base_id) {
         return true;
     }
     return false;
+}
+
+/*
+Purpose: Find the faction holding the most scenario objectives. Optionally returns that faction and
+         how many other factions tie with it; with cooperative victory, pact mates of the leader
+         do not count as ties. On an equal count the later faction id wins.
+Original Offset: 005AC5A0
+Return Value: Highest objective count
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-veh-helpers.log)
+*/
+int __cdecl most_objectives(int *faction_id_most, int *tie_count) {
+    int faction_id_best = 0;
+    int objectives_best = 0;
+    if (tie_count) {
+        *tie_count = 0;
+    }
+    for (int i = 1; i < MaxPlayerNum; i++) {
+        int objectives = num_objectives(i, *GameRules & RULES_VICTORY_COOPERATIVE);
+        if (objectives >= objectives_best) {
+            if (tie_count) {
+                if (objectives > objectives_best) {
+                    *tie_count = 0;
+                } else if (!(PlayersData[i].diplo_treaties[faction_id_best] & DTREATY_PACT)
+                    || !(*GameRules & RULES_VICTORY_COOPERATIVE)) {
+                    (*tie_count)++;
+                }
+            }
+            objectives_best = objectives;
+            faction_id_best = i;
+        }
+    }
+    if (faction_id_most) {
+        *faction_id_most = faction_id_best;
+    }
+    return objectives_best;
 }
 
 /*

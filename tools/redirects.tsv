@@ -560,3 +560,16 @@
 0x00101DA0	?battle_compute@@YAXHHPAH0H@Z
 0x001044D0	?best_defender@@YAIIHH@Z
 0x0015BC80	?wants_to_attack@@YAHIIH@Z
+# --- VEH: design bunglist, add_abil, stack/visibility helpers, selection predicates, veh_find ---
+0x0017DF00	?clear_bunglist@@YAXI@Z
+0x0017DFC0	?is_bunged@@YAHIIIIHI@Z
+0x00181190	?add_abil@@YAXPAIII@Z
+0x001B5A70	?unspot_stack@@YAXH@Z
+0x001B9510	?stack_kill@@YAXH@Z
+0x001C0CB0	?veh_find@@YAHHHHH@Z
+0x001C1A20	?veh_selectable@@YAHH@Z
+0x001C1AB0	?veh_unmoved@@YAHH@Z
+0x001C1B70	?veh_ready@@YAHH@Z
+# --- BASE: difficulty rating, scenario objective leader ---
+0x001ABFF0	?get_rating@@YAHIH@Z
+0x001AC5A0	?most_objectives@@YAHPAH0@Z

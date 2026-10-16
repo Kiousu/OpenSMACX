@@ -59,6 +59,9 @@ typedef void func5(int);
 extern func5 *load_faction_art;
 extern func5 *draw_map;
 extern func5 *wave_it;
+extern func5 *veh_kill;
+typedef int func_num_obj(int, int);
+extern func_num_obj *num_objectives;
 typedef void *func6(char const *, int(*)(void));
 extern func6 *X_pop;
 typedef int func7(LPCSTR, LPCSTR, int, LPCSTR, int(__cdecl *)());
@@ -128,6 +131,24 @@ typedef void func_social_ai(uint32_t, int, int, int, int, SocialCategory *);
 typedef BOOL __fastcall func_path_sensors(void *This, void *edx_unused, uint32_t faction_id,
     int *x_sensor, int *y_sensor);
 extern func_u32 *base_mark_OG;
+// VEH helper batch
+typedef BOOL func_veh_pred(int);
+extern func_veh_pred *veh_selectable_OG;
+extern func_veh_pred *veh_unmoved_OG;
+extern func_veh_pred *veh_ready_OG;
+typedef int func_veh_find(int, int, int, int);
+extern func_veh_find *veh_find_OG;
+typedef BOOL func_bunged(uint32_t, uint32_t, uint32_t, uint32_t, int, uint32_t);
+extern func_bunged *is_bunged_OG;
+extern func_u32 *clear_bunglist_OG;
+typedef void func_add_abil(uint32_t *, uint32_t, uint32_t);
+extern func_add_abil *add_abil_OG;
+extern func5 *unspot_stack_OG;
+extern func5 *stack_kill_OG;
+typedef int func_rating(uint32_t, int);
+extern func_rating *get_rating_OG;
+typedef int func_most_obj(int *, int *);
+extern func_most_obj *most_objectives_OG;
 extern func_void *base_psych_OG;
 extern func_social_ai *social_ai_OG;
 extern func_path_sensors *Path_sensors_OG; // Path::sensors()

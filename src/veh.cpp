@@ -46,6 +46,8 @@ LPSTR *PlansFullName = (LPSTR *)0x00952360; // [15]
 LPSTR *Triad = (LPSTR *)0x0094F1A8; // [3]
 
 int *VehCurrentCount = (int *)0x009A64C8;
+int *VehFindDist = (int *)0x009B227C; // distance to the unit returned by veh_find()
+BungedDesign *BungList = (BungedDesign *)0x0094B558; // [8][64] ; see is_bunged()
 int *VehDropLiftVehID = (int *)0x009B2280;
 int *VehLiftX = (int *)0x009B2278;
 int *VehLiftY = (int *)0x009B2284;
@@ -1444,6 +1446,45 @@ void __cdecl say_stats(LPSTR stat, uint32_t proto_id, LPSTR custom_spacer) {
 }
 
 /*
+Purpose: Check whether the specified human player has already rejected ("bunged") this exact unit
+         design combination, so it isn't proposed again. AI factions don't keep a list.
+Original Offset: 0057DFC0
+Return Value: Has the design been rejected? true/false
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-veh-helpers.log)
+*/
+BOOL __cdecl is_bunged(uint32_t faction_id, uint32_t chassis_id, uint32_t weapon_id,
+                       uint32_t armor_id, int ability_flags, uint32_t reactor_id) {
+    if (is_human(faction_id)) {
+        for (int i = 0; i < MaxBungedDesignNum; i++) {
+            BungedDesign *design = &BungList[faction_id * MaxBungedDesignNum + i];
+            if (design->chassis_id == chassis_id && design->weapon_id == weapon_id
+                && design->armor_id == armor_id && design->ability_flags == ability_flags
+                && design->reactor_id == reactor_id) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+/*
+Purpose: Reset the list of rejected unit designs for the specified faction.
+Original Offset: 0057DF00
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-veh-helpers.log)
+*/
+void __cdecl clear_bunglist(uint32_t faction_id) {
+    for (int i = 0; i < MaxBungedDesignNum; i++) {
+        BungedDesign *design = &BungList[faction_id * MaxBungedDesignNum + i];
+        design->ability_flags = -1;
+        design->chassis_id = 0xFF;
+        design->weapon_id = 0xFF;
+        design->armor_id = 0xFF;
+        design->reactor_id = 0xFF;
+    }
+}
+
+/*
 Purpose: Check against faction's available tech for best available reactor.
 Original Offset: 0057EFA0
 Return Value: Best reactor available (1-4)
@@ -1565,6 +1606,32 @@ int __cdecl abil_index(int ability_id) {
         check >>= 1;
     }
     return index;
+}
+
+/*
+Purpose: Add the specified ability to an empty design ability bitfield if the faction has the
+         prerequisite tech. Abilities the faction gets for free (FREEABIL bonus) are skipped since
+         they are granted elsewhere.
+Original Offset: 00581190
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-veh-helpers.log)
+*/
+void __cdecl add_abil(uint32_t *ability_flags, uint32_t ability, uint32_t faction_id) {
+    if (*ability_flags) {
+        return;
+    }
+    int abil_id = abil_index(ability);
+    if (!has_tech(Ability[abil_id].preq_tech, faction_id)) {
+        return;
+    }
+    for (int i = 0; i < Players[faction_id].faction_bonus_count; i++) {
+        if (Players[faction_id].faction_bonus_id[i] == RULE_FREEABIL
+            && has_tech(Ability[Players[faction_id].faction_bonus_val1[i]].preq_tech, faction_id)
+            && Players[faction_id].faction_bonus_val1[i] == abil_id) {
+            return;
+        }
+    }
+    *ability_flags |= (1 << abil_id);
 }
 
 /*
@@ -1959,6 +2026,18 @@ int __cdecl get_plan(uint32_t faction_id, uint32_t plan) {
 }
 
 /*
+Purpose: Clear the visibility bitfield of every unit in the specified unit's stack.
+Original Offset: 005B5A70
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-veh-helpers.log)
+*/
+void __cdecl unspot_stack(int veh_id) {
+    for (int i = veh_top(veh_id); i >= 0; i = Vehs[i].next_veh_id_stack) {
+        Vehs[i].visibility = 0;
+    }
+}
+
+/*
 Purpose: Determine if the specified unit wants to wake up based on certain conditions and 
          preferences. Optional parameter for spotted veh_id (-1 to skip).
 Original Offset: 005B5EA0
@@ -2134,6 +2213,24 @@ int __cdecl stack_fix(int veh_id) {
         }
     }
     return veh_top(veh_id);
+}
+
+/*
+Purpose: Kill every unit in the specified unit's stack. veh_kill() compacts the unit array, so the
+         next id in the stack is adjusted when it comes after the one just removed.
+Original Offset: 005B9510
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-veh-helpers.log)
+*/
+void __cdecl stack_kill(int veh_id) {
+    for (int i = veh_top(veh_id); i >= 0;) {
+        int next_veh_id = Vehs[i].next_veh_id_stack;
+        veh_kill(i);
+        if (next_veh_id > i) {
+            next_veh_id--;
+        }
+        i = next_veh_id;
+    }
 }
 
 /*
@@ -2592,6 +2689,33 @@ void __cdecl veh_clear(uint32_t veh_id, int proto_id, uint32_t faction_id) {
 }
 
 /*
+Purpose: Find the unit closest to the specified tile, optionally restricted to one faction and
+         skipping one unit id. The distance to it is stored in VehFindDist. Ties go to the unit with
+         the highest id.
+Original Offset: 005C0CB0
+Return Value: Unit id or -1 if none found
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-veh-helpers.log)
+*/
+int __cdecl veh_find(int x, int y, int faction_id, int skip_veh_id) {
+    *VehFindDist = 9999;
+    int dist_best = 9999;
+    int veh_id_best = -1;
+    for (int i = 0; i < *VehCurrentCount; i++) {
+        if ((faction_id < 0 || Vehs[i].faction_id == faction_id) && i != skip_veh_id) {
+            int dist = vector_dist(x, y, Vehs[i].x, Vehs[i].y);
+            if (dist <= dist_best) {
+                veh_id_best = i;
+                dist_best = dist;
+            }
+        }
+    }
+    if (veh_id_best >= 0) {
+        *VehFindDist = dist_best;
+    }
+    return veh_id_best;
+}
+
+/*
 Purpose: Check if the prototype can perform artillery combat. The 2nd parameter determines how sea 
          units are treated.
 Original Offset: 005C0DB0
@@ -2883,6 +3007,71 @@ uint32_t __cdecl veh_cost(uint32_t proto_id, int base_id, BOOL *has_proto_cost) 
         *has_proto_cost = proto_cost_first != 0;
     }
     return cost;
+}
+
+/*
+Purpose: Check whether the current player can select the specified unit: it has to be on the map,
+         belong to the current faction, not be an invisible lurker and not be stuck inside an air
+         transport.
+Original Offset: 005C1A20
+Return Value: Is the unit selectable? true/false
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-veh-helpers.log)
+*/
+BOOL __cdecl veh_selectable(int veh_id) {
+    if (veh_id < 0) {
+        return false;
+    }
+    int x = Vehs[veh_id].x;
+    int y = Vehs[veh_id].y;
+    if (y < 0 || y >= *MapLatitudeBounds || x < 0 || x >= *MapLongitudeBounds) {
+        return false;
+    }
+    if (Vehs[veh_id].faction_id != *FactionIDCurrent) {
+        return false;
+    }
+    if (Vehs[veh_id].flags & VFLAG_LURKER && Vehs[veh_id].flags & VFLAG_INVISIBLE) {
+        return false;
+    }
+    return !veh_jail(veh_id);
+}
+
+/*
+Purpose: Check whether the specified selectable unit still has moves left this turn. Units busy
+         terraforming (orders farm through monolith) count as unmoved unless they are also crawling.
+Original Offset: 005C1AB0
+Return Value: Does the unit still have moves? true/false
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-veh-helpers.log)
+*/
+BOOL __cdecl veh_unmoved(int veh_id) {
+    if (!veh_selectable(veh_id)) { // same checks as the original, which inlines them
+        return false;
+    }
+    int8_t order = Vehs[veh_id].order;
+    if (Vehs[veh_id].state & VSTATE_CRAWLING || order < ORDER_FARM || order > ORDER_PLACE_MONOLITH) {
+        if ((int)speed(veh_id, false) - Vehs[veh_id].moves_expended <= 0) {
+            return false;
+        }
+    }
+    return true;
+}
+
+/*
+Purpose: Check whether the specified selectable unit is waiting for orders: it has moves left and is
+         not sentried, holding or convoying (unless it is exploring or flagged VSTATE_UNK_200).
+Original Offset: 005C1B70
+Return Value: Is the unit ready for orders? true/false
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-veh-helpers.log)
+*/
+BOOL __cdecl veh_ready(int veh_id) {
+    if (!veh_selectable(veh_id)) { // same checks as the original, which inlines them
+        return false;
+    }
+    int8_t order = Vehs[veh_id].order;
+    if (!(Vehs[veh_id].state & (VSTATE_EXPLORE | VSTATE_UNK_200))
+        && (order == ORDER_SENTRY_BOARD || order == ORDER_HOLD || order == ORDER_CONVOY)) {
+        return false;
+    }
+    return (int)speed(veh_id, false) - Vehs[veh_id].moves_expended > 0;
 }
 
 /*

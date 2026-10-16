@@ -464,6 +464,15 @@ constexpr int MaxOffenseModeNum = 3;
 constexpr int MaxOrderNum = 30;
 constexpr int MaxPlanNum = 15;
 constexpr int MaxTriadNum = 3;
+constexpr int MaxBungedDesignNum = 64; // rejected designs kept per faction
+
+struct BungedDesign { // unit design combination a faction has rejected; see is_bunged()
+    int ability_flags;
+    uint8_t chassis_id;
+    uint8_t weapon_id;
+    uint8_t armor_id;
+    uint8_t reactor_id;
+};
 
 extern VehPrototype *VehPrototypes;
 extern Veh *Vehs;
@@ -481,6 +490,8 @@ extern LPSTR *PlansFullName;
 extern LPSTR *Triad;
 
 extern int *VehCurrentCount;
+extern int *VehFindDist;
+extern BungedDesign *BungList;
 extern int *VehDropLiftVehID;
 extern int *VehLiftX;
 extern int *VehLiftY;
@@ -537,6 +548,10 @@ DLLEXPORT int __cdecl pick_chassis(int faction_id, int triad_chk, int speed_chk)
 DLLEXPORT int __cdecl weapon_budget(int faction_id, int condition, BOOL check_mode);
 DLLEXPORT int __cdecl armor_budget(int faction_id, int max_cost);
 DLLEXPORT int __cdecl abil_index(int ability_id);
+DLLEXPORT void __cdecl add_abil(uint32_t *ability_flags, uint32_t ability, uint32_t faction_id);
+DLLEXPORT BOOL __cdecl is_bunged(uint32_t faction_id, uint32_t chassis_id, uint32_t weapon_id,
+                                 uint32_t armor_id, int ability_flags, uint32_t reactor_id);
+DLLEXPORT void __cdecl clear_bunglist(uint32_t faction_id);
 DLLEXPORT int __cdecl hex_cost(int proto_id, int faction_id, uint32_t x_src, uint32_t y_src, 
                                uint32_t x_dst, uint32_t y_dst, BOOL toggle);
 DLLEXPORT void __cdecl veh_put(uint32_t veh_id, int x, int y);
@@ -554,9 +569,12 @@ DLLEXPORT void __cdecl stack_sort(uint32_t veh_id);
 DLLEXPORT void __cdecl stack_sort_2(uint32_t veh_id);
 DLLEXPORT int __cdecl stack_fix(int veh_id);
 DLLEXPORT int __cdecl stack_check(int veh_id, uint32_t type, int cond1, int cond2, int cond3);
+DLLEXPORT void __cdecl stack_kill(int veh_id);
+DLLEXPORT void __cdecl unspot_stack(int veh_id);
 DLLEXPORT BOOL __cdecl veh_avail(uint32_t proto_id, uint32_t faction_id, int base_id);
 DLLEXPORT BOOL __cdecl wants_prototype(uint32_t proto_id, uint32_t faction_id);
 DLLEXPORT int __cdecl veh_at(int x, int y);
+DLLEXPORT int __cdecl veh_find(int x, int y, int faction_id, int skip_veh_id);
 DLLEXPORT BOOL __cdecl has_abil(uint32_t proto_id, uint32_t ability_id);
 DLLEXPORT int __cdecl veh_lift(uint32_t veh_id);
 DLLEXPORT int __cdecl veh_drop(uint32_t veh_id, int x, int y);
@@ -575,6 +593,9 @@ DLLEXPORT uint32_t __cdecl veh_cargo(uint32_t veh_id);
 DLLEXPORT uint32_t __cdecl prototype_factor(uint32_t proto_id);
 DLLEXPORT uint32_t __cdecl veh_cost(uint32_t proto_id, int base_id, BOOL *has_proto_cost);
 DLLEXPORT BOOL __cdecl veh_jail(uint32_t veh_id);
+DLLEXPORT BOOL __cdecl veh_selectable(int veh_id);
+DLLEXPORT BOOL __cdecl veh_unmoved(int veh_id);
+DLLEXPORT BOOL __cdecl veh_ready(int veh_id);
 DLLEXPORT void __cdecl veh_skip(uint32_t veh_id);
 DLLEXPORT int __cdecl veh_fake(int proto_id, uint32_t faction_id);
 DLLEXPORT int __cdecl veh_wake(uint32_t veh_id);

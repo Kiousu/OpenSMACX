@@ -558,6 +558,8 @@ DLLEXPORT uint32_t __cdecl defensive_check(uint32_t base_id);
 DLLEXPORT BOOL __cdecl is_port(uint32_t base_id, BOOL is_base_radius);
 DLLEXPORT int __cdecl vulnerable(uint32_t faction_id, int x, int y);
 DLLEXPORT BOOL __cdecl is_objective(uint32_t base_id);
+DLLEXPORT int __cdecl get_rating(uint32_t faction_id, int value);
+DLLEXPORT int __cdecl most_objectives(int *faction_id_most, int *tie_count);
 DLLEXPORT BOOL __cdecl transcending(int faction_id);
 DLLEXPORT BOOL __cdecl ascending(int faction_id);
 DLLEXPORT BOOL __cdecl redundant(int facility_id, uint32_t faction_id);
