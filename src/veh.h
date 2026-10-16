@@ -581,6 +581,12 @@ DLLEXPORT void __cdecl spot_stack(int veh_id, int faction_id);
 DLLEXPORT int __cdecl pick_top_veh(int veh_id);
 DLLEXPORT BOOL __cdecl can_convoy(int x, int y);
 DLLEXPORT void __cdecl promote(int veh_id);
+DLLEXPORT BOOL __cdecl battle_kill(int veh_id, int *killed, int *captured, int *morale_bonus,
+                                   int veh_id_atk, int faction_id_obj);
+DLLEXPORT void __cdecl battle_kill_stack(int veh_id, int *killed, int *captured, int *morale_bonus,
+                                         int veh_id_atk, int faction_id_obj);
+DLLEXPORT void __cdecl battle_kill_chaff(int veh_id, int *killed, int *captured, int *morale_bonus,
+                                         int veh_id_atk, int faction_id_obj);
 DLLEXPORT void __cdecl proto_sort(uint32_t faction_id);
 DLLEXPORT void __cdecl proto_sort_2(uint32_t faction_id);
 DLLEXPORT BOOL __cdecl veh_avail(uint32_t proto_id, uint32_t faction_id, int base_id);

@@ -28,6 +28,7 @@ uint32_t *GameMorePreferences = (uint32_t *)0x009A6494;
 uint32_t *GameWarnings = (uint32_t *)0x009A6498;
 uint32_t *GameRules = (uint32_t *)0x009A649C;
 uint32_t *GameMoreRules = (uint32_t *)0x009A681C;
+Monument *Monuments = (Monument *)0x0094CA08; // [8]
 uint32_t *GameState = (uint32_t *)0x009A64C0;
 int *DiffLevelCurrent = (int *)0x009A64C4;
 int *TurnCurrentNum = (int *)0x009A64D4;
@@ -45,6 +46,65 @@ uint32_t *MountPlanetY = (uint32_t *)0x009A6808;
 int *DustCloudDuration = (int *)0x009A680C;
 BOOL *IsMultiplayerNet = (BOOL *)0x0093F660; // DirectPlay - Serial, Modem, Internet (TCP/IP)
 BOOL *IsMultiplayerPBEM = (BOOL *)0x0093A95C; // HotSeat / PBEM
+
+/*
+Purpose: Clear every faction's monument records (the "achieved" flag of each record and the
+         trailing marker).
+Original Offset: 00476B30
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch6.log)
+*/
+void __cdecl clear_monuments() {
+    for (uint32_t faction_id = 0; faction_id < MaxPlayerNum; faction_id++) {
+        for (int i = 0; i < MaxMonumentRecordNum; i++) {
+            Monuments[faction_id].records[i].achieved = false;
+        }
+        Monuments[faction_id].unk_1 = -1;
+    }
+}
+
+/*
+Purpose: Record a faction's first technology discovery in its monument records: the year, the tech,
+         how many other factions got there first (1 marks the first discoverer) and which faction
+         was first. The player at the controls gets the monument screen.
+Original Offset: 00476C90
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch6.log)
+*/
+void __cdecl mon_tech_discovered(int faction_id, int tech_id) {
+    uint32_t year = game_year(*TurnCurrentNum);
+    if ((Players[faction_id].rule_flags & RFLAG_ALIEN)
+        || Monuments[faction_id].records[MONUMENT_TECH_DISCOVERED].achieved) {
+        return;
+    }
+    MonumentRecord *record = &Monuments[faction_id].records[MONUMENT_TECH_DISCOVERED];
+    record->faction_count = 0;
+    for (int i = 0; i < MaxPlayerNum; i++) {
+        if (i != faction_id && Monuments[i].records[MONUMENT_TECH_DISCOVERED].achieved) {
+            record->faction_count++;
+        }
+    }
+    int faction_id_first = faction_id;
+    if (!record->faction_count) {
+        record->faction_count = 1;
+    } else {
+        record->faction_count = 0;
+        for (int i = 0; i < MaxPlayerNum; i++) {
+            const MonumentRecord *other = &Monuments[i].records[MONUMENT_TECH_DISCOVERED];
+            if (i != faction_id && other->achieved && other->faction_count) {
+                faction_id_first = i;
+            }
+        }
+    }
+    record->achieved = true;
+    record->year = year;
+    record->faction_id_first = faction_id_first;
+    record->data = tech_id;
+    Monuments[faction_id].unk_1 = 1;
+    if (faction_id == *FactionIDCurrent) {
+        monument(1);
+    }
+}
 
 /*
 Purpose: Handle creation of pop-up message on Planetfall.

@@ -3003,6 +3003,333 @@ static int test_steal_tech() {
     return mismatches;
 }
 
+// ---------------------------------------------------------------- batch 6
+
+static int test_num_objectives() {
+    uint32_t rules_saved = *GameRules, state_saved = *GameState;
+    static const uint32_t rule_bits[5] = { RULES_SCN_VICT_OBJ_UNITS_REACH_FRIEND_OBJ_BASE,
+        RULES_SCN_VICT_OBJ_UNITS_REACH_FRIEND_HQ_BASE, RULES_SCN_VICT_ALL_BASE_COUNT_OBJ,
+        RULES_SCN_VICT_SP_COUNT_OBJ, RULES_VICTORY_COOPERATIVE };
+    static const uint32_t state_bits[6] = { (uint32_t)STATE_SCN_VICT_BASE_FACIL_COUNT_OBJ,
+        (uint32_t)STATE_SCN_VICT_POPULATION_COUNT_OBJ, (uint32_t)STATE_SCN_VICT_TECH_COUNT_OBJ,
+        (uint32_t)STATE_SCN_VICT_CREDITS_COUNT_OBJ, (uint32_t)STATE_SCN_VICT_TERRAIN_ENH_COUNT_OBJ,
+        (uint32_t)STATE_SCN_VICT_TERRITORY_COUNT_OBJ };
+    // a few objective units and objective bases so the unit/base branches have something to count
+    int patched_vehs[6], patched_bases[3];
+    for (int k = 0; k < 6; k++) {
+        int v = (k * 7919) % *VehCurrentCount;
+        patched_vehs[k] = v;
+        Vehs[v].flags |= VFLAG_IS_OBJECTIVE;
+    }
+    for (int k = 0; k < 3; k++) {
+        int b = (k * 97) % *BaseCurrentCount;
+        patched_bases[k] = b;
+        Bases[b].event |= BEVENT_OBJECTIVE;
+    }
+    int compared = 0, mismatches = 0;
+    for (uint32_t rv = 0; rv < 32; rv++) {
+        uint32_t rules = rules_saved;
+        for (int k = 0; k < 5; k++) {
+            rules = (rv & (1 << k)) ? (rules | rule_bits[k]) : (rules & ~rule_bits[k]);
+        }
+        *GameRules = rules;
+        for (uint32_t sv = 0; sv < 64; sv += 9) {
+            uint32_t state = state_saved;
+            for (int k = 0; k < 6; k++) {
+                state = (sv & (1 << k)) ? (state | state_bits[k]) : (state & ~state_bits[k]);
+            }
+            *GameState = state;
+            for (uint32_t f = 0; f < MaxPlayerNum; f++) {
+                for (int pact = 0; pact < 2; pact++) {
+                    int b = num_objectives_OG(f, pact);
+                    int a = num_objectives(f, pact);
+                    compared++;
+                    if (a != b) {
+                        if (mismatches < MAX_DETAIL) {
+                            logf("  num_objectives(%u, %d) rules %X state %X: new=%d orig=%d", f, pact,
+                                rv, sv, a, b);
+                        }
+                        mismatches++;
+                    }
+                }
+            }
+        }
+    }
+    *GameRules = rules_saved;
+    *GameState = state_saved;
+    for (int k = 0; k < 6; k++) {
+        Vehs[patched_vehs[k]].flags &= ~VFLAG_IS_OBJECTIVE;
+    }
+    for (int k = 0; k < 3; k++) {
+        Bases[patched_bases[k]].event &= ~BEVENT_OBJECTIVE;
+    }
+    logf("num_objectives: %d compared, %d mismatches", compared, mismatches);
+    return mismatches;
+}
+
+typedef BOOL func_battle_kill(int, int *, int *, int *, int, int);
+typedef void func_battle_kill_n(int, int *, int *, int *, int, int);
+
+static int test_battle_kill_family() {
+    GameSnapshot base, after_orig, after_new;
+    snap_alloc(&base); snap_alloc(&after_orig); snap_alloc(&after_new);
+    snap_take(&base);
+    BOOL draw_saved = VehBattleUnkTgl[0];
+    VehBattleUnkTgl[0] = true;
+    int compared = 0, mismatches = 0, killed_total = 0, captured_total = 0;
+    char label[96];
+    // an attacker of each faction (the first unit found), plus "no attacker"
+    int attackers[MaxPlayerNum + 1];
+    int attacker_count = 0;
+    attackers[attacker_count++] = -1;
+    for (uint32_t f = 0; f < MaxPlayerNum; f++) {
+        for (int i = 0; i < base.veh_count; i++) {
+            if (Vehs[i].faction_id == f && Vehs[i].x >= 0) {
+                attackers[attacker_count++] = i;
+                break;
+            }
+        }
+    }
+    for (int which = 0; which < 3; which++) {
+        const char *name = which == 0 ? "battle_kill" : which == 1 ? "battle_kill_stack" : "battle_kill_chaff";
+        for (int veh_id = which; veh_id < base.veh_count; veh_id += 3) {
+            // the human player's assistant worm opens an interlude
+            if (base.vehs[veh_id].state & VSTATE_ASSISTANT_WORM) {
+                continue;
+            }
+            for (int a = 0; a < attacker_count; a += (which == 0 ? 1 : 3)) {
+                int veh_id_atk = attackers[a];
+                int faction_obj = (veh_id + a) % 2 ? 1 + (veh_id % 7) : -1;
+                int k_o = 0, c_o = 0, m_o = 0, k_n = 0, c_n = 0, m_n = 0;
+                BOOL r_o = 0, r_n = 0;
+                // every third victim of battle_kill() becomes an Alien Artifact so the capture branch runs
+                BOOL artifact = which == 0 && (veh_id / 3) % 3 == 0;
+                snap_restore(&base);
+                if (artifact) {
+                    Vehs[veh_id].proto_id = BSC_ALIEN_ARTIFACT;
+                }
+                reseed(veh_id * 13 + a);
+                if (which == 0) {
+                    r_o = battle_kill_OG(veh_id, &k_o, &c_o, &m_o, veh_id_atk, faction_obj);
+                } else if (which == 1) {
+                    battle_kill_stack_OG(veh_id, &k_o, &c_o, &m_o, veh_id_atk, faction_obj);
+                } else {
+                    battle_kill_chaff_OG(veh_id, &k_o, &c_o, &m_o, veh_id_atk, faction_obj);
+                }
+                snap_take(&after_orig);
+                snap_restore(&base);
+                if (artifact) {
+                    Vehs[veh_id].proto_id = BSC_ALIEN_ARTIFACT;
+                }
+                reseed(veh_id * 13 + a);
+                if (which == 0) {
+                    r_n = battle_kill(veh_id, &k_n, &c_n, &m_n, veh_id_atk, faction_obj);
+                } else if (which == 1) {
+                    battle_kill_stack(veh_id, &k_n, &c_n, &m_n, veh_id_atk, faction_obj);
+                } else {
+                    battle_kill_chaff(veh_id, &k_n, &c_n, &m_n, veh_id_atk, faction_obj);
+                }
+                snap_take(&after_new);
+                compared++;
+                killed_total += k_o;
+                captured_total += c_o;
+                sprintf_s(label, "%s(%d, atk %d, obj %d)", name, veh_id, veh_id_atk, faction_obj);
+                BOOL diff = false;
+                if ((r_o != 0) != (r_n != 0) || k_o != k_n || c_o != c_n || m_o != m_n) {
+                    if (mismatches < MAX_DETAIL) {
+                        logf("  %s: orig ret %d killed %d captured %d morale %d; new ret %d killed %d captured %d morale %d",
+                            label, r_o, k_o, c_o, m_o, r_n, k_n, c_n, m_n);
+                    }
+                    diff = true;
+                }
+                if (!diff) {
+                    diff = snap_differs(&after_orig, &after_new, mismatches < MAX_DETAIL ? label : NULL);
+                }
+                if (diff) {
+                    mismatches++;
+                }
+            }
+        }
+    }
+    snap_restore(&base);
+    VehBattleUnkTgl[0] = draw_saved;
+    snap_free(&base); snap_free(&after_orig); snap_free(&after_new);
+    logf("battle_kill family: %d compared (%d killed, %d captured by the original), %d mismatches",
+        compared, killed_total, captured_total, mismatches);
+    return mismatches;
+}
+
+static int test_monuments() {
+    uint8_t *saved = (uint8_t *)malloc(MonumentTableSize);
+    uint8_t *orig = (uint8_t *)malloc(MonumentTableSize);
+    uint8_t *fresh = (uint8_t *)malloc(MonumentTableSize);
+    memcpy(saved, MonumentTable, MonumentTableSize);
+    int compared = 0, mismatches = 0;
+    char label[64];
+    auto compare = [&](const char *what) {
+        compared++;
+        size_t d = first_diff(orig, fresh, MonumentTableSize);
+        if (d != (size_t)-1) {
+            if (mismatches < MAX_DETAIL) {
+                logf("  %s: monument table byte %u differs (orig %02X new %02X)", what, (unsigned)d,
+                    orig[d], fresh[d]);
+            }
+            mismatches++;
+        }
+    };
+    memcpy(MonumentTable, saved, MonumentTableSize);
+    clear_monuments_OG();
+    memcpy(orig, MonumentTable, MonumentTableSize);
+    memcpy(MonumentTable, saved, MonumentTableSize);
+    clear_monuments();
+    memcpy(fresh, MonumentTable, MonumentTableSize);
+    compare("clear_monuments()");
+    // from the loaded table and from a cleared one, with the discovery flag of other factions varied
+    for (int cleared = 0; cleared < 2; cleared++) {
+        for (uint32_t f = 1; f < MaxPlayerNum; f++) {
+            if (f == (uint32_t)*FactionIDCurrent) {
+                continue; // opens the monument screen
+            }
+            for (int variant = 0; variant < 3; variant++) {
+                auto prepare = [&]() {
+                    memcpy(MonumentTable, saved, MonumentTableSize);
+                    if (cleared) {
+                        clear_monuments();
+                    }
+                    if (variant) {
+                        for (uint32_t i = 1; i < MaxPlayerNum; i += variant) {
+                            if (i != f) {
+                                Monuments[i].records[MONUMENT_TECH_DISCOVERED].achieved = true;
+                                Monuments[i].records[MONUMENT_TECH_DISCOVERED].faction_count = (i == 2);
+                            }
+                        }
+                    }
+                };
+                prepare();
+                mon_tech_discovered_OG(f, 40 + variant);
+                memcpy(orig, MonumentTable, MonumentTableSize);
+                prepare();
+                mon_tech_discovered(f, 40 + variant);
+                memcpy(fresh, MonumentTable, MonumentTableSize);
+                sprintf_s(label, "mon_tech_discovered(%u) cleared %d variant %d", f, cleared, variant);
+                compare(label);
+            }
+        }
+    }
+    memcpy(MonumentTable, saved, MonumentTableSize);
+    free(saved); free(orig); free(fresh);
+    logf("monuments: %d compared, %d mismatches", compared, mismatches);
+    return mismatches;
+}
+
+static int test_social_set() {
+    GameSnapshot base, after_orig, after_new;
+    snap_alloc(&base); snap_alloc(&after_orig); snap_alloc(&after_new);
+    snap_take(&base);
+    int compared = 0, mismatches = 0, changed = 0;
+    char label[64];
+    for (uint32_t f = 1; f < MaxPlayerNum; f++) {
+        if (!quiet_faction(f)) {
+            continue; // humans get their bases recomputed, the current player a redraw
+        }
+        for (int variant = 0; variant < 4; variant++) {
+            auto prepare = [&]() {
+                snap_restore(&base);
+                SocialCategory *cat = &PlayersData[f].soc_category_pending;
+                if (variant == 1) {
+                    cat->economics = (cat->economics + 1) % 4;
+                } else if (variant == 2) {
+                    cat->politics = (cat->politics + 1) % 4;
+                    cat->values = (cat->values + 2) % 4;
+                } else if (variant == 3) {
+                    cat->future = (cat->future + 1) % 4;
+                }
+            };
+            prepare();
+            social_set_OG(f);
+            snap_take(&after_orig);
+            changed += snap_differs(&base, &after_orig, NULL);
+            prepare();
+            social_set(f);
+            snap_take(&after_new);
+            compared++;
+            sprintf_s(label, "social_set(%u) variant %d", f, variant);
+            if (snap_differs(&after_orig, &after_new, mismatches < MAX_DETAIL ? label : NULL)) {
+                mismatches++;
+            }
+        }
+    }
+    snap_restore(&base);
+    snap_free(&base); snap_free(&after_orig); snap_free(&after_new);
+    logf("social_set: %d compared (%d changed state), %d mismatches", compared, changed, mismatches);
+    return mismatches;
+}
+
+static int test_bases_reset() {
+    GameSnapshot base, after_orig, after_new;
+    snap_alloc(&base); snap_alloc(&after_orig); snap_alloc(&after_new);
+    snap_take(&base);
+    int pick_saved[8];
+    memcpy(pick_saved, BaseGovPickID, 16);
+    memcpy(pick_saved + 4, BaseGovPickValue, 16);
+    int compared = 0, mismatches = 0, changed = 0;
+    char label[64];
+    for (uint32_t f = 1; f < MaxPlayerNum; f++) {
+        if (!quiet_faction(f)) {
+            continue;
+        }
+        // every base, one region, with and without the occupied-tile skip
+        int region = -1;
+        for (int i = 0; i < *BaseCurrentCount; i++) {
+            if (Bases[i].faction_id_current == f) {
+                region = map_loc(Bases[i].x, Bases[i].y)->region;
+                break;
+            }
+        }
+        for (int variant = 0; variant < 4; variant++) {
+            int region_arg = (variant & 1) ? region : -1;
+            BOOL skip = (variant & 2) != 0;
+            auto prepare = [&]() {
+                snap_restore(&base);
+                memcpy(BaseGovPickID, pick_saved, 16);
+                memcpy(BaseGovPickValue, pick_saved + 4, 16);
+                reseed(f * 7 + variant);
+            };
+            prepare();
+            bases_reset_OG(region_arg, f, skip);
+            snap_take(&after_orig);
+            int pick_orig[8];
+            memcpy(pick_orig, BaseGovPickID, 16);
+            memcpy(pick_orig + 4, BaseGovPickValue, 16);
+            changed += snap_differs(&base, &after_orig, NULL);
+            prepare();
+            bases_reset(region_arg, f, skip);
+            snap_take(&after_new);
+            int pick_new[8];
+            memcpy(pick_new, BaseGovPickID, 16);
+            memcpy(pick_new + 4, BaseGovPickValue, 16);
+            compared++;
+            sprintf_s(label, "bases_reset(%d, %u, %d)", region_arg, f, skip);
+            BOOL diff = snap_differs(&after_orig, &after_new, mismatches < MAX_DETAIL ? label : NULL);
+            if (!diff && memcmp(pick_orig, pick_new, sizeof(pick_orig)) != 0) {
+                if (mismatches < MAX_DETAIL) {
+                    logf("  %s: governor picks differ", label);
+                }
+                diff = true;
+            }
+            if (diff) {
+                mismatches++;
+            }
+        }
+    }
+    snap_restore(&base);
+    memcpy(BaseGovPickID, pick_saved, 16);
+    memcpy(BaseGovPickValue, pick_saved + 4, 16);
+    snap_free(&base); snap_free(&after_orig); snap_free(&after_new);
+    logf("bases_reset: %d compared (%d changed state), %d mismatches", compared, changed, mismatches);
+    return mismatches;
+}
+
 static DWORD WINAPI regress_watcher(LPVOID) {
     for (;;) {
         Sleep(1000);
@@ -3092,6 +3419,11 @@ void regress_run() {
     if (test_enabled("batch5", "tech_advance")) total += run_guarded("tech_advance", test_tech_advance);
     if (test_enabled("batch5", "tech_research")) total += run_guarded("tech_research", test_tech_research);
     if (test_enabled("batch5", "steal_tech")) total += run_guarded("steal_tech", test_steal_tech);
+    if (test_enabled("batch6", "num_objectives")) total += run_guarded("num_objectives", test_num_objectives);
+    if (test_enabled("batch6", "battle_kill")) total += run_guarded("battle_kill", test_battle_kill_family);
+    if (test_enabled("batch6", "monuments")) total += run_guarded("monuments", test_monuments);
+    if (test_enabled("batch6", "social_set")) total += run_guarded("social_set", test_social_set);
+    if (test_enabled("batch6", "bases_reset")) total += run_guarded("bases_reset", test_bases_reset);
     if (test_enabled("enemy_capabilities")) total += run_guarded("enemy_capabilities", test_enemy_capabilities);
     if (test_enabled("social_ai")) total += run_guarded("social_ai", test_social_ai);
     if (test_enabled("Path::sensors") || test_enabled("path_sensors")) total += run_guarded("path_sensors", test_path_sensors);

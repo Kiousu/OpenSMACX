@@ -127,6 +127,7 @@ enum PlayerFlagsBitfield {
     PFLAG_MAP_REVEALED = 0x200,
     PFLAG_GENETIC_PLAGUE_INTRO = 0x400, // +1 to defense against after 1st time faction experiences
     PFLAG_BEEN_ELECTED_GOVERNOR = 0x8000, // used to determine whether #GOVERNOR has been displayed
+    PFLAG_UNK_1000 = 0x1000, // set by battle_kill() when the faction kills the human's assistant worm
     PFLAG_UNK_20000 = 0x20000,
     PFLAG_STRAT_ATK_ENEMY_HQ = 0x200000,
     PFLAG_COOP_WITH_HUMAN = 0x400000,
@@ -486,7 +487,7 @@ struct PlayerData {
     uint32_t secret_project_intel[8]; // Bitfield; News of SPs other factions are working on
     int corner_market_turn;
     int corner_market_active;
-    int unk_101;
+    int objective_kills; // objective units destroyed, credited by battle_kill(); see num_objectives()
     int unk_102;
     int bunglist_index; // next BungList slot to overwrite; see bung_proto()
     uint32_t flags_ext;
@@ -552,6 +553,7 @@ DLLEXPORT BOOL __cdecl is_alien_faction(uint32_t faction_id);
 DLLEXPORT BOOL __cdecl is_human(uint32_t faction_id);
 DLLEXPORT BOOL __cdecl is_alive(uint32_t faction_id);
 DLLEXPORT BOOL __cdecl spying(int faction_id);
+DLLEXPORT void __cdecl social_set(uint32_t faction_id);
 DLLEXPORT void __cdecl psych_check(uint32_t faction_id, int *drones, int *talents);
 DLLEXPORT uint32_t __cdecl has_treaty(uint32_t faction_id, uint32_t faction_id_with, 
                                       uint32_t treaties);

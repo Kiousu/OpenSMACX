@@ -112,6 +112,28 @@ extern uint32_t *GameMorePreferences;
 extern uint32_t *GameWarnings; // used for setting pop notifications
 extern uint32_t *GameRules; // bitfield
 extern uint32_t *GameMoreRules; // bitfield
+
+// Per faction record of firsts (the monument screen); only the tech record is understood so far.
+struct MonumentRecord {
+    int year;
+    int unk_1;
+    int data; // tech id for the tech record
+    int faction_id_first;
+    BOOL achieved;
+    int faction_count; // 1 marks the first faction to achieve the record
+    int unk_2[8];
+};
+
+constexpr int MaxMonumentRecordNum = 21;
+constexpr int MONUMENT_TECH_DISCOVERED = 1;
+
+struct Monument {
+    MonumentRecord records[MaxMonumentRecordNum];
+    int unk_1; // -1 after clear_monuments(), 1 once a record is set
+    int unk_2[22];
+};
+
+extern Monument *Monuments; // [8]
 extern uint32_t *GameState; // bitfield
 extern int *DiffLevelCurrent;
 extern int *TurnCurrentNum;
@@ -135,3 +157,5 @@ DLLEXPORT void __cdecl clear_scenario();
 DLLEXPORT uint32_t __cdecl game_year(int turn);
 DLLEXPORT void __cdecl say_year(LPSTR output);
 DLLEXPORT void __cdecl yearmotize(LPSTR str);
+DLLEXPORT void __cdecl clear_monuments();
+DLLEXPORT void __cdecl mon_tech_discovered(int faction_id, int tech_id);

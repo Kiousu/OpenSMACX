@@ -60,8 +60,6 @@ extern func5 *load_faction_art;
 extern func5 *draw_map;
 extern func5 *wave_it;
 extern func5 *veh_kill;
-typedef int func_num_obj(int, int);
-extern func_num_obj *num_objectives;
 extern func5 *kill; // kill(veh_id): veh_kill() plus stack and interface cleanup
 typedef void *func6(char const *, int(*)(void));
 extern func6 *X_pop;
@@ -78,7 +76,6 @@ extern func15 *save_daemon;
 typedef uint32_t func16(LPCSTR, BOOL);
 extern func16 *load_daemon;
 typedef void func19(uint32_t);
-extern func19 *social_set;
 extern func19 *consider_designs;
 typedef int func20(LPCSTR, int, int, LPCSTR, Sprite *);
 extern func20 *popb;
@@ -188,6 +185,18 @@ extern func_void *world_rainfall_OG;
 extern func_i *tech_advance_OG;
 extern func_xy *tech_research_OG;
 extern func_iii *steal_tech_OG;
+// batch 6
+typedef int func_num_obj(uint32_t, BOOL);
+extern func_num_obj *num_objectives_OG;
+typedef BOOL func_bkill(int, int *, int *, int *, int, int);
+typedef void func_bkill_n(int, int *, int *, int *, int, int);
+extern func_bkill *battle_kill_OG;
+extern func_bkill_n *battle_kill_stack_OG;
+extern func_bkill_n *battle_kill_chaff_OG;
+extern func_void *clear_monuments_OG;
+extern func_xy *mon_tech_discovered_OG;
+extern func_u32 *social_set_OG;
+extern func_xyi *bases_reset_OG;
 extern func_void *base_psych_OG;
 extern func_social_ai *social_ai_OG;
 extern func_path_sensors *Path_sensors_OG; // Path::sensors()
@@ -313,12 +322,15 @@ extern func_win_redraw *MapWin_clear_terrain; // MapWin::clear_terrain() on Cons
 extern func_i *tech_selection; // tech_selection(faction_id): pick the next research goal (dialog for humans)
 typedef int func_tech_pick(int, int, int, LPCSTR);
 extern func_tech_pick *tech_pick; // tech_pick(faction_id, unk, faction_id_from, label)
-extern func_xyi *bases_reset; // bases_reset(region, faction_id, unk): base_reset() on the faction's bases
-extern func_xy *mon_tech_discovered; // mon_tech_discovered(faction_id, tech_id): monument record
 extern func5 *base_compute; // base_compute(force): recompute the current base
 extern int *SkipTechScreenA; // Thinker's names: non-zero skips the tech popups
 extern int *SkipTechScreenB;
 extern int *NetUpkeepState; // 1 while a network game runs its upkeep
+extern func_xy *base_reset; // base_reset(base_id, unk): governor production choice
+extern func5 *monument; // monument(unk): the monument screen
+typedef void func_interlude(int, LPCSTR, int, int);
+extern func_interlude *interlude; // interlude(event_id, text, unk1, unk2)
+extern void *BaseWinVar; // global BaseWin instance
 extern void *WorldWinVar; // global WorldWin instance (lower right world map view)
 extern BOOL *TradeMapsRevealedNew; // set by trade_maps() and friends when new tiles were revealed
 typedef void func_tech_ach(int, int, int, int);

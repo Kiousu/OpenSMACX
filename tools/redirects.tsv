@@ -608,3 +608,12 @@
 0x001BE530	?tech_advance@@YAHH@Z
 0x001BE940	?tech_research@@YAXHH@Z
 0x0010C340	?steal_tech@@YAHHHH@Z
+# --- batch 6: objectives, battle kills, monuments, social_set, bases_reset
+0x001AC110	?num_objectives@@YAHIH@Z
+0x00105D80	?battle_kill@@YAHHPAH00HH@Z
+0x00106130	?battle_kill_stack@@YAXHPAH00HH@Z
+0x001061B0	?battle_kill_chaff@@YAXHPAH00HH@Z
+0x00076B30	?clear_monuments@@YAXXZ
+0x00076C90	?mon_tech_discovered@@YAXHH@Z
+0x001B4600	?social_set@@YAXI@Z
+0x000E6300	?bases_reset@@YAXHIH@Z

@@ -603,6 +603,36 @@ void __cdecl base_first(uint32_t base_id) {
 }
 
 /*
+Purpose: Reset the production of an AI faction's bases (all of them, or those in one region) through
+         base_reset(). With skip_occupied set, bases whose tile holds a unit of a faction are left
+         alone.
+Original Offset: 004E6300
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch6.log)
+*/
+void __cdecl bases_reset(int region, uint32_t faction_id, BOOL skip_occupied) {
+    if (is_human(faction_id)) {
+        return;
+    }
+    for (int i = 0; i < *BaseCurrentCount; i++) {
+        if (Bases[i].faction_id_current != faction_id) {
+            continue;
+        }
+        Map *tile = map_loc(Bases[i].x, Bases[i].y);
+        if (region >= 0 && tile->region != region) {
+            continue;
+        }
+        if (skip_occupied && (tile->bit & BIT_VEH_IN_TILE) && (tile->val2 & 0xF) <= 7) {
+            continue;
+        }
+        if (is_human(faction_id) && ((*BaseCurrent)->state & BSTATE_UNK_8000000000)) {
+            continue; // unreachable for an AI faction; kept from the original
+        }
+        base_reset(i, 0);
+    }
+}
+
+/*
 Purpose: Calculate the new unit morale bonus modifier provided by the base and faction for a triad.
 Original Offset: 004E6400
 Return Value: Morale bonus modifier
@@ -1837,6 +1867,147 @@ BOOL __cdecl is_objective(uint32_t base_id) {
         return true;
     }
     return false;
+}
+
+/*
+Purpose: Count a faction's scenario objectives: objective units (at a friendly objective base or
+         headquarters when the rules say so), objective bases, population, techs, credits, the
+         victory facility, terrain enhancements and territory in its tiles, secret projects, and
+         with include_pact the objectives of its pact partners under cooperative victory.
+Original Offset: 005AC110
+Return Value: Objective count (0 for a faction that is not alive)
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch6.log)
+*/
+int __cdecl num_objectives(uint32_t faction_id, BOOL include_pact) {
+    if (!is_alive(faction_id)) {
+        return 0;
+    }
+    int objectives = PlayersData[faction_id].objective_kills;
+    uint32_t offset, mask;
+    for (int i = 0; i < *VehCurrentCount; i++) {
+        if (Vehs[i].faction_id != faction_id || !(Vehs[i].flags & VFLAG_IS_OBJECTIVE)) {
+            continue;
+        }
+        if (*GameRules & RULES_SCN_VICT_OBJ_UNITS_REACH_FRIEND_OBJ_BASE) {
+            int base_id = base_at(Vehs[i].x, Vehs[i].y);
+            if (base_id < 0) {
+                continue;
+            }
+            BOOL counts = (*GameRules & RULES_SCN_VICT_ALL_BASE_COUNT_OBJ)
+                || (Bases[base_id].event & BEVENT_OBJECTIVE);
+            if (!counts && (*GameRules & RULES_SCN_VICT_SP_COUNT_OBJ)) {
+                for (uint32_t p = 0; p < MaxSecretProjectNum; p++) {
+                    if ((&SecretProject->human_genome_project)[p] == base_id) {
+                        counts = true;
+                        break;
+                    }
+                }
+            }
+            if (!counts) {
+                if (!(*GameState & STATE_SCN_VICT_BASE_FACIL_COUNT_OBJ) || *ScnVictFacilityObj > 0x40) {
+                    continue;
+                }
+                bitmask(*ScnVictFacilityObj, &offset, &mask);
+                if (!(Bases[base_id].facilities_built[offset] & mask)) {
+                    continue;
+                }
+            }
+            uint32_t owner = Bases[base_id].faction_id_current;
+            if (owner == faction_id) {
+                objectives++;
+            } else if ((PlayersData[faction_id].diplo_treaties[owner] & DTREATY_PACT)
+                && (*GameRules & RULES_VICTORY_COOPERATIVE)) {
+                objectives++;
+            }
+        } else if (*GameRules & RULES_SCN_VICT_OBJ_UNITS_REACH_FRIEND_HQ_BASE) {
+            int base_id = base_at(Vehs[i].x, Vehs[i].y);
+            if (base_id < 0) {
+                continue;
+            }
+            bitmask(FAC_HEADQUARTERS, &offset, &mask);
+            if (!(Bases[base_id].facilities_built[offset] & mask)) {
+                continue;
+            }
+            uint32_t owner = Bases[base_id].faction_id_current;
+            if (owner == faction_id) {
+                objectives++;
+            } else if ((PlayersData[faction_id].diplo_treaties[owner] & DTREATY_PACT)
+                && (*GameRules & RULES_VICTORY_COOPERATIVE)) {
+                objectives++;
+            }
+        } else {
+            objectives++;
+        }
+    }
+    for (int i = 0; i < *BaseCurrentCount; i++) {
+        if (Bases[i].faction_id_current != faction_id) {
+            continue;
+        }
+        if (*GameState & STATE_SCN_VICT_POPULATION_COUNT_OBJ) {
+            objectives += Bases[i].population_size;
+        }
+        if ((*GameRules & RULES_SCN_VICT_ALL_BASE_COUNT_OBJ) || (Bases[i].event & BEVENT_OBJECTIVE)) {
+            objectives++;
+        }
+    }
+    if (*GameState & STATE_SCN_VICT_TECH_COUNT_OBJ) {
+        for (int tech_id = 0; tech_id < MaxTechnologyNum; tech_id++) {
+            if (has_tech(tech_id, faction_id)) {
+                objectives++;
+            }
+        }
+        objectives += PlayersData[faction_id].theory_of_everything;
+    }
+    if (*GameState & STATE_SCN_VICT_CREDITS_COUNT_OBJ) {
+        objectives += PlayersData[faction_id].energy_reserves;
+    }
+    if (*GameState & STATE_SCN_VICT_BASE_FACIL_COUNT_OBJ) {
+        for (int i = 0; i < *BaseCurrentCount; i++) {
+            if (Bases[i].faction_id_current == faction_id && *ScnVictFacilityObj <= 0x40) {
+                bitmask(*ScnVictFacilityObj, &offset, &mask);
+                if (Bases[i].facilities_built[offset] & mask) {
+                    objectives++;
+                }
+            }
+        }
+    }
+    if (*GameState & STATE_SCN_VICT_TERRAIN_ENH_COUNT_OBJ) {
+        // the terrain enhancement bits the objective counts
+        const uint32_t enhancements = 0x81E4885C;
+        for (int y = 0; y < (int)*MapLatitudeBounds; y++) {
+            for (int x = y & 1; x < (int)*MapLongitudeBounds; x += 2) {
+                Map *tile = map_loc(x, y);
+                if (tile->territory == (int)faction_id) {
+                    objectives += bit_count(tile->bit & enhancements);
+                }
+            }
+        }
+    }
+    if (*GameState & STATE_SCN_VICT_TERRITORY_COUNT_OBJ) {
+        for (int y = 0; y < (int)*MapLatitudeBounds; y++) {
+            for (int x = y & 1; x < (int)*MapLongitudeBounds; x += 2) {
+                if (map_loc(x, y)->territory == (int)faction_id) {
+                    objectives++;
+                }
+            }
+        }
+    }
+    if (*GameRules & RULES_SCN_VICT_SP_COUNT_OBJ) {
+        for (uint32_t p = 0; p < MaxSecretProjectNum; p++) {
+            int base_id = (&SecretProject->human_genome_project)[p];
+            if (base_id >= 0 && Bases[base_id].faction_id_current == faction_id) {
+                objectives++;
+            }
+        }
+    }
+    if (include_pact && (*GameRules & RULES_VICTORY_COOPERATIVE)) {
+        for (uint32_t i = 1; i < MaxPlayerNum; i++) {
+            if (i != faction_id && (PlayersData[faction_id].diplo_treaties[i] & DTREATY_PACT)) {
+                objectives += num_objectives(i, false);
+            }
+        }
+    }
+    return objectives;
 }
 
 /*

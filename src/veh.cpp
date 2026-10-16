@@ -1039,6 +1039,156 @@ uint32_t __cdecl best_defender(uint32_t veh_id_def, int veh_id_atk, BOOL check_a
 }
 
 /*
+Purpose: Remove a unit that lost a battle. An Alien Artifact is captured instead when the winner
+         is a non-missile unit on land (or whose stack can carry it, or when the artifact is an
+         objective): it changes sides and moves to the winner's tile. Killing an objective unit
+         is credited to faction_id_obj, killing the human player's first mind worm triggers the
+         assistant interlude for the winner's base, and killing a native unit with a non-native
+         winner adds to the morale bonus.
+Original Offset: 00505D80
+Return Value: Was the unit killed (false when captured)? true/false
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch6.log)
+*/
+BOOL __cdecl battle_kill(int veh_id, int *killed, int *captured, int *morale_bonus, int veh_id_atk,
+                         int faction_id_obj) {
+    uint32_t faction_id = Vehs[veh_id].faction_id;
+    int proto_id = Vehs[veh_id].proto_id;
+    PlayersData[faction_id].proto_id_lost[proto_id]++;
+    if (veh_id_atk >= 0 && veh_id_atk != veh_id && Vehs[veh_id_atk].faction_id) {
+        int x_atk = Vehs[veh_id_atk].x;
+        int y_atk = Vehs[veh_id_atk].y;
+        if (y_atk >= 0 && y_atk < (int)*MapLatitudeBounds && x_atk >= 0
+            && x_atk < (int)*MapLongitudeBounds && VehPrototypes[proto_id].plan == PLAN_ALIEN_ARTIFACT
+            && !Chassis[VehPrototypes[Vehs[veh_id_atk].proto_id].chassis_id].missile
+            && ((map_loc(x_atk, y_atk)->climate & 0xE0) >= ALT_BIT_SHORE_LINE
+                || stack_check(veh_id_atk, 8, -1, -1, -1) > 0
+                || (Vehs[veh_id].flags & VFLAG_IS_OBJECTIVE))) {
+            veh_lift(veh_id);
+            proto_id = Vehs[veh_id].proto_id;
+            uint8_t faction_id_atk = Vehs[veh_id_atk].faction_id;
+            Vehs[veh_id].dmg_incurred = 0;
+            Vehs[veh_id].faction_id = faction_id_atk;
+            Vehs[veh_id].order = ORDER_NONE;
+            PlayersData[faction_id].proto_id_active[proto_id]--;
+            Vehs[veh_id].state &= 0xFCFFBDFF; // clears 0x3000000, VSTATE_EXPLORE and VSTATE_UNK_200
+            PlayersData[faction_id_atk].proto_id_active[proto_id]++;
+            veh_drop(veh_id, Vehs[veh_id_atk].x, Vehs[veh_id_atk].y);
+            veh_skip(veh_id);
+            if (captured) {
+                (*captured)++;
+            }
+            return false;
+        }
+    }
+    if ((Vehs[veh_id].flags & VFLAG_IS_OBJECTIVE) && faction_id_obj >= 0) {
+        PlayersData[faction_id_obj].objective_kills++;
+    }
+    if ((Vehs[veh_id].state & VSTATE_ASSISTANT_WORM) && veh_id_atk >= 0
+        && !(*GamePreferences & PREF_AV_INTERLUDES_DISABLED)) {
+        int base_id = Vehs[veh_id_atk].home_base_id;
+        if (base_id < 0) {
+            base_id = base_find(Vehs[veh_id_atk].x, Vehs[veh_id_atk].y, Vehs[veh_id_atk].faction_id);
+        }
+        if (base_id >= 0) {
+            *PluralityDefault = false;
+            uint32_t faction_id_atk = Vehs[veh_id_atk].faction_id;
+            Bases[base_id].state |= BSTATE_ASSISTANT_KILLER_HOME;
+            PlayersData[faction_id_atk].flags |= PFLAG_UNK_1000;
+            *GenderDefault = Players[faction_id_atk].is_leader_female;
+            parse_says(6, Players[faction_id_atk].name_leader, -1, -1);
+            *GenderDefault = Players[faction_id_atk].noun_gender;
+            *PluralityDefault = Players[faction_id_atk].is_noun_plural;
+            parse_says(7, Players[faction_id_atk].noun_faction, -1, -1);
+            interlude(6, Bases[base_id].name_string, 1, 0);
+        }
+    }
+    // like the original, this reads Vehs[-1] for an attacker of -1
+    if (faction_id == 0 && Vehs[veh_id_atk].faction_id != 0 && morale_bonus) {
+        *morale_bonus += (morale_veh(veh_id, true, 0) + 1) * 10;
+    }
+    if (killed) {
+        (*killed)++;
+    }
+    veh_kill(veh_id);
+    return true;
+}
+
+/*
+Purpose: Run battle_kill() over every unit of a stack. Unit ids above a killed unit shift down,
+         so the attacker id and the walk are adjusted after each kill.
+Original Offset: 00506130
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch6.log)
+*/
+void __cdecl battle_kill_stack(int veh_id, int *killed, int *captured, int *morale_bonus,
+                               int veh_id_atk, int faction_id_obj) {
+    if (veh_id < 0) {
+        return;
+    }
+    int i = veh_id;
+    while (Vehs[i].prev_veh_id_stack >= 0) {
+        i = Vehs[i].prev_veh_id_stack;
+    }
+    while (i >= 0) {
+        int next = Vehs[i].next_veh_id_stack;
+        if (battle_kill(i, killed, captured, morale_bonus, veh_id_atk, faction_id_obj)) {
+            if (i < veh_id_atk) {
+                veh_id_atk--;
+            }
+            if (i < next) {
+                next--;
+            }
+        }
+        i = next;
+    }
+}
+
+/*
+Purpose: Run battle_kill() over the units of a stack that cannot survive: artifacts and units whose
+         damage has used up their reactor's hit points, and every native unit.
+Original Offset: 005061B0
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch6.log)
+*/
+void __cdecl battle_kill_chaff(int veh_id, int *killed, int *captured, int *morale_bonus,
+                               int veh_id_atk, int faction_id_obj) {
+    if (veh_id < 0) {
+        return;
+    }
+    int i = veh_id;
+    while (Vehs[i].prev_veh_id_stack >= 0) {
+        i = Vehs[i].prev_veh_id_stack;
+    }
+    while (i >= 0) {
+        int next = Vehs[i].next_veh_id_stack;
+        int proto_id = Vehs[i].proto_id;
+        int hit_points;
+        if (VehPrototypes[proto_id].plan == PLAN_ALIEN_ARTIFACT) {
+            hit_points = 1;
+        } else {
+            uint32_t reactor = VehPrototypes[proto_id].reactor_id;
+            if (!reactor) {
+                reactor = 1;
+            } else if (reactor > 100) {
+                reactor = 100;
+            }
+            hit_points = reactor * 10;
+        }
+        hit_points -= Vehs[i].dmg_incurred;
+        if ((hit_points < 1 || Vehs[i].faction_id == 0)
+            && battle_kill(i, killed, captured, morale_bonus, veh_id_atk, faction_id_obj)) {
+            if (i < veh_id_atk) {
+                veh_id_atk--;
+            }
+            if (i < next) {
+                next--;
+            }
+        }
+        i = next;
+    }
+}
+
+/*
 Purpose: Promote a unit after a victory. Missiles, units already elite and unarmored non-combat
          designs (plan colonization or above with armor 1 or less) are skipped; from disciplined
          upward only half the promotions succeed. The player at the controls is told when the

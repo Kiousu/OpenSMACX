@@ -1279,6 +1279,45 @@ uint32_t __cdecl social_upheaval(uint32_t faction_id, SocialCategory *category_n
 }
 
 /*
+Purpose: Apply a faction's pending social engineering choice. The stored nutrients and minerals of
+         its bases are rescaled when the nutrient or mineral cost factors change, a human's bases
+         are recomputed, and the base window is redrawn for the player at the controls.
+Original Offset: 005B4600
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch6.log)
+*/
+void __cdecl social_set(uint32_t faction_id) {
+    int nutrient_factor_old = cost_factor(faction_id, 0, -1);
+    int mineral_factor_old = cost_factor(faction_id, 1, -1);
+    social_calc(&PlayersData[faction_id].soc_category_pending,
+        &PlayersData[faction_id].soc_effect_pending, faction_id, false, false);
+    int nutrient_factor = cost_factor(faction_id, 0, -1);
+    int mineral_factor = cost_factor(faction_id, 1, -1);
+    for (int i = 0; i < *BaseCurrentCount; i++) {
+        if (Bases[i].faction_id_current != faction_id) {
+            continue;
+        }
+        if (nutrient_factor != nutrient_factor_old) {
+            Bases[i].nutrients_accumulated = (nutrient_factor_old / 2
+                + nutrient_factor * Bases[i].nutrients_accumulated) / nutrient_factor_old;
+        }
+        if (mineral_factor != mineral_factor_old) {
+            int minerals = (mineral_factor_old / 2 + Bases[i].minerals_accumulated * mineral_factor)
+                / mineral_factor_old;
+            Bases[i].minerals_accumulated = minerals;
+            Bases[i].minerals_accumulated_2 = minerals;
+        }
+        if (!*IsMultiplayerNet && is_human(faction_id)) {
+            set_base(i);
+            base_compute(1);
+        }
+    }
+    if (faction_id == (uint32_t)*FactionIDCurrent) {
+        GraphicWin_redraw(BaseWinVar, 0);
+    }
+}
+
+/*
 Purpose: Check to see whether the faction can utilize a specific social category and model.
 Original Offset: 005B4730
 Return Value: Is social category/model available to faction? true/false

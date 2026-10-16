@@ -565,6 +565,8 @@ DLLEXPORT int __cdecl get_rating(uint32_t faction_id, int value);
 DLLEXPORT int __cdecl most_objectives(int *faction_id_most, int *tie_count);
 DLLEXPORT void __cdecl spot_base(int base_id, int faction_id);
 DLLEXPORT int __cdecl base_at(int x, int y);
+DLLEXPORT int __cdecl num_objectives(uint32_t faction_id, BOOL include_pact);
+DLLEXPORT void __cdecl bases_reset(int region, uint32_t faction_id, BOOL skip_occupied);
 DLLEXPORT int __cdecl upgrade_cost(uint32_t faction_id, int proto_id_new, int proto_id_old);
 DLLEXPORT void __cdecl do_upgrade(uint32_t faction_id, int proto_id_new, int proto_id_old);
 DLLEXPORT void __cdecl upgrade_prototypes(int faction_id, uint32_t proto_id);

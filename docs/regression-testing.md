@@ -467,3 +467,32 @@ secret advance is owed; 0x945F40/44/48 are `SkipTechScreenA/B` and `NetUpkeepSta
 names); `tech_advance` reads `BaseIDCurrentSelected` before `bases_reset()` and uses it after.
 Boot test: the 594-redirect exe loaded Council.SAV and advanced the turn 289 -> 290 (38 s,
 every AI faction's research going through the new code) with the game alive.
+
+## Batch 6, 2026-10-16 (Council.SAV, 594-redirect exe)
+
+`num_objectives`, `bases_reset` (base.cpp), `battle_kill`, `battle_kill_stack`,
+`battle_kill_chaff` (veh.cpp), `clear_monuments`, `mon_tech_discovered` (game.cpp) and
+`social_set` (faction.cpp). Trigger group `batch6`, five tests. `num_objectives` runs with six
+synthetic objective units and three objective bases over 32 combinations of the scenario victory
+rules and 8 of the victory state bits. The battle_kill tests go through the exe's `veh_kill()`
+(`VehBattleUnkTgl[0]` set) with an attacker of each faction and none; the first run never reached
+the artifact capture branch (Council.SAV has no artifacts left), so every third victim of
+`battle_kill()` is turned into an Alien Artifact first. Monument tests compare the whole table;
+`social_set` and `bases_reset` (which runs the exe's `base_reset()`) are limited to AI factions
+other than the one at the controls.
+
+| function | inputs | compared | mismatches |
+|---|---|---|---|
+| num_objectives | 8 factions x pact on/off x 32 rule combos x 8 state combos | 4,096 | 0 |
+| battle_kill / _stack / _chaff | every 3rd unit x 9 attackers (every 3rd for the stack variants), synthetic artifacts | 8,128 (9,067 killed, 1,164 captured) | 0 |
+| clear_monuments / mon_tech_discovered | loaded and cleared tables, other factions' flags varied | 37 | 0 |
+| social_set | AI factions x pending choice as loaded / 3 changed categories | 24 | 0 |
+| bases_reset | AI factions x all/one region x occupied-skip on/off | 24 | 0 |
+
+Log: `regression-runs/2026-10-16-council-batch6.log`. Notes: `PlayerData+0x2084` (`unk_101`) counts
+objective units destroyed (`objective_kills`); the monument table at 0x94CA08 is 8 x 0x4F4 bytes of
+21 records of 0x38 (`Monument`/`MonumentRecord` in game.h; record 1 is the tech discovery);
+`social_set` redraws the BaseWin (0x6A7628); `battle_kill` reads `Vehs[-1]` for an attacker of -1
+like best_defender, and the C++ keeps that.
+Boot test: the 602-redirect exe loaded Council.SAV and advanced the turn 289 -> 290 (38 s) with
+the game alive.
