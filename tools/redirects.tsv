@@ -604,3 +604,7 @@
 0x001C3440	?world_fungus@@YAXXZ
 0x001C3F70	?world_shorelines@@YAXXZ
 0x001C4470	?world_rainfall@@YAXXZ
+# --- batch 5: tech awards (tech_advance, tech_research, steal_tech)
+0x001BE530	?tech_advance@@YAHH@Z
+0x001BE940	?tech_research@@YAXHH@Z
+0x0010C340	?steal_tech@@YAHHHH@Z

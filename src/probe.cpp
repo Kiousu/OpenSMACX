@@ -19,6 +19,9 @@
 #include "temp.h"
 #include "probe.h"
 #include "faction.h"
+#include "general.h"
+#include "net.h"
+#include "technology.h"
 #include "base.h"
 #include "game.h"
 #include "map.h"
@@ -43,6 +46,44 @@ BOOL __cdecl act_of_aggression(int faction_id, int faction_id_tgt) {
     }
     treaty_on(faction_id, faction_id_tgt, DTREATY_VENDETTA | DTREATY_UNK_8000);
     return had_agreement;
+}
+
+/*
+Purpose: Take a technology from another faction (probe team theft or a treaty acquisition): the
+         tech is picked with the #STEALTECH / #ACQUIRETECH dialog (automatically for the AI),
+         announced to the victim at the controls, awarded and, for the AI, followed by a base
+         reset. A network client reports the pick to the host instead of applying it.
+Original Offset: 0050C340
+Return Value: Did the attempt come up empty (no tech to take)? true/false
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch5.log)
+*/
+BOOL __cdecl steal_tech(int faction_id, int faction_id_tgt, BOOL is_steal) {
+    if (!faction_id || !faction_id_tgt
+        || (*IsMultiplayerNet && is_human(faction_id) && faction_id != *FactionIDCurrent)) {
+        return false;
+    }
+    int tech_id = tech_pick(faction_id, 0, faction_id_tgt, is_steal ? "STEALTECH" : "ACQUIRETECH");
+    if (tech_id < 0) {
+        tech_id = 9999;
+    }
+    if (*IsMultiplayerNet && faction_id == *FactionIDCurrent) {
+        message_data(0x244C, 0, faction_id, tech_id, faction_id_tgt, 0);
+        return tech_id == 9999;
+    }
+    if (faction_id_tgt == *FactionIDCurrent && tech_id != 9999) {
+        *GenderDefault = Players[faction_id].noun_gender;
+        *PluralityDefault = Players[faction_id].is_noun_plural;
+        parse_says(0, Players[faction_id].noun_faction, -1, -1);
+        stringTemp->str[0] = 0;
+        say_tech(stringTemp->str, tech_id, false);
+        parse_says(1, stringTemp->str, -1, -1);
+        NetMsg_pop(NetMsgVar, 0, "STOLETECH", 5000, 0, NULL);
+    }
+    tech_achieved(faction_id, tech_id, faction_id_tgt, 0);
+    if (!is_human(faction_id) && tech_id != 9999) {
+        bases_reset(-1, faction_id, 0);
+    }
+    return tech_id == 9999;
 }
 
 /*

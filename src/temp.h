@@ -184,6 +184,10 @@ extern func_void *world_rocky_OG;
 extern func_void *world_fungus_OG;
 extern func_void *world_shorelines_OG;
 extern func_void *world_rainfall_OG;
+// batch 5
+extern func_i *tech_advance_OG;
+extern func_xy *tech_research_OG;
+extern func_iii *steal_tech_OG;
 extern func_void *base_psych_OG;
 extern func_social_ai *social_ai_OG;
 extern func_path_sensors *Path_sensors_OG; // Path::sensors()
@@ -306,6 +310,15 @@ extern int *VehUpgradeUnk; // zeroed by upgrade_any_prototypes(), set by upgrade
 typedef int func_veh_init(int, uint32_t, int, int);
 extern func_veh_init *veh_init; // veh_init(proto_id, faction_id, x, y)
 extern func_win_redraw *MapWin_clear_terrain; // MapWin::clear_terrain() on ConsoleVar
+extern func_i *tech_selection; // tech_selection(faction_id): pick the next research goal (dialog for humans)
+typedef int func_tech_pick(int, int, int, LPCSTR);
+extern func_tech_pick *tech_pick; // tech_pick(faction_id, unk, faction_id_from, label)
+extern func_xyi *bases_reset; // bases_reset(region, faction_id, unk): base_reset() on the faction's bases
+extern func_xy *mon_tech_discovered; // mon_tech_discovered(faction_id, tech_id): monument record
+extern func5 *base_compute; // base_compute(force): recompute the current base
+extern int *SkipTechScreenA; // Thinker's names: non-zero skips the tech popups
+extern int *SkipTechScreenB;
+extern int *NetUpkeepState; // 1 while a network game runs its upkeep
 extern void *WorldWinVar; // global WorldWin instance (lower right world map view)
 extern BOOL *TradeMapsRevealedNew; // set by trade_maps() and friends when new tiles were revealed
 typedef void func_tech_ach(int, int, int, int);

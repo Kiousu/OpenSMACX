@@ -443,3 +443,27 @@ The noise constructor's neighbour sum is dead code in the exe (the result is nev
 Boot test: the 591-redirect exe loaded Council.SAV and advanced the turn 289 -> 290 (38 s)
 with the game alive, and a hosted solo game (tools/mp/mpsolo.ps1) generated a new world and
 reached planetfall with the Pirates' starting unit on the map (screenshots tools/mp/wb591_*.png).
+
+## Batch 5, 2026-10-16 (Council.SAV, 591-redirect exe): tech awards
+
+`tech_advance` and `tech_research` (technology.cpp) and `steal_tech` (probe.cpp). Trigger group
+`batch5`. All three end in the exe's `tech_achieved()`, so the tests install the ten byte
+recording stub from the study_artifact test (now a small RAII helper) and compare the recorded
+tech id, the snapshot and the monument table that `mon_tech_discovered()` writes
+(0x94CA08-0x94F1F4). Inputs are limited to AI factions other than the one at the controls:
+`tech_selection()`/`tech_pick()` open the research dialog for humans and the stolen-tech popup
+goes to the victim at the controls.
+
+| function | inputs | compared | mismatches |
+|---|---|---|---|
+| tech_advance | 6 AI factions x goal as loaded / none (tech_selection picks) / tech 5 | 18 (18 awarded) | 0 |
+| tech_research | 6 AI factions x 5 labs amounts (0, 1, half cost, cost+5, 3x cost+7) x as loaded / secret advance pending / no goal | 90 (39 awards) | 0 |
+| steal_tech | 6 AI thieves x 5 victims x steal/acquire | 60 (18 empty) | 0 |
+
+Log: `regression-runs/2026-10-16-council-batch5.log`. Notes: the climactic-battle research bonus
+checks the prerequisite techs of the Psi Gate and the Ascent to Transcendence (facilities 33
+and 102) with the inlined body of `has_tech()`; `PlayerData.flags & 0x40` (`PFLAG_UNK_40`) means a
+secret advance is owed; 0x945F40/44/48 are `SkipTechScreenA/B` and `NetUpkeepState` (Thinker's
+names); `tech_advance` reads `BaseIDCurrentSelected` before `bases_reset()` and uses it after.
+Boot test: the 594-redirect exe loaded Council.SAV and advanced the turn 289 -> 290 (38 s,
+every AI faction's research going through the new code) with the game alive.

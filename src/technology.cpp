@@ -21,6 +21,8 @@
 #include "alpha.h"
 #include "base.h"
 #include "council.h"
+#include "faction.h"
+#include "log.h"
 #include "game.h"
 #include "general.h"
 #include "map.h"
@@ -738,4 +740,99 @@ uint32_t __cdecl tech_rate(uint32_t faction_id) {
         cost += cost / 2; // Slower Rate of Research Discoveries
     }
     return range(cost, 1, 99999999);
+}
+
+/*
+Purpose: Award the technology a faction has been researching (picking one first if none was
+         chosen). In a network game during upkeep, or for another human in hotseat/PBEM, the
+         award is banked instead. AI factions get their bases reset afterwards; the faction at
+         the controls (or anyone in a network game) then picks the next research goal.
+Original Offset: 005BE530
+Return Value: Tech id awarded, or -1 if it was banked or none could be picked
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch5.log)
+*/
+int __cdecl tech_advance(int faction_id) {
+    log_say("Earning a Tech", Players[faction_id].name_leader,
+        PlayersData[faction_id].tech_id_researching, 0, 0);
+    if (*IsMultiplayerNet && *NetUpkeepState == 1) {
+        log_say("Saving Earned Tech for Later", Players[faction_id].name_leader, faction_id, 0, 0);
+        PlayersData[faction_id].earned_techs_saved++;
+        return -1;
+    }
+    if (*IsMultiplayerPBEM && is_human(faction_id) && faction_id != *FactionIDCurrent) {
+        PlayersData[faction_id].earned_techs_saved++;
+        return -1;
+    }
+    int tech_id = PlayersData[faction_id].tech_id_researching;
+    if (tech_id < 0) {
+        tech_id = tech_selection(faction_id);
+        if (tech_id < 0) {
+            return tech_id;
+        }
+    }
+    PlayersData[faction_id].tech_id_researching = -1;
+    tech_achieved(faction_id, tech_id, 0, 0);
+    int base_id = *BaseIDCurrentSelected; // checked before the reset, used after it
+    if (!is_human(faction_id)) {
+        bases_reset(-1, faction_id, 0);
+        if (*TurnCurrentNum && base_id >= 0 && base_id < *BaseCurrentCount) {
+            set_base(*BaseIDCurrentSelected);
+            base_compute(0);
+        }
+    }
+    if ((*IsMultiplayerNet || faction_id == *FactionIDCurrent) && !*SkipTechScreenA
+        && !*SkipTechScreenB && PlayersData[faction_id].tech_id_researching < 0) {
+        PlayersData[faction_id].tech_id_researching = tech_selection(faction_id);
+    }
+    return tech_id;
+}
+
+/*
+Purpose: Add research output to a faction. AI factions research twice as fast during the climactic
+         battle until they hold the techs for the Psi Gate and the Ascent to Transcendence. When
+         the accumulated labs reach the cost the research is awarded (and a pending secret
+         advance as well), and a new goal is picked when none is set.
+Original Offset: 005BE940
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch5.log)
+*/
+void __cdecl tech_research(int faction_id, int labs) {
+    if (labs < 1) {
+        return;
+    }
+    if (!is_human(faction_id) && climactic_battle()
+        && (!has_tech(Facility[FAC_PSI_GATE].preq_tech, faction_id)
+            || !has_tech(Facility[FAC_ASCENT_TO_TRANSCENDENCE].preq_tech, faction_id))) {
+        labs *= 2;
+    }
+    PlayerData *player = &PlayersData[faction_id];
+    player->tech_accumulated += labs;
+    if (*IsMultiplayerNet || player->tech_id_researching >= 0) {
+        int cost = tech_rate(faction_id);
+        if (player->tech_id_researching > MaxTechnologyNum - 1) {
+            player->tech_accumulated += labs;
+        }
+        if (player->tech_accumulated >= cost) {
+            log_say("Researched Advance", Players[faction_id].name_leader, faction_id, 0, 0);
+            int tech_id = tech_advance(faction_id);
+            if (tech_id >= 0) {
+                mon_tech_discovered(faction_id, tech_id);
+            }
+            player->tech_accumulated = 0;
+            player->tech_cost = -1;
+            player->tech_cost = tech_rate(faction_id);
+        }
+        if (player->flags & PFLAG_UNK_40) {
+            log_say("Secret Advance", Players[faction_id].name_leader, faction_id, 0, 0);
+            player->flags &= ~PFLAG_UNK_40;
+            int tech_id = tech_advance(faction_id);
+            if (tech_id >= 0) {
+                mon_tech_discovered(faction_id, tech_id);
+            }
+        }
+    }
+    if (player->tech_accumulated >= 0 && player->tech_id_researching < 0 && *NetUpkeepState != 1
+        && (!is_human(faction_id) || faction_id == *FactionIDCurrent || !*IsMultiplayerPBEM)) {
+        player->tech_id_researching = tech_selection(faction_id);
+    }
 }

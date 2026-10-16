@@ -2768,6 +2768,241 @@ static int test_world_batch4() {
     return total;
 }
 
+// ---------------------------------------------------------------- batch 5: tech awards
+
+// tech_achieved() runs the whole AI tech/design chain over state outside the snapshot, so for the
+// duration of a test its entry point becomes a stub that records the tech id and returns (both
+// sides call the same address). Same technique as the study_artifact test.
+static int TechAchievedRecorded = -2;
+static int TechAchievedCalls = 0;
+struct TechAchievedStub {
+    uint8_t *entry;
+    uint8_t saved_code[10];
+    DWORD old_protect;
+    BOOL ok;
+    TechAchievedStub() : entry((uint8_t *)tech_achieved), old_protect(0), ok(false) {
+        uint8_t stub[10] = { 0x8B, 0x44, 0x24, 0x08, 0xA3, 0, 0, 0, 0, 0xC3 };
+        int *recorder = &TechAchievedRecorded;
+        memcpy(stub + 5, &recorder, 4);
+        if (!VirtualProtect(entry, sizeof(stub), PAGE_EXECUTE_READWRITE, &old_protect)) {
+            logf("cannot unprotect tech_achieved (%u)", GetLastError());
+            return;
+        }
+        memcpy(saved_code, entry, sizeof(stub));
+        memcpy(entry, stub, sizeof(stub));
+        FlushInstructionCache(GetCurrentProcess(), entry, sizeof(stub));
+        ok = true;
+    }
+    ~TechAchievedStub() {
+        if (ok) {
+            memcpy(entry, saved_code, sizeof(saved_code));
+            FlushInstructionCache(GetCurrentProcess(), entry, sizeof(saved_code));
+            VirtualProtect(entry, sizeof(saved_code), old_protect, &old_protect);
+        }
+    }
+};
+
+// mon_tech_discovered() writes the monument table, which the snapshot does not hold
+static uint8_t *const MonumentTable = (uint8_t *)0x0094CA08;
+static const size_t MonumentTableSize = 0x94F1F4 - 0x94CA08;
+
+struct TechCompare {
+    GameSnapshot base, after_orig, after_new;
+    uint8_t *mon_saved, *mon_orig, *mon_new;
+    int tech_orig, tech_new, calls_orig, calls_new;
+    int selected_saved;
+    void init() {
+        snap_alloc(&base); snap_alloc(&after_orig); snap_alloc(&after_new);
+        snap_take(&base);
+        mon_saved = (uint8_t *)malloc(MonumentTableSize);
+        mon_orig = (uint8_t *)malloc(MonumentTableSize);
+        mon_new = (uint8_t *)malloc(MonumentTableSize);
+        memcpy(mon_saved, MonumentTable, MonumentTableSize);
+        selected_saved = *BaseIDCurrentSelected;
+    }
+    void prepare(uint32_t seed) {
+        snap_restore(&base);
+        memcpy(MonumentTable, mon_saved, MonumentTableSize);
+        *BaseIDCurrentSelected = selected_saved;
+        TechAchievedRecorded = -2;
+        TechAchievedCalls = 0;
+        reseed(seed);
+    }
+    void take_orig() { snap_take(&after_orig); memcpy(mon_orig, MonumentTable, MonumentTableSize); tech_orig = TechAchievedRecorded; }
+    void take_new() { snap_take(&after_new); memcpy(mon_new, MonumentTable, MonumentTableSize); tech_new = TechAchievedRecorded; }
+    BOOL differs(const char *label, BOOL detail) {
+        if (tech_orig != tech_new) {
+            if (detail) {
+                logf("  %s: tech_achieved got orig %d new %d", label, tech_orig, tech_new);
+            }
+            return true;
+        }
+        if (snap_differs(&after_orig, &after_new, detail ? label : NULL)) {
+            return true;
+        }
+        size_t d = first_diff(mon_orig, mon_new, MonumentTableSize);
+        if (d != (size_t)-1) {
+            if (detail) {
+                logf("  %s: monument table byte %u differs (orig %02X new %02X)", label, (unsigned)d,
+                    mon_orig[d], mon_new[d]);
+            }
+            return true;
+        }
+        return false;
+    }
+    void done() {
+        prepare(0);
+        snap_free(&base); snap_free(&after_orig); snap_free(&after_new);
+        free(mon_saved); free(mon_orig); free(mon_new);
+    }
+};
+
+static int test_tech_advance() {
+    TechAchievedStub stub;
+    if (!stub.ok) {
+        return 1;
+    }
+    TechCompare tc;
+    tc.init();
+    int compared = 0, mismatches = 0, awarded = 0;
+    char label[80];
+    for (uint32_t f = 1; f < MaxPlayerNum; f++) {
+        if (!quiet_faction(f)) {
+            continue;
+        }
+        for (int variant = 0; variant < 3; variant++) {
+            // as loaded; no research goal set (tech_selection picks one); a goal of 5
+            auto patch = [&]() {
+                if (variant == 1) {
+                    PlayersData[f].tech_id_researching = -1;
+                } else if (variant == 2) {
+                    PlayersData[f].tech_id_researching = 5;
+                }
+            };
+            tc.prepare(f * 11 + variant); patch();
+            int b = tech_advance_OG(f);
+            tc.take_orig();
+            tc.prepare(f * 11 + variant); patch();
+            int a = tech_advance(f);
+            tc.take_new();
+            compared++;
+            awarded += (b >= 0);
+            sprintf_s(label, "tech_advance(%u) variant %d", f, variant);
+            BOOL diff = false;
+            if (a != b) {
+                if (mismatches < MAX_DETAIL) {
+                    logf("  %s: return orig %d new %d", label, b, a);
+                }
+                diff = true;
+            }
+            if (!diff) {
+                diff = tc.differs(label, mismatches < MAX_DETAIL);
+            }
+            if (diff) {
+                mismatches++;
+            }
+        }
+    }
+    tc.done();
+    logf("tech_advance: %d compared (%d awarded), %d mismatches", compared, awarded, mismatches);
+    return mismatches;
+}
+
+static int test_tech_research() {
+    TechAchievedStub stub;
+    if (!stub.ok) {
+        return 1;
+    }
+    TechCompare tc;
+    tc.init();
+    int compared = 0, mismatches = 0, awarded = 0;
+    char label[80];
+    for (uint32_t f = 1; f < MaxPlayerNum; f++) {
+        if (!quiet_faction(f)) {
+            continue;
+        }
+        int cost = tech_rate(f);
+        int labs_list[5] = { 0, 1, cost / 2, cost + 5, 3 * cost + 7 };
+        for (int k = 0; k < 5; k++) {
+            for (int variant = 0; variant < 3; variant++) {
+                // as loaded; with a secret advance pending; with no research goal
+                auto patch = [&]() {
+                    if (variant == 1) {
+                        PlayersData[f].flags |= PFLAG_UNK_40;
+                    } else if (variant == 2) {
+                        PlayersData[f].tech_id_researching = -1;
+                    }
+                };
+                tc.prepare(f * 29 + k * 5 + variant); patch();
+                tech_research_OG(f, labs_list[k]);
+                tc.take_orig();
+                awarded += (tc.tech_orig >= 0);
+                tc.prepare(f * 29 + k * 5 + variant); patch();
+                tech_research(f, labs_list[k]);
+                tc.take_new();
+                compared++;
+                sprintf_s(label, "tech_research(%u, %d) variant %d", f, labs_list[k], variant);
+                if (tc.differs(label, mismatches < MAX_DETAIL)) {
+                    mismatches++;
+                }
+            }
+        }
+    }
+    tc.done();
+    logf("tech_research: %d compared (%d awards by the original), %d mismatches", compared, awarded,
+        mismatches);
+    return mismatches;
+}
+
+static int test_steal_tech() {
+    TechAchievedStub stub;
+    if (!stub.ok) {
+        return 1;
+    }
+    TechCompare tc;
+    tc.init();
+    int compared = 0, mismatches = 0, empty = 0;
+    char label[80];
+    for (uint32_t f = 1; f < MaxPlayerNum; f++) {
+        if (!quiet_faction(f)) {
+            continue;
+        }
+        for (uint32_t tgt = 1; tgt < MaxPlayerNum; tgt++) {
+            // the victim at the controls gets a popup
+            if (tgt == f || tgt == (uint32_t)*FactionIDCurrent) {
+                continue;
+            }
+            for (int is_steal = 0; is_steal < 2; is_steal++) {
+                tc.prepare(f * 17 + tgt * 3 + is_steal);
+                BOOL b = steal_tech_OG(f, tgt, is_steal);
+                tc.take_orig();
+                tc.prepare(f * 17 + tgt * 3 + is_steal);
+                BOOL a = steal_tech(f, tgt, is_steal);
+                tc.take_new();
+                compared++;
+                empty += (b != 0);
+                sprintf_s(label, "steal_tech(%u, %u, %d)", f, tgt, is_steal);
+                BOOL diff = false;
+                if ((a != 0) != (b != 0)) {
+                    if (mismatches < MAX_DETAIL) {
+                        logf("  %s: return orig %d new %d", label, b, a);
+                    }
+                    diff = true;
+                }
+                if (!diff) {
+                    diff = tc.differs(label, mismatches < MAX_DETAIL);
+                }
+                if (diff) {
+                    mismatches++;
+                }
+            }
+        }
+    }
+    tc.done();
+    logf("steal_tech: %d compared (%d came up empty), %d mismatches", compared, empty, mismatches);
+    return mismatches;
+}
+
 static DWORD WINAPI regress_watcher(LPVOID) {
     for (;;) {
         Sleep(1000);
@@ -2854,6 +3089,9 @@ void regress_run() {
         || test_enabled("world_shorelines") || test_enabled("world_rainfall")) {
         total += run_guarded("world_batch4", test_world_batch4);
     }
+    if (test_enabled("batch5", "tech_advance")) total += run_guarded("tech_advance", test_tech_advance);
+    if (test_enabled("batch5", "tech_research")) total += run_guarded("tech_research", test_tech_research);
+    if (test_enabled("batch5", "steal_tech")) total += run_guarded("steal_tech", test_steal_tech);
     if (test_enabled("enemy_capabilities")) total += run_guarded("enemy_capabilities", test_enemy_capabilities);
     if (test_enabled("social_ai")) total += run_guarded("social_ai", test_social_ai);
     if (test_enabled("Path::sensors") || test_enabled("path_sensors")) total += run_guarded("path_sensors", test_path_sensors);

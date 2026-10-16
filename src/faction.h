@@ -123,6 +123,7 @@ enum PlayerFlagsBitfield {
     PFLAG_UNK_4 = 0x4, // set by study_artifact() once PFLAG_UNK_10 is already set
     PFLAG_UNK_10 = 0x10, // set by study_artifact() for the first artifact studied
     PFLAG_SELF_AWARE_COLONY_LOST_MAINT = 0x20, // used to even out lossy integer division
+    PFLAG_UNK_40 = 0x40, // a "secret advance" is owed: tech_research() awards an extra tech and clears it
     PFLAG_MAP_REVEALED = 0x200,
     PFLAG_GENETIC_PLAGUE_INTRO = 0x400, // +1 to defense against after 1st time faction experiences
     PFLAG_BEEN_ELECTED_GOVERNOR = 0x8000, // used to determine whether #GOVERNOR has been displayed
