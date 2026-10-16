@@ -2619,6 +2619,160 @@ BOOL __cdecl ascending(int UNUSED(faction_id)) {
 }
 
 /*
+Purpose: Score every faction (objectives alone when the scenario demands them, otherwise population,
+         techs, secret projects, objectives and the military weighted by weapon strength) and
+         record the scores in the turn history. With is_full set the factions are ranked, the
+         top and bottom human players noted, and the "great satan" is picked: the top faction
+         when it threatens everyone, or every strong human during the climactic battle. Its
+         enemies then roll to betray it.
+Original Offset: 005AC690
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch11.log)
+*/
+void __cdecl rankings(BOOL is_full) {
+    int weapon_best = 1;
+    for (int proto_id = MaxVehProtoFactionNum; proto_id < MaxVehProtoNum; proto_id++) {
+        if ((VehPrototypes[proto_id].flags & PROTO_ACTIVE)
+            && (VehPrototypes[proto_id].flags & PROTO_TYPED_COMPLETE)) {
+            int offense = Weapon[VehPrototypes[proto_id].weapon_id].offense_rating;
+            if (offense >= weapon_best && offense < 99) {
+                weapon_best = offense;
+            }
+        }
+    }
+    for (uint32_t faction_id = 0; faction_id < MaxPlayerNum; faction_id++) {
+        if (is_full) {
+            PlayersData[faction_id].ranking = 0;
+        }
+        if (!faction_id) {
+            continue;
+        }
+        if (!is_alive(faction_id)) {
+            FactionRankingsUnk[faction_id] = 0;
+        } else if ((*ObjectiveReqVictory < 9000 || *ObjectivesSuddenDeathVictory < 9000)
+            && !*ObjectiveAchievePts) {
+            FactionRankingsUnk[faction_id] = num_objectives(faction_id, false) * 10;
+        } else {
+            int score = (PlayersData[faction_id].theory_of_everything + PlayersData[faction_id].pop_total) * 4;
+            for (int tech_id = 0; tech_id < MaxTechnologyNum; tech_id++) {
+                if (has_tech(tech_id, faction_id)) {
+                    score += Technology[tech_id].growth_value + Technology[tech_id].tech_value
+                        + Technology[tech_id].wealth_value + Technology[tech_id].power_value;
+                }
+            }
+            for (uint32_t sp = 0; sp < MaxSecretProjectNum; sp++) {
+                int base_id = (&SecretProject->human_genome_project)[sp];
+                if (base_id >= 0 && Bases[base_id].faction_id_current == faction_id) {
+                    score += 10;
+                }
+            }
+            score += num_objectives(faction_id, false) * *ObjectiveAchievePts;
+            for (int proto_id = 0; proto_id < MaxVehProtoNum; proto_id++) {
+                if (proto_id < MaxVehProtoFactionNum
+                    && !has_tech(VehPrototypes[proto_id].preq_tech, faction_id)) {
+                    continue;
+                }
+                uint32_t count = PlayersData[faction_id].proto_id_active[proto_id];
+                uint32_t value = VehPrototypes[proto_id].cost * count;
+                if (count >= 0xFB || !value) {
+                    continue;
+                }
+                int offense = Weapon[VehPrototypes[proto_id].weapon_id].offense_rating;
+                if (!offense) {
+                    value = (int)value >> 2;
+                } else if (offense < 0) {
+                    value /= 2;
+                } else if (offense <= 98) {
+                    value = (offense / weapon_best) * value;
+                }
+                score += value;
+            }
+            FactionRankingsUnk[faction_id] = score;
+        }
+        if (*TurnCurrentNum < 1000) {
+            FactionTurnMight[*TurnCurrentNum * MaxPlayerNum + faction_id] = (int16_t)FactionRankingsUnk[faction_id];
+        }
+    }
+    if (!is_full) {
+        return;
+    }
+    for (int rank = 7; rank > 0; rank--) {
+        int score_best = -1;
+        uint32_t faction_id_best = 0;
+        for (uint32_t faction_id = 1; faction_id < MaxPlayerNum; faction_id++) {
+            if ((int)FactionRankingsUnk[faction_id] > score_best) {
+                faction_id_best = faction_id;
+                score_best = FactionRankingsUnk[faction_id];
+            }
+        }
+        FactionRankingsUnk[faction_id_best] = -1;
+        PlayersData[faction_id_best].ranking = rank;
+    }
+    for (int i = 0; i < MaxPlayerNum; i++) {
+        FactionRankings[i] = 0;
+    }
+    for (uint32_t faction_id = 1; faction_id < MaxPlayerNum; faction_id++) {
+        if (is_alive(faction_id)) {
+            FactionRankings[PlayersData[faction_id].ranking] = faction_id;
+        }
+    }
+    *RankingFactionIDUnk1 = 0;
+    *RankingFactionIDUnk2 = 0;
+    for (int i = 7; i >= 0; i--) {
+        if (is_human(FactionRankings[i])) {
+            *RankingFactionIDUnk1 = FactionRankings[i];
+            break;
+        }
+    }
+    for (int i = 0; i < MaxPlayerNum; i++) {
+        if (is_human(FactionRankings[i])) {
+            *RankingFactionIDUnk2 = FactionRankings[i];
+            break;
+        }
+    }
+    uint32_t faction_id_satan = great_satan(FactionRankings[7], false) ? FactionRankings[7] : 0;
+    if (climactic_battle()) {
+        for (uint32_t faction_id = 1; faction_id < MaxPlayerNum; faction_id++) {
+            if (is_human(faction_id)
+                && (PlayersData[faction_id].diff_level > 3 || (*GameRules & RULES_INTENSE_RIVALRY))) {
+                faction_id_satan = faction_id;
+            }
+        }
+    }
+    if (!faction_id_satan) {
+        *GameState &= ~STATE_UNK_200;
+        return;
+    }
+    *GameState |= STATE_UNK_200;
+    int vendettas = 0;
+    for (uint32_t faction_id = 1; faction_id < MaxPlayerNum; faction_id++) {
+        if (PlayersData[faction_id].diplo_treaties[faction_id_satan] & DTREATY_VENDETTA) {
+            vendettas++;
+        }
+    }
+    for (uint32_t faction_id = 1; faction_id < MaxPlayerNum; faction_id++) {
+        uint32_t treaties = PlayersData[faction_id].diplo_treaties[faction_id_satan];
+        if (is_human(faction_id) || !(treaties & (DTREATY_PACT | DTREATY_TREATY | DTREATY_TRUCE))
+            || (treaties & (DTREATY_UNK_800 | DTREATY_SHALL_BETRAY | DTREATY_PACT))
+            || ((treaties & DTREATY_UNK_4000000) && !(treaties & DTREATY_UNK_800))) {
+            continue;
+        }
+        int diff_level = (*GameRules & RULES_INTENSE_RIVALRY) ? 5
+            : PlayersData[faction_id_satan].diff_level;
+        uint32_t treaties_satan = PlayersData[faction_id_satan].diplo_treaties[faction_id];
+        int rep = reputation(faction_id_satan, faction_id);
+        BOOL climactic = climactic_battle();
+        uint32_t flags_ext = PlayersData[faction_id].flags_ext;
+        int range = ((vendettas - PlayersData[faction_id].ai_fight) + 2) * 0x100;
+        int roll = (range == 1 || range - 1 < 0) ? 0 : _rand() % range;
+        if (roll < (rep + (climactic ? 4 : 0) + (int)((flags_ext >> 3) & 4)
+            + ((treaties_satan & DTREATY_WANT_REVENGE) ? 4 : 0)) * diff_level) {
+            set_treaty(faction_id, faction_id_satan, DTREATY_SHALL_BETRAY, true);
+        }
+    }
+}
+
+/*
 Purpose: Mark the base and its tile as spotted by the faction and record the population size the
          faction now knows about. The first time the faction at the controls sees the tile
          (outside omniscient view and without a revealed map) the tile is flagged for the redraw.

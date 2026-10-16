@@ -41,6 +41,7 @@ uint32_t *FactionRankings = (uint32_t *)0x009A64EC; // [8]
 uint32_t *RankingFactionIDUnk1 = (uint32_t *)0x009A650C;
 uint32_t *RankingFactionIDUnk2 = (uint32_t *)0x009A6510;
 uint32_t *FactionRankingsUnk = (uint32_t *)0x00945DD8; // [8]
+int16_t *FactionTurnMight = (int16_t *)0x009A68AC; // [1000][8] score of each faction per turn; see rankings()
 int *DiploFriction = (int *)0x0093FA74; // not always bounded, should it be 0-20?
 int *DiploSecondFaction = (int *)0x0093F7CC; // second faction of a joint plan; see suggest_plan()
 int *DiploProtoIDBest = (int *)0x0093F804; // another faction's design wanted most; see scan_prototypes()

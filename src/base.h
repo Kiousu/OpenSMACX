@@ -577,6 +577,7 @@ DLLEXPORT uint32_t __cdecl energy_yield(uint32_t faction_id, int base_id, int x,
                                         BOOL assume_improved);
 DLLEXPORT int __cdecl resource_yield(uint32_t rsc_type, uint32_t faction_id, int base_id, int x, int y);
 DLLEXPORT int __cdecl suggest_plan(uint32_t faction_id, uint32_t faction_id_2);
+DLLEXPORT void __cdecl rankings(BOOL is_full);
 DLLEXPORT int __cdecl upgrade_cost(uint32_t faction_id, int proto_id_new, int proto_id_old);
 DLLEXPORT void __cdecl do_upgrade(uint32_t faction_id, int proto_id_new, int proto_id_old);
 DLLEXPORT void __cdecl upgrade_prototypes(int faction_id, uint32_t proto_id);

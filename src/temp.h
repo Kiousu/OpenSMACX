@@ -222,6 +222,11 @@ extern func_set_course *set_course_OG;
 extern func_xy *enemies_trade_tech_OG;
 typedef void func_iu(int, uint32_t);
 extern func_iu *tech_analysis_OG;
+// batch 11
+typedef void func_b(BOOL);
+extern func_b *rankings_OG;
+typedef uint32_t func_stack_veh(uint32_t, int);
+extern func_stack_veh *stack_veh_OG;
 extern func_void *base_psych_OG;
 extern func_social_ai *social_ai_OG;
 extern func_path_sensors *Path_sensors_OG; // Path::sensors()

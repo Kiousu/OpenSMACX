@@ -546,6 +546,7 @@ extern uint32_t *FactionRankings;
 extern uint32_t *RankingFactionIDUnk1;
 extern uint32_t *RankingFactionIDUnk2;
 extern uint32_t *FactionRankingsUnk;
+extern int16_t *FactionTurnMight; // [1000][8]
 extern int *DiploFriction;
 extern int *DiploSecondFaction;
 extern int *DiploProtoIDBest;

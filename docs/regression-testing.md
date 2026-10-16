@@ -591,3 +591,26 @@ keeps its four give and two get candidates in fifteen scattered globals (named
 `DiploTechGive*`/`DiploTechGet*`/`DiploTechProjectID` in faction.cpp, Thinker's names noted).
 Boot test: the 615-redirect exe loaded Council.SAV and advanced the turn 289 -> 290 (38 s) with
 the game alive.
+
+## Batch 11, 2026-10-16 (Council.SAV, 615-redirect exe)
+
+`rankings` (base.cpp) and `stack_veh` (veh.cpp). Trigger group `batch11`, two snapshot tests.
+`rankings` runs the scoring pass and the full ranking pass, as loaded, under intense rivalry
+and with a sudden-death objective count and no achievement points (the objectives-only
+score), comparing the eight scores, the ranking table, the top/bottom human ids, the current
+turn's row of the might history and the snapshot (the betrayal rolls use the seeded exe
+generator). `stack_veh` runs every transport and every 9th other unit in all three modes, as
+loaded and with the stack mates sentried waiting for a carrier.
+
+| function | inputs | compared | mismatches |
+|---|---|---|---|
+| rankings | score-only / full x 3 rule variants | 6 | 0 |
+| stack_veh | 81 transports + every 9th unit x 3 modes x 2 variants | 1,602 | 0 |
+
+Log: `regression-runs/2026-10-16-council-batch11.log`. Notes: 0x9A68AC is `FactionTurnMight`
+([1000][8] int16, the per-turn score history); `rankings` leaves `FactionRankingsUnk` at -1 for
+ranked factions and may assign rank 7 downward to faction 0 when fewer than seven factions are
+scored (original behaviour, kept); `stack_veh` mode 0 only marks units with `VSTATE_UNK_1`,
+modes 1+ lift and drop them and clear `VSTATE_UNK_10000`.
+Boot test: the 617-redirect exe loaded Council.SAV and advanced the turn 289 -> 290 (38 s) with
+the game alive.

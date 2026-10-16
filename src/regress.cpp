@@ -3905,6 +3905,151 @@ static int test_tech_analysis() {
     return mismatches;
 }
 
+// ---------------------------------------------------------------- batch 11
+
+static int test_rankings() {
+    GameSnapshot base, after_orig, after_new;
+    snap_alloc(&base); snap_alloc(&after_orig); snap_alloc(&after_new);
+    snap_take(&base);
+    uint32_t unk_saved[8], rank_saved[8];
+    memcpy(unk_saved, FactionRankingsUnk, sizeof(unk_saved));
+    memcpy(rank_saved, FactionRankings, sizeof(rank_saved));
+    uint32_t id1_saved = *RankingFactionIDUnk1, id2_saved = *RankingFactionIDUnk2;
+    uint32_t rules_saved = *GameRules;
+    int16_t might_saved[8];
+    int turn = *TurnCurrentNum;
+    memcpy(might_saved, FactionTurnMight + turn * 8, sizeof(might_saved));
+    int compared = 0, mismatches = 0, betrayals = 0;
+    char label[64];
+    for (int full = 0; full < 2; full++) {
+        for (int variant = 0; variant < 3; variant++) {
+            // rules as loaded, intense rivalry, and sudden death objectives with no achieve points
+            uint32_t req_saved = *ObjectiveReqVictory, sudden_saved = *ObjectivesSuddenDeathVictory;
+            uint32_t pts_saved = *ObjectiveAchievePts;
+            auto prepare = [&]() {
+                snap_restore(&base);
+                memcpy(FactionRankingsUnk, unk_saved, sizeof(unk_saved));
+                memcpy(FactionRankings, rank_saved, sizeof(rank_saved));
+                *RankingFactionIDUnk1 = id1_saved;
+                *RankingFactionIDUnk2 = id2_saved;
+                memcpy(FactionTurnMight + turn * 8, might_saved, sizeof(might_saved));
+                *GameRules = variant == 1 ? (rules_saved | RULES_INTENSE_RIVALRY) : rules_saved;
+                *ObjectiveReqVictory = req_saved;
+                *ObjectivesSuddenDeathVictory = variant == 2 ? 50 : sudden_saved;
+                *ObjectiveAchievePts = variant == 2 ? 0 : pts_saved;
+                reseed(full * 7 + variant);
+            };
+            uint32_t unk_o[8], rank_o[8], unk_n[8], rank_n[8];
+            int16_t might_o[8], might_n[8];
+            uint32_t ids_o[2], ids_n[2];
+            prepare();
+            rankings_OG(full);
+            snap_take(&after_orig);
+            memcpy(unk_o, FactionRankingsUnk, 32); memcpy(rank_o, FactionRankings, 32);
+            memcpy(might_o, FactionTurnMight + turn * 8, 16);
+            ids_o[0] = *RankingFactionIDUnk1; ids_o[1] = *RankingFactionIDUnk2;
+            betrayals += first_diff(after_orig.players, base.players, sizeof(base.players)) != (size_t)-1;
+            prepare();
+            rankings(full);
+            snap_take(&after_new);
+            memcpy(unk_n, FactionRankingsUnk, 32); memcpy(rank_n, FactionRankings, 32);
+            memcpy(might_n, FactionTurnMight + turn * 8, 16);
+            ids_n[0] = *RankingFactionIDUnk1; ids_n[1] = *RankingFactionIDUnk2;
+            compared++;
+            sprintf_s(label, "rankings(%d) variant %d", full, variant);
+            BOOL diff = false;
+            if (memcmp(unk_o, unk_n, 32) || memcmp(rank_o, rank_n, 32) || memcmp(might_o, might_n, 16)
+                || memcmp(ids_o, ids_n, 8)) {
+                if (mismatches < MAX_DETAIL) {
+                    logf("  %s: scores/rankings differ (orig score[1] %u rank[7] %u ids %u/%u; new %u %u %u/%u)",
+                        label, unk_o[1], rank_o[7], ids_o[0], ids_o[1], unk_n[1], rank_n[7], ids_n[0], ids_n[1]);
+                }
+                diff = true;
+            }
+            if (!diff) {
+                diff = snap_differs(&after_orig, &after_new, mismatches < MAX_DETAIL ? label : NULL);
+            }
+            if (diff) {
+                mismatches++;
+            }
+            *ObjectiveReqVictory = req_saved;
+            *ObjectivesSuddenDeathVictory = sudden_saved;
+            *ObjectiveAchievePts = pts_saved;
+        }
+    }
+    snap_restore(&base);
+    memcpy(FactionRankingsUnk, unk_saved, sizeof(unk_saved));
+    memcpy(FactionRankings, rank_saved, sizeof(rank_saved));
+    *RankingFactionIDUnk1 = id1_saved;
+    *RankingFactionIDUnk2 = id2_saved;
+    *GameRules = rules_saved;
+    memcpy(FactionTurnMight + turn * 8, might_saved, sizeof(might_saved));
+    snap_free(&base); snap_free(&after_orig); snap_free(&after_new);
+    logf("rankings: %d compared (%d changed player data), %d mismatches", compared, betrayals, mismatches);
+    return mismatches;
+}
+
+static int test_stack_veh() {
+    GameSnapshot base, after_orig, after_new;
+    snap_alloc(&base); snap_alloc(&after_orig); snap_alloc(&after_new);
+    snap_take(&base);
+    int compared = 0, mismatches = 0, transports = 0;
+    char label[64];
+    for (int veh_id = 0; veh_id < base.veh_count; veh_id++) {
+        BOOL transport = veh_cargo(veh_id) != 0 || has_abil(base.vehs[veh_id].proto_id, ABL_CARRIER);
+        // every transport, every 9th other unit
+        if (!transport && veh_id % 9) {
+            continue;
+        }
+        transports += transport;
+        for (int mode = 0; mode < 3; mode++) {
+            for (int variant = 0; variant < 2; variant++) {
+                // as loaded; the stack mates sentried waiting for a carrier
+                auto prepare = [&]() {
+                    snap_restore(&base);
+                    if (variant) {
+                        int i = veh_id;
+                        while (Vehs[i].prev_veh_id_stack >= 0) {
+                            i = Vehs[i].prev_veh_id_stack;
+                        }
+                        for (; i >= 0; i = Vehs[i].next_veh_id_stack) {
+                            if (i != veh_id) {
+                                Vehs[i].order = ORDER_SENTRY_BOARD;
+                                Vehs[i].waypoint_x[0] = (i % 2) ? -1 : (int16_t)veh_id;
+                            }
+                        }
+                    }
+                };
+                prepare();
+                uint32_t r_o = stack_veh_OG(veh_id, mode);
+                snap_take(&after_orig);
+                prepare();
+                uint32_t r_n = stack_veh(veh_id, mode);
+                snap_take(&after_new);
+                compared++;
+                sprintf_s(label, "stack_veh(%d, %d) variant %d", veh_id, mode, variant);
+                BOOL diff = false;
+                if (r_o != r_n) {
+                    if (mismatches < MAX_DETAIL) {
+                        logf("  %s: return orig %u new %u", label, r_o, r_n);
+                    }
+                    diff = true;
+                }
+                if (!diff) {
+                    diff = snap_differs(&after_orig, &after_new, mismatches < MAX_DETAIL ? label : NULL);
+                }
+                if (diff) {
+                    mismatches++;
+                }
+            }
+        }
+    }
+    snap_restore(&base);
+    snap_free(&base); snap_free(&after_orig); snap_free(&after_new);
+    logf("stack_veh: %d compared (%d transports), %d mismatches", compared, transports, mismatches);
+    return mismatches;
+}
+
 static DWORD WINAPI regress_watcher(LPVOID) {
     for (;;) {
         Sleep(1000);
@@ -4009,6 +4154,8 @@ void regress_run() {
     if (test_enabled("batch10", "set_course")) total += run_guarded("set_course", test_set_course);
     if (test_enabled("batch10", "enemies_trade_tech")) total += run_guarded("enemies_trade_tech", test_enemies_trade_tech);
     if (test_enabled("batch10", "tech_analysis")) total += run_guarded("tech_analysis", test_tech_analysis);
+    if (test_enabled("batch11", "rankings")) total += run_guarded("rankings", test_rankings);
+    if (test_enabled("batch11", "stack_veh")) total += run_guarded("stack_veh", test_stack_veh);
     if (test_enabled("enemy_capabilities")) total += run_guarded("enemy_capabilities", test_enemy_capabilities);
     if (test_enabled("social_ai")) total += run_guarded("social_ai", test_social_ai);
     if (test_enabled("Path::sensors") || test_enabled("path_sensors")) total += run_guarded("path_sensors", test_path_sensors);

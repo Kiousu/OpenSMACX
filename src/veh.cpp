@@ -2893,6 +2893,156 @@ int __cdecl stack_fix(int veh_id) {
 }
 
 /*
+Purpose: Load a transport's stack. Units of the transport's faction on the same tile are taken
+         aboard (land units into cargo space, aircraft onto a carrier): in a first pass those
+         already assigned to this transport (sentried with it as their carrier), in a second pass
+         anyone suitable, where an AI unit needs the right regional plan, a human unit must be
+         sentried waiting for a carrier, and at sea everything qualifies. With mode 0 the units
+         are only marked (VSTATE_UNK_1) and the free space is returned; otherwise they are lifted
+         and dropped into the transport. Mode 2 or more at a base, and any mode on a unit that
+         carries nothing, just re-drops the unit itself.
+Original Offset: 005B8EE0
+Return Value: Free cargo space (mode 0) or the veh_drop() result
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch11.log)
+*/
+uint32_t __cdecl stack_veh(uint32_t veh_id, int mode) {
+    if ((int)veh_id < 0) {
+        return mode ? veh_id : 0;
+    }
+    Veh *veh = &Vehs[veh_id];
+    BOOL transport = veh_cargo(veh_id) != 0 || has_abil(veh->proto_id, ABL_CARRIER);
+    if (!transport) {
+        if (!mode) {
+            return 0;
+        }
+    } else {
+        if (*IsMultiplayerNet) {
+            stack_fix(veh_id);
+        }
+        if (!mode) {
+            int i = veh_id;
+            while (Vehs[i].prev_veh_id_stack >= 0) {
+                i = Vehs[i].prev_veh_id_stack;
+            }
+            for (; i >= 0; i = Vehs[i].next_veh_id_stack) {
+                Vehs[i].state &= ~VSTATE_UNK_1;
+            }
+        } else {
+            Map *here = map_loc(veh->x, veh->y);
+            if (mode > 1 && (here->bit & BIT_BASE_IN_TILE) && (here->val2 & 0xF) < 8) {
+                veh_lift(veh_id);
+                return veh_drop(veh_id, -2, -2);
+            }
+            stack_sort(veh_id);
+        }
+        int lat = *MapLatitudeBounds, lon = *MapLongitudeBounds;
+        BOOL at_sea = false;
+        if (veh->y >= 0 && veh->y < lat && veh->x >= 0 && veh->x < lon) {
+            Map *tile = map_loc(veh->x, veh->y);
+            at_sea = (tile->climate & 0xE0) < ALT_BIT_SHORE_LINE
+                && !((tile->bit & BIT_BASE_IN_TILE) && (tile->val2 & 0xF) < 8);
+        }
+        uint8_t faction_id = veh->faction_id;
+        uint8_t triad = Chassis[VehPrototypes[veh->proto_id].chassis_id].triad;
+        int space = veh_cargo(veh_id);
+        int carrier_space = 0;
+        if (has_abil(veh->proto_id, ABL_CARRIER)) {
+            carrier_space = (int)veh_cargo(veh_id) < 1 ? 1 : veh_cargo(veh_id);
+        }
+        if (!faction_id) {
+            space = 99;
+        }
+        int passes = mode < 2 ? 2 : 1;
+        for (int pass = 0; pass < passes; pass++) {
+            int i = veh_id;
+            if (!mode) {
+                while (Vehs[i].prev_veh_id_stack >= 0) {
+                    i = Vehs[i].prev_veh_id_stack;
+                }
+            }
+            while (i >= 0 && (space || carrier_space)) {
+                int next = Vehs[i].next_veh_id_stack;
+                Veh *other = &Vehs[i];
+                uint8_t triad_other = Chassis[VehPrototypes[other->proto_id].chassis_id].triad;
+                BOOL loadable = other->faction_id == faction_id
+                    && ((space && triad_other == TRIAD_LAND && !veh_cargo(i))
+                        || (carrier_space && triad_other == TRIAD_AIR
+                            && !has_abil(other->proto_id, ABL_CARRIER)));
+                if (!loadable) {
+                    i = next;
+                    continue;
+                }
+                BOOL take = false;
+                if (!pass) {
+                    take = other->order == ORDER_SENTRY_BOARD && other->waypoint_x[0] == (int)veh_id;
+                } else {
+                    Map *here = map_loc(veh->x, veh->y);
+                    BOOL no_base = !(here->bit & BIT_BASE_IN_TILE) || (here->val2 & 0xF) > 7
+                        || !(here->val2 & 0xF);
+                    if (triad == TRIAD_AIR && no_base && !(here->bit & BIT_AIRBASE)) {
+                        i = next;
+                        continue;
+                    }
+                    uint8_t faction_id_other = other->faction_id;
+                    take = at_sea;
+                    if (!is_human(faction_id_other)
+                        || ((veh->state & VSTATE_UNK_200) && (other->state & VSTATE_UNK_200))) {
+                        if (other->state & VSTATE_UNK_40000) {
+                            if (!(other->state & VSTATE_UNK_20000)) {
+                                i = next;
+                                continue;
+                            }
+                            take = PlayersData[faction_id_other].region_base_plan[map_loc(other->x, other->y)->region] == 7;
+                        } else {
+                            uint8_t plan = VehPrototypes[other->proto_id].plan;
+                            if (other->order != ORDER_HOLD && plan != PLAN_ALIEN_ARTIFACT
+                                && plan != PLAN_TERRAFORMING) {
+                                if (!at_sea && other->y >= 0 && other->y < lat && other->x >= 0
+                                    && other->x < lon
+                                    && PlayersData[faction_id_other].region_base_plan[map_loc(other->x, other->y)->region] == 2
+                                    && plan < 8) {
+                                    i = next;
+                                    continue;
+                                }
+                                take = true;
+                            }
+                        }
+                    } else if (other->order == ORDER_SENTRY_BOARD) {
+                        take = other->waypoint_x[0] < 0;
+                    }
+                }
+                if (take && (mode || !(other->state & VSTATE_UNK_1))) {
+                    sleep(i);
+                    other->waypoint_x[0] = (int16_t)veh_id;
+                    if (!mode) {
+                        other->state |= VSTATE_UNK_1;
+                    } else {
+                        veh_lift(i);
+                        veh_drop(i, -2, -2);
+                        other->state &= ~VSTATE_UNK_10000;
+                    }
+                    if (carrier_space > 0) {
+                        carrier_space--;
+                    }
+                    if (space > 0) {
+                        space--;
+                    }
+                }
+                i = next;
+            }
+        }
+        if (!mode) {
+            if (!veh_cargo(veh_id)) {
+                space = carrier_space;
+            }
+            return space;
+        }
+    }
+    veh_lift(veh_id);
+    return veh_drop(veh_id, -2, -2);
+}
+
+/*
 Purpose: Kill every unit in the specified unit's stack. veh_kill() compacts the unit array, so the
          next id in the stack is adjusted when it comes after the one just removed.
 Original Offset: 005B9510

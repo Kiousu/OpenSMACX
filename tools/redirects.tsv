@@ -634,3 +634,6 @@
 0x00164890	?set_course@@YAXHEHH@Z
 0x0015D430	?enemies_trade_tech@@YAXHH@Z
 0x0013E800	?tech_analysis@@YAXHI@Z
+# --- batch 11: faction rankings, transport loading
+0x001AC690	?rankings@@YAXH@Z
+0x001B8EE0	?stack_veh@@YAIIH@Z

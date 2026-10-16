@@ -584,6 +584,7 @@ DLLEXPORT void __cdecl unspot_stack(int veh_id);
 DLLEXPORT void __cdecl spot_stack(int veh_id, int faction_id);
 DLLEXPORT void __cdecl spot_loc(int x, int y, uint32_t faction_id);
 DLLEXPORT void __cdecl set_course(int veh_id, uint8_t move_to_ai_type, int x, int y);
+DLLEXPORT uint32_t __cdecl stack_veh(uint32_t veh_id, int mode);
 DLLEXPORT int __cdecl pick_top_veh(int veh_id);
 DLLEXPORT BOOL __cdecl can_convoy(int x, int y);
 DLLEXPORT void __cdecl promote(int veh_id);
