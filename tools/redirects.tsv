@@ -599,3 +599,8 @@
 0x001A6270	?proto_sort@@YAXI@Z
 0x001A63D0	?proto_sort_2@@YAXI@Z
 0x001A9DB0	?yearmotize@@YAXPAD@Z
+# --- batch 4: world generators (rockiness/resources, fungus, shorelines, rainfall)
+0x001C32A0	?world_rocky@@YAXXZ
+0x001C3440	?world_fungus@@YAXXZ
+0x001C3F70	?world_shorelines@@YAXXZ
+0x001C4470	?world_rainfall@@YAXXZ

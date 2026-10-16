@@ -260,6 +260,11 @@ extern int *MapBaseIdClosestSubmergedVeh;
 extern uint32_t *BrushVal1; // TODO: more descriptive variable name
 extern uint32_t *BrushVal2; // TODO: more descriptive variable name
 extern uint32_t *WorldBuildVal1; // TODO: more descriptive variable name
+extern int *MapRainfallChangeBaseID;
+extern int *MapRainfallChangeFactionID;
+extern BOOL *WorldBuildUnk1;
+extern BOOL *WorldBuildUnk2;
+extern uint32_t *TerrainBitsFungusClears;
 
 extern Continent *Continents;
 extern RulesNatural *Natural;
@@ -363,6 +368,10 @@ DLLEXPORT void __cdecl build_hills(int altitude);
 DLLEXPORT void __cdecl world_riverbeds();
 DLLEXPORT BOOL __cdecl world_validate();
 DLLEXPORT void __cdecl world_temperature();
+DLLEXPORT void __cdecl world_rocky();
+DLLEXPORT void __cdecl world_fungus();
+DLLEXPORT void __cdecl world_shorelines();
+DLLEXPORT void __cdecl world_rainfall();
 DLLEXPORT void __cdecl world_analysis();
 DLLEXPORT void __cdecl world_alt_put_detail(uint32_t x, uint32_t y);
 DLLEXPORT void __cdecl world_polar_caps();

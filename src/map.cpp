@@ -55,6 +55,15 @@ int *MapBaseIdClosestSubmergedVeh = (int *)0x009B22BC; // [8]; reset each time g
 uint32_t *BrushVal1 = (uint32_t *)0x009B22B0;
 uint32_t *BrushVal2 = (uint32_t *)0x009B22B8;
 uint32_t *WorldBuildVal1 = (uint32_t *)0x009B22B4;
+int *MapRainfallChangeBaseID = (int *)0x009B22E0; // set by world_rainfall(): base of the faction at the
+                                                  // controls within two tiles of a rainfall change
+int *MapRainfallChangeFactionID = (int *)0x009B22DC; // owner of an AI base on a tile that got drier
+BOOL *WorldBuildUnk1 = (BOOL *)0x009B22E8; // set for the whole of world_build(); world_shorelines()
+                                           // redraws tiles while it is set
+BOOL *WorldBuildUnk2 = (BOOL *)0x009B22EC; // set for the whole of world_build(); alt_set() skips base and
+                                           // unit effects and world_climate() skips reset_territory()
+uint32_t *TerrainBitsFungusClears = (uint32_t *)0x006919EC; // improvements fungus removes: mine,
+                                                            // solar/tidal, farm, soil enricher, forest
 
 Continent *Continents = (Continent *)0x009AA730; // [128]
 RulesNatural *Natural = (RulesNatural *)0x0094ADE0;
@@ -1770,6 +1779,147 @@ void __cdecl build_hills(int altitude) {
 }
 
 /*
+Purpose: Random lattice used by world_erosion() and world_fungus(): a 16x16 grid of values 0-15,
+         wrapped on both axes, sampled with bilinear interpolation. The original is a stack
+         object with two methods; its smoothing pass sums each cell's neighbours and then
+         discards the sum, so only the copy survives.
+Original Offset: 005C1E20 (init), 005C1F20 (at)
+Return Value: n/a / interpolated noise (0-480)
+Status: Complete (verified vs original through world_fungus())
+*/
+struct WorldNoise {
+    int8_t value[17][19];
+    uint8_t unused[0x26];
+    int8_t raw[19][19];
+
+    void init() {
+        for (int row = 0; row < 18; row++) {
+            for (int col = 0; col < 18; col++) {
+                raw[row][col] = (int8_t)(_rand() % 16); // the exe's CRT generator
+            }
+            raw[row][18] = raw[row][0];
+        }
+        for (int col = 0; col < 18; col++) {
+            raw[18][col] = raw[0][col];
+        }
+        for (int row = 0; row < 17; row++) {
+            for (int col = 0; col < 17; col++) {
+                value[row][col] = raw[row][col];
+            }
+        }
+        for (int row = 0; row < 17; row++) {
+            value[row][16] = value[row][0];
+        }
+        for (int col = 0; col < 17; col++) {
+            value[16][col] = value[0][col];
+        }
+    }
+
+    int at(int x, int y) {
+        uint32_t cell_x = ((x - 0x80) >> 8) & 0xF;
+        uint32_t cell_y = ((y - 0x80) >> 8) & 0xF;
+        int frac_x = ((x - 0x80) >> 3) & 0x1F;
+        int frac_y = ((y - 0x80) >> 3) & 0x1F;
+        const int8_t *p = &value[cell_x][cell_y];
+        return ((p[19] * frac_x + p[0] * (32 - frac_x)) * (32 - frac_y)
+            + (p[1] * (32 - frac_x) + p[20] * frac_x) * frac_y) >> 5;
+    }
+};
+
+/*
+Purpose: Set the rockiness of every tile from its mineral value and scatter the energy and mineral
+         resource markers: ocean tiles (and tiles that keep fresh water) get energy, land gets
+         energy on half the jungle tiles, minerals on high or rainy land, nothing elsewhere.
+         Crater and Unity tiles of the fixed landmark sequences are left alone.
+Original Offset: 005C32A0
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch4.log)
+*/
+void __cdecl world_rocky() {
+    for (int y = 0; y < (int)*MapLatitudeBounds; y++) {
+        for (int x = y & 1; x < (int)*MapLongitudeBounds; x += 2) {
+            Map *tile = map_loc(x, y);
+            uint32_t bit2 = tile->bit2;
+            uint32_t code = bit2 >> 24;
+            if ((bit2 & (BIT2_CRATER | BIT2_UNK_80000000)) == BIT2_CRATER && code <= 0x14) {
+                continue;
+            }
+            if ((bit2 & (BIT2_UNITY | BIT2_UNK_80000000)) == BIT2_UNITY
+                && (code <= 8 || code == 0xA || code == 0xC || code == 0xF || code == 0x10
+                    || code == 0x13 || code == 0x14)) {
+                continue;
+            }
+            rocky_set(x, y, (uint8_t)minerals_at(x, y));
+            uint32_t alt_bits = tile->climate & 0xE0;
+            if ((bit2 & BIT2_FRESH) && alt_bits < ALT_BIT_SHORE_LINE) {
+                continue;
+            }
+            uint32_t bit;
+            if (alt_bits < ALT_BIT_SHORE_LINE) {
+                bit = BIT_ENERGY_RSC;
+            } else if ((bit2 & (BIT2_JUNGLE | BIT2_UNK_80000000)) == BIT2_JUNGLE
+                && _rand() % 2 == 0) {
+                bit = BIT_ENERGY_RSC;
+            } else {
+                uint8_t climate = tile->climate;
+                if ((climate & 0xE0) <= ALT_BIT_1_LEVEL_ABOVE_SEA && (climate & 0x18) <= RAINFALL_MOIST) {
+                    continue;
+                }
+                bit = BIT_MINERAL_RSC;
+            }
+            bit_set(x, y, bit, true);
+        }
+        do_all_non_input();
+    }
+}
+
+/*
+Purpose: Spread the initial fungus: tiles whose noise value falls in one of three bands (whose
+         width grows with the native life setting), half of the polar row tiles, and nothing
+         on the fixed volcano landmark tiles. Fungus clears terrain improvements and, in the
+         expansion, one land tile in forty gets a fungal tower.
+Original Offset: 005C3440
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch4.log)
+*/
+void __cdecl world_fungus() {
+    WorldNoise noise;
+    noise.init();
+    int band = (*MapNativeLifeForms - 1) * WorldBuilder->fungus;
+    for (int y = 0; y < (int)*MapLatitudeBounds; y++) {
+        for (int x = y & 1; x < (int)*MapLongitudeBounds; x += 2) {
+            int value = (noise.at(x << 4, y << 4) * 5 + noise.at(x << 8, y << 8) * 2) * 7 >> 8;
+            if (value < 0) {
+                value = 0;
+            } else if (value > 100) {
+                value = 100;
+            }
+            Map *tile = map_loc(x, y);
+            uint32_t bit2 = tile->bit2;
+            if ((bit2 & (BIT2_VOLCANO | BIT2_UNK_80000000)) == BIT2_VOLCANO && (bit2 >> 24) <= 8) {
+                continue;
+            }
+            if ((value < 20 - band || value > band * 2 + 25) && (value < 40 - band || value > band * 2 + 45)
+                && (value < 60 - band || value > band * 2 + 65)) {
+                // outside every band: the polar rows still get fungus on half their tiles
+                if ((y != 0 && y != (int)*MapLatitudeBounds - 1) || _rand() % 2 == 0) {
+                    continue;
+                }
+            }
+            if ((tile->val3 & 0xC0) < 0x80 || (tile->climate & 0xE0) < ALT_BIT_SHORE_LINE) {
+                tile->bit |= BIT_FUNGUS;
+                tile->bit &= ~*TerrainBitsFungusClears;
+                int roll = _rand();
+                if (roll % 40 == 0 && (tile->climate & 0xE0) >= ALT_BIT_SHORE_LINE && *ExpansionEnabled) {
+                    veh_init(BSC_FUNGAL_TOWER, 0, x, y);
+                }
+            }
+        }
+        do_all_non_input();
+    }
+}
+
+/*
 Purpose: Build out the world river beds.
 Original Offset: 005C3680
 Return Value: n/a
@@ -1819,6 +1969,52 @@ void __cdecl world_riverbeds() {
                 riverbed_count++;
             }
         }
+    }
+}
+
+/*
+Purpose: Turn the contour map into altitude levels: every tile gets its natural altitude, then the
+         levels from mountain tops down to ocean shelf are re-applied through world_alt_set() so
+         the neighbours settle. In the scenario editor with omniscient view the tiles are drawn
+         as they change.
+Original Offset: 005C3F70
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch4.log)
+*/
+void __cdecl world_shorelines() {
+    BOOL draw = (*GameState & STATE_OMNISCIENT_VIEW) && *WorldBuildUnk1;
+    for (int y = 0; y < (int)*MapLatitudeBounds; y++) {
+        for (int x = y & 1; x < (int)*MapLongitudeBounds; x += 2) {
+            uint32_t alt = alt_natural(x, y);
+            alt_set(x, y, alt);
+            if (draw) {
+                if (alt > 2) {
+                    int temperature = alt - 3;
+                    if (temperature < 0) {
+                        temperature = 0;
+                    } else if (temperature > 2) {
+                        temperature = 2;
+                    }
+                    temp_set(x, y, (uint8_t)temperature);
+                }
+                draw_tile(x, y, 2);
+            }
+        }
+        do_all_non_input();
+    }
+    for (uint32_t alt = ALT_3_LEVELS_ABOVE_SEA; alt > 1; alt--) {
+        for (int y = 0; y < (int)*MapLatitudeBounds; y++) {
+            for (int x = y & 1; x < (int)*MapLongitudeBounds; x += 2) {
+                if ((uint32_t)(map_loc(x, y)->climate >> 5) == alt) {
+                    world_alt_set(x, y, alt, true);
+                }
+            }
+            do_all_non_input();
+        }
+    }
+    if (draw) {
+        MapWin_clear_terrain(ConsoleVar, 0);
+        draw_map(1);
     }
 }
 
@@ -1895,6 +2091,282 @@ void __cdecl world_temperature() {
                     }
                 }
                 temp_set(x, y, (uint8_t)range(temperature - 1, 0, 2));
+            }
+        }
+        do_all_non_input();
+    }
+}
+
+/*
+Purpose: Recompute the rainfall of every tile. Pass one marks the air flow in each tile's unk_1
+         byte: condensers wet their surroundings (1, or 4 when already wet), ocean breathes moisture
+         eastward (0x80) and dries the tiles upwind of taller water (0x10 cleared), forests on low
+         land wet their eastern neighbours (0x40), and hills and mountains cast rain shadows (0x20
+         to the west, 0x10 to the east) as far as the cloud mass rules allow. Pass two sweeps each
+         row west to east carrying a moisture state across the tiles and writes the rainfall level,
+         remembering the first base of the faction at the controls near a change (and the owner
+         of a base that got drier). Pass three turns arid tiles next to rainy land moist.
+Original Offset: 005C4470
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch4.log)
+*/
+void __cdecl world_rainfall() {
+    int faction_id_current = *FactionIDCurrent;
+    *MapRainfallChangeBaseID = -1;
+    *MapRainfallChangeFactionID = -1;
+    for (uint32_t i = 0; i < *MapArea; i++) {
+        (*MapTiles)[i].unk_1 = 0;
+    }
+    int lat = *MapLatitudeBounds;
+    int lon = *MapLongitudeBounds;
+    int cloud = *MapCloudCover;
+    for (int y = 0; y < lat; y++) {
+        for (int x = y & 1; x < lon; x += 2) {
+            Map *tile = map_loc(x, y);
+            if (tile->bit & BIT_CONDENSER) {
+                for (int i = 0; i < 9; i++) {
+                    int x_radius = xrange(x + RadiusOffsetX[i]);
+                    int y_radius = y + RadiusOffsetY[i];
+                    if (y_radius >= 0 && y_radius < lat && x_radius >= 0 && x_radius < lon) {
+                        Map *wet = map_loc(x_radius, y_radius);
+                        wet->unk_1 |= (wet->unk_1 & 1) ? 4 : 1;
+                    }
+                }
+            }
+            if ((tile->climate & 0xE0) < ALT_BIT_SHORE_LINE) {
+                for (int k = 0; k < 3; k++) {
+                    int x_from = xrange(x - 2 * k);
+                    int x_to = xrange(x - 2 * k - 2);
+                    if (x_to >= 0 && x_to < lon && x_from >= 0 && x_from < lon
+                        && (map_loc(x_from, y)->climate >> 5) <= (map_loc(x_to, y)->climate >> 5)
+                        && k <= cloud) {
+                        map_loc(x_to, y)->unk_1 &= ~0x10;
+                    }
+                }
+                int x_east = xrange(x + 2);
+                if (x_east >= 0 && x_east < lon) {
+                    map_loc(x_east, y)->unk_1 |= 0x80;
+                }
+                if (cloud > 0) {
+                    x_east = xrange(x + 4);
+                    if (x_east >= 0 && x_east < lon) {
+                        Map *east = map_loc(x_east, y);
+                        if ((east->climate & 7) > 1 || cloud > 1) {
+                            east->unk_1 |= 0x80;
+                            if (cloud > 1) {
+                                x_east = xrange(x + 6);
+                                if (x_east >= 0 && x_east < lon && (map_loc(x_east, y)->climate & 7)) {
+                                    map_loc(x_east, y)->unk_1 |= 0x80;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            uint32_t alt = tile->climate >> 5;
+            if (alt < 5) {
+                if (alt > 2 && (tile->bit & BIT_FOREST)) {
+                    for (int y_radius = y - 1; y_radius <= y + 1; y_radius++) {
+                        int x_radius = xrange(x + 1);
+                        if (y_radius >= 0 && y_radius < lat && x_radius >= 0 && x_radius < lon) {
+                            map_loc(x_radius, y_radius)->unk_1 |= 0x40;
+                        }
+                    }
+                    int x_radius = xrange(x + 2);
+                    if (x_radius >= 0 && x_radius < lon) {
+                        map_loc(x_radius, y)->unk_1 |= 0x40;
+                    }
+                }
+            } else {
+                int reach = (int)(alt < 6 ? WorldBuilder->cloudmass_hills : WorldBuilder->cloudmass_peaks)
+                    + (cloud - 1) * (int)WorldBuilder->rainfall_coeff;
+                for (int j = 1; j <= reach; j++) {
+                    int x_west = xrange(x - 2 * j);
+                    if (x_west >= 0 && x_west < lon) {
+                        Map *shade = map_loc(x_west, y);
+                        if ((shade->climate & 0xE0) < ALT_BIT_SHORE_LINE
+                            || alt <= (uint32_t)(shade->climate >> 5)) {
+                            break;
+                        }
+                        shade->unk_1 |= 0x20;
+                    }
+                }
+                for (int j = 1; j <= reach; j++) {
+                    int x_east = xrange(x + 2 * j);
+                    if (x_east >= 0 && x_east < lon) {
+                        Map *shade = map_loc(x_east, y);
+                        if ((shade->climate & 0xE0) < ALT_BIT_SHORE_LINE
+                            || alt <= (uint32_t)(shade->climate >> 5)) {
+                            break;
+                        }
+                        shade->unk_1 |= 0x10;
+                    }
+                }
+            }
+        }
+        do_all_non_input();
+    }
+    // the moisture state carried from tile to tile (and row to row)
+    int shadow = 0;
+    int wet = 0;
+    int dry_run = 0;
+    for (int y = 0; y < lat; y++) {
+        for (int x = y & 1; x < lon; x += 2) {
+            Map *tile = map_loc(x, y);
+            if (y < 1 || y >= lat - 1) {
+                tile->climate &= 0xE7;
+                continue;
+            }
+            uint32_t bit2 = tile->bit2;
+            uint8_t climate = tile->climate;
+            uint32_t temperature = climate & 7;
+            uint32_t alt = climate >> 5;
+            uint8_t flow = tile->unk_1;
+            int rain = 0;
+            if ((bit2 & (BIT2_DUNES | BIT2_UNK_80000000)) == BIT2_DUNES
+                || (bit2 & (BIT2_MESA | BIT2_UNK_80000000)) == BIT2_MESA) {
+                wet = 1;
+            }
+            BOOL shadowed = (flow & 0x20) != 0;
+            if (shadowed) {
+                dry_run = 0;
+                wet = 1;
+            }
+            if (flow & 0x80) {
+                wet = temperature != 1 && temperature != 0;
+                shadow = 0;
+                dry_run = 0;
+                rain = cloud > 0;
+            }
+            if (flow & 0x10) {
+                if (wet) {
+                    wet--;
+                }
+                rain--;
+            }
+            if ((flow & 0x40) && alt < 5) {
+                shadow = 0;
+                dry_run = 0;
+                if (rain < 0) {
+                    rain = 0;
+                }
+            }
+            if (alt < 4) {
+                BOOL decay = false;
+                if (alt < 3) {
+                    dry_run = 0;
+                    wet = 1;
+                    decay = shadow != 0;
+                } else if (!wet) {
+                    decay = shadow != 0;
+                } else if (!shadow) {
+                    dry_run++;
+                    if (dry_run > cloud * 4 + 2) {
+                        wet = 0;
+                        dry_run = 0;
+                    }
+                } else {
+                    decay = true;
+                }
+                if (decay) {
+                    shadow -= 1 + cloud;
+                    if (shadow < 1) {
+                        shadow = 0;
+                        dry_run = 0;
+                        if (cloud || alt < 3) {
+                            wet = 1;
+                        }
+                    }
+                }
+            } else {
+                shadow++;
+                if (shadow > (int)WorldBuilder->rainfall_coeff * cloud * 4 + 1 && wet) {
+                    wet--;
+                }
+            }
+            int rainfall = shadowed ? 1 : 0;
+            if (tile->bit & BIT_RIVER) {
+                if ((x >> 1) % 3 != 0 && rain < 0) {
+                    rain = 0;
+                }
+                wet = 1;
+                dry_run = 0;
+            }
+            if (flow & 2) {
+                rainfall--;
+                wet = 0;
+            } else if (wet) {
+                rain += wet;
+            }
+            if ((int)alt > 4 + (temperature != 0)) {
+                if ((int)(cloud - alt + 5 + temperature) > 1 && rain > 0) {
+                    rainfall++;
+                }
+            } else {
+                rainfall += rain;
+            }
+            if ((bit2 & (BIT2_JUNGLE | BIT2_UNK_80000000)) == BIT2_JUNGLE && alt >= 3 && alt < 6) {
+                int code = abs((int)bit2 >> 24);
+                if (code < 0x31) {
+                    rainfall += 2;
+                } else if (code < 0x51 && alt < 5) {
+                    rainfall += 2;
+                } else {
+                    rainfall++;
+                }
+            }
+            if ((bit2 & (BIT2_DUNES | BIT2_UNK_80000000)) == BIT2_DUNES) {
+                rainfall = 0;
+            }
+            if ((bit2 & (BIT2_UNITY | BIT2_UNK_80000000)) == BIT2_UNITY || rainfall < 0) {
+                rainfall = 0;
+            } else if (rainfall > 2) {
+                rainfall = 2;
+            }
+            if (flow & 1) {
+                wet = 1;
+                if (rainfall < 2) {
+                    rainfall++;
+                }
+            }
+            if (flow & 4) {
+                wet = 1;
+                if (rainfall < 2) {
+                    rainfall++;
+                }
+            }
+            int rainfall_old = (climate & 0x18) >> 3;
+            if (*TurnCurrentNum && rainfall_old != rainfall && *MapRainfallChangeBaseID < 0) {
+                if (rainfall < rainfall_old
+                    && (*MapRainfallChangeFactionID < 0 || !is_human(*MapRainfallChangeFactionID))) {
+                    int base_id = base_find(x, y);
+                    if (base_id >= 0) {
+                        *MapRainfallChangeFactionID = Bases[base_id].faction_id_current;
+                    }
+                }
+                int base_id = base_find(x, y, faction_id_current);
+                if (base_id >= 0 && *BaseFindDist < 3) {
+                    *MapRainfallChangeBaseID = base_id;
+                }
+            }
+            tile->climate = (climate & 0xE7) | (uint8_t)(rainfall << 3);
+        }
+        do_all_non_input();
+    }
+    for (int y = 0; y < lat; y++) {
+        for (int x = y & 1; x < lon; x += 2) {
+            if (!(map_loc(x, y)->climate & 0x18)) {
+                for (int i = 0; i < 8; i++) {
+                    int x_radius = xrange(x + RadiusBaseX[i]);
+                    int y_radius = y + RadiusBaseY[i];
+                    if (y_radius >= 0 && y_radius < lat && x_radius >= 0 && x_radius < lon) {
+                        uint8_t climate = map_loc(x_radius, y_radius)->climate;
+                        if ((climate & 0xE0) >= ALT_BIT_SHORE_LINE && (climate & 0x18) == RAINFALL_RAINY) {
+                            climate_set(x, y, 1);
+                            break;
+                        }
+                    }
+                }
             }
         }
         do_all_non_input();

@@ -70,7 +70,6 @@ extern func7 *popp;
 typedef void *func9(void);
 extern func9 *fixup_landmarks;
 extern func9 *mapwin_terrain_fixup;
-extern func9 *world_rainfall;
 typedef BOOL func11(int, int, int);
 extern func11 *wants_to_attack_;
 typedef int func14(int, int);
@@ -180,6 +179,11 @@ extern func_u32 *proto_sort_OG;
 extern func_u32 *proto_sort_2_OG;
 typedef void func_str(LPSTR);
 extern func_str *yearmotize_OG;
+// batch 4
+extern func_void *world_rocky_OG;
+extern func_void *world_fungus_OG;
+extern func_void *world_shorelines_OG;
+extern func_void *world_rainfall_OG;
 extern func_void *base_psych_OG;
 extern func_social_ai *social_ai_OG;
 extern func_path_sensors *Path_sensors_OG; // Path::sensors()
@@ -299,6 +303,9 @@ extern int *MapWinVehIDSelected; // Console::iUnit, the unit selected in the map
 extern BOOL *MapWinUnitNotViewMode; // Console field after the owner (Thinker: fUnitNotViewMode)
 extern int *MapWinUnkFlag; // Console field +0x23BE4, checked by pick_top_veh()
 extern int *VehUpgradeUnk; // zeroed by upgrade_any_prototypes(), set by upgrade_prototype()
+typedef int func_veh_init(int, uint32_t, int, int);
+extern func_veh_init *veh_init; // veh_init(proto_id, faction_id, x, y)
+extern func_win_redraw *MapWin_clear_terrain; // MapWin::clear_terrain() on ConsoleVar
 extern void *WorldWinVar; // global WorldWin instance (lower right world map view)
 extern BOOL *TradeMapsRevealedNew; // set by trade_maps() and friends when new tiles were revealed
 typedef void func_tech_ach(int, int, int, int);

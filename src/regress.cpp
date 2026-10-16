@@ -2711,6 +2711,63 @@ static int test_yearmotize() {
     return mismatches;
 }
 
+// ---------------------------------------------------------------- batch 4: world generators
+
+struct WorldGenFn {
+    const char *name;
+    func_void *orig;
+    func_void *neu;
+    BOOL empty_world; // the generator calls alt_set()/veh_init(), so run without bases and units
+};
+
+static int test_world_batch4() {
+    static const WorldGenFn fns[] = {
+        { "world_rocky", world_rocky_OG, world_rocky, false },
+        { "world_fungus", world_fungus_OG, world_fungus, true },
+        { "world_shorelines", world_shorelines_OG, world_shorelines, true },
+        { "world_rainfall", world_rainfall_OG, world_rainfall, false },
+    };
+    int total = 0;
+    char label[96];
+    for (size_t i = 0; i < sizeof(fns) / sizeof(fns[0]); i++) {
+        if (!test_enabled("batch4", fns[i].name)) {
+            continue;
+        }
+        SnapHarness h(fns[i].name);
+        if (fns[i].empty_world) {
+            h.empty_world();
+        }
+        int base_saved = *MapRainfallChangeBaseID, faction_saved = *MapRainfallChangeFactionID;
+        int extra_mismatches = 0;
+        for (uint32_t seed = 1; seed <= 3; seed++) {
+            int base_orig = 0, faction_orig = 0, base_new = 0, faction_new = 0;
+            sprintf_s(label, "%s() seed %u", fns[i].name, seed);
+            h.compare(label,
+                [&] {
+                    reseed(seed);
+                    fns[i].orig();
+                    base_orig = *MapRainfallChangeBaseID;
+                    faction_orig = *MapRainfallChangeFactionID;
+                },
+                [&] {
+                    reseed(seed);
+                    fns[i].neu();
+                    base_new = *MapRainfallChangeBaseID;
+                    faction_new = *MapRainfallChangeFactionID;
+                });
+            if (base_orig != base_new || faction_orig != faction_new) {
+                logf("  %s: rainfall change globals differ (orig base %d faction %d, new base %d faction %d)",
+                    label, base_orig, faction_orig, base_new, faction_new);
+                extra_mismatches++;
+            }
+        }
+        *MapRainfallChangeBaseID = base_saved;
+        *MapRainfallChangeFactionID = faction_saved;
+        total += h.report() + extra_mismatches;
+    }
+    return total;
+}
+
 static DWORD WINAPI regress_watcher(LPVOID) {
     for (;;) {
         Sleep(1000);
@@ -2793,6 +2850,10 @@ void regress_run() {
     if (test_enabled("batch3", "promote")) total += run_guarded("promote", test_promote);
     if (test_enabled("batch3", "proto_sort")) total += run_guarded("proto_sort", test_proto_sort);
     if (test_enabled("batch3", "yearmotize")) total += run_guarded("yearmotize", test_yearmotize);
+    if (test_enabled("batch4") || test_enabled("world_rocky") || test_enabled("world_fungus")
+        || test_enabled("world_shorelines") || test_enabled("world_rainfall")) {
+        total += run_guarded("world_batch4", test_world_batch4);
+    }
     if (test_enabled("enemy_capabilities")) total += run_guarded("enemy_capabilities", test_enemy_capabilities);
     if (test_enabled("social_ai")) total += run_guarded("social_ai", test_social_ai);
     if (test_enabled("Path::sensors") || test_enabled("path_sensors")) total += run_guarded("path_sensors", test_path_sensors);

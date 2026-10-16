@@ -417,3 +417,29 @@ blowing up; 0x9A681C is `GameMoreRules` (bit 4 = no Planetary Council) and 0x9A6
 `GovernorFactionID`. The `has_abil()` mask 0x408418 in `upgrade_prototypes` is amphibious, drop
 pod, antigrav struts, artillery and police 2x. Boot test: the 587-redirect exe loaded Council.SAV and advanced the
 turn 289 -> 290 (38 s) with the game alive.
+
+## Batch 4, 2026-10-16 (Council.SAV, 587-redirect exe): world generators
+
+`world_rocky`, `world_fungus`, `world_shorelines` and `world_rainfall` (map.cpp), plus the
+`WorldNoise` lattice the fungus pass samples (a stack object in the original, 0x5C1E20/0x5C1F20,
+not redirected). Trigger group `batch4`; each generator runs from the loaded map with seeds 1-3
+through the snapshot harness, `world_fungus` and `world_shorelines` in empty-world mode because
+they call the exe's `veh_init()` (fungal towers) and `alt_set()`. `world_rainfall` runs on the
+full map so its base_find branch (the two "rainfall changed near a base" globals, compared
+separately) is exercised.
+
+| function | runs | mismatches |
+|---|---|---|
+| world_rocky | 3 seeds, full map | 0 |
+| world_fungus | 3 seeds, empty world | 0 |
+| world_shorelines | 3 seeds, empty world | 0 |
+| world_rainfall | 3 seeds, full map | 0 |
+
+Log: `regression-runs/2026-10-16-council-batch4.log`. Notes: `Map.unk_1` is scratch for the
+rainfall pass (air-flow flags); 0x9B22E0/0x9B22DC (`MapRainfallChangeBaseID`/`...FactionID`) are
+written by `world_rainfall()`; 0x9B22E8/0x9B22EC (`WorldBuildUnk1`/`2`) are set for the whole of
+`world_build()`; 0x6919EC (`TerrainBitsFungusClears`) is the improvement mask fungus removes.
+The noise constructor's neighbour sum is dead code in the exe (the result is never stored).
+Boot test: the 591-redirect exe loaded Council.SAV and advanced the turn 289 -> 290 (38 s)
+with the game alive, and a hosted solo game (tools/mp/mpsolo.ps1) generated a new world and
+reached planetfall with the Pirates' starting unit on the map (screenshots tools/mp/wb591_*.png).
