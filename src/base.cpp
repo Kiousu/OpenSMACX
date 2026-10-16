@@ -41,6 +41,9 @@ uint32_t *BaseCurrentConvoyFrom = (uint32_t *)0x0090E904; // [4]
 uint32_t *BaseCurrentConvoyTo = (uint32_t *)0x0090E93C; // [4]
 int *BaseCurrentGrowthRate = (int *)0x0090E918;
 uint32_t *BaseCurrentVehPacifismCount = (uint32_t *)0x0090E980;
+int *BaseCurrentTalentsStage = (int *)0x0090E984; // [5] talents after each base_psych stage
+int *BaseCurrentDronesStage = (int *)0x0090E920; // [5] drones after each base_psych stage
+int *BaseCurrentSuperDronesStage = (int *)0x0090E94C; // [5] super drones after each stage
 uint32_t *BaseCurrentForcesSupported = (uint32_t *)0x0090E8FC;
 uint32_t *BaseCurrentForcesMaintCost = (uint32_t *)0x0090E91C;
 
@@ -314,7 +317,7 @@ void __cdecl name_base(uint32_t faction_id, LPSTR name_out, BOOL is_final, BOOL 
 Purpose: TBD
 Original Offset: 004E4350
 Return Value: n/a
-Status: Complete - testing
+Status: Complete (verified vs original: docs/regression-runs/2026-10-15-council-full.log)
 */
 void __cdecl base_mark(uint32_t base_id) {
     int x = Bases[base_id].x;
@@ -819,96 +822,246 @@ uint32_t __cdecl black_market(int energy) {
 }
 
 /*
-Purpose: Calculate the current base's psych values.
+Purpose: Reduce the current base's talents/drones/super drones until they fit the citizens that are
+         not specialists. Talents cancel drones (super drones first); with no talents left, drones
+         are shed until they fit and super drones are capped at the drone count.
+Original Offset: n/a (inlined five times in base_psych)
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-15-council-full.log)
+*/
+static void base_psych_fit() {
+    Base *base = *BaseCurrent;
+    while (base->population_size - base->specialist_total
+        < base->super_drone_total + base->talent_total + base->drone_total) {
+        if (!base->talent_total) {
+            if (base->drone_total <= base->population_size - base->specialist_total) {
+                base->super_drone_total = range(base->super_drone_total, 0, base->drone_total);
+                break;
+            }
+            base->drone_total--;
+        } else {
+            base->talent_total--;
+            if (base->super_drone_total) {
+                base->super_drone_total--;
+            } else if (base->drone_total) {
+                base->drone_total--;
+            }
+        }
+    }
+}
+
+/*
+Purpose: Clamp the current base's talents and drones to its population (stages 1-4), fit them and
+         record the running totals for the given psych stage (0-4; shown in the psych screen).
+Original Offset: n/a (inlined in base_psych)
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-15-council-full.log)
+*/
+static void base_psych_stage(uint32_t stage) {
+    Base *base = *BaseCurrent;
+    if (stage) { // stage 0 clamps the drones itself and leaves the talents unclamped
+        base->drone_total = range(base->drone_total, 0, base->population_size);
+        base->talent_total = range(base->talent_total, 0, base->population_size);
+    }
+    base_psych_fit();
+    BaseCurrentTalentsStage[stage] = base->talent_total;
+    BaseCurrentDronesStage[stage] = base->drone_total;
+    BaseCurrentSuperDronesStage[stage] = base->super_drone_total;
+}
+
+/*
+Purpose: Calculate the current base's psych values. With BaseUpkeepStage set to 1 the full
+         talent/police grid is also evaluated and the talent-drone balance of every combination
+         is accumulated into PlayersData.unk_39 for social_ai().
 Original Offset: 004EA540
 Return Value: n/a
-Status: WIP
+Status: Complete (verified vs original: docs/regression-runs/2026-10-15-council-full.log)
 */
 void __cdecl base_psych() {
-    uint32_t faction_id = (*BaseCurrent)->faction_id_current;
-    int pop_size = (*BaseCurrent)->population_size;
-    int drones_base;
-    int talents_base;
+    Base *base = *BaseCurrent;
+    uint32_t faction_id = base->faction_id_current;
+    int pop_size = base->population_size;
     int diff_lvl = is_human(faction_id) ? PlayersData[faction_id].diff_level : DLVL_LIBRARIAN;
-    psych_check(faction_id, &drones_base, &talents_base);
-    if (talents_base) {
-        talents_base = range((*BaseIDCurrentSelected % talents_base
-            + PlayersData[faction_id].current_num_bases - talents_base) 
-            / talents_base, 0, pop_size);
+    int drones_base;
+    int drones_num_bases; // bureaucracy drones from the number of bases (psych_check talents)
+    psych_check(faction_id, &drones_base, &drones_num_bases);
+    if (drones_num_bases) {
+        drones_num_bases = range(((int)PlayersData[faction_id].current_num_bases // signed: can go negative
+            + *BaseIDCurrentSelected % drones_num_bases - drones_num_bases) / drones_num_bases,
+            0, pop_size);
     }
-    int psych_val = range(pop_size - drones_base, 0, pop_size);
-    psych_val += range(((*BaseCurrent)->assimilation_turns_left + 9) / 10,
-        0, (pop_size + diff_lvl - 2) / 4);
+    int drones = range(pop_size - drones_base, 0, pop_size);
+    drones += range((pop_size + diff_lvl - 2) / 4, 0, (base->assimilation_turns_left + 9) / 10);
     if (Players[faction_id].rule_drone) {
-        psych_val += pop_size / Players[faction_id].rule_drone;
+        drones += pop_size / Players[faction_id].rule_drone;
     }
-    int psych_val_2 = 0;
+    int talents = 0;
     if (Players[faction_id].rule_talent) {
-        psych_val_2 += (Players[faction_id].rule_talent + pop_size - 1) 
-            / Players[faction_id].rule_talent;
+        talents = (Players[faction_id].rule_talent + pop_size - 1) / Players[faction_id].rule_talent;
     }
     for (int i = 0; i < Players[faction_id].faction_bonus_count; i++) {
         if (Players[faction_id].faction_bonus_id[i] == RULE_NODRONE) {
-            psych_val -= Players[faction_id].faction_bonus_val1[i];
+            drones -= Players[faction_id].faction_bonus_val1[i];
+            if (drones < 0) {
+                drones = 0;
+            }
             break;
         }
     }
-    int drones = has_fac_built(FAC_GENEJACK_FACTORY) ? Rules->drones_genejack_factory : 0;
-    if (has_fac_built(FAC_CHILDREN_CRECHE)) {
-        drones -= 2;
+    int drones_fac = has_fac_built(FAC_GENEJACK_FACTORY) ? Rules->drones_genejack_factory : 0;
+    if (has_fac_built(FAC_RECREATION_COMMONS)) {
+        drones_fac -= 2;
     }
     if ((has_fac_built(FAC_NETWORK_NODE) && has_project(SP_VIRTUAL_WORLD, faction_id))
         || has_fac_built(FAC_HOLOGRAM_THEATRE)) {
-        drones -= 2;
+        drones_fac -= 2;
     }
     if (has_project(SP_PLANETARY_TRANS_SYS, faction_id) && pop_size <= 3) {
-        drones--;
+        drones_fac--;
     }
     int talents_fac = has_fac_built(FAC_PARADISE_GARDEN) ? 2 : 0;
     if (has_fac_built(FAC_RESEARCH_HOSPITAL)) {
-        drones--;
+        drones_fac--;
     }
     if (has_fac_built(FAC_NANOHOSPITAL)) {
-        drones--;
+        drones_fac--;
     }
     int talents_sp = has_project(SP_HUMAN_GENOME_PROJ, faction_id) ? 1 : 0;
     if (has_project(SP_CLINICAL_IMMORTALITY, faction_id)) {
-        talents_sp += 2; // TODO: eval - bug fix per manual: one extra talent at every base
+        talents_sp += 2; // original gives two talents; the manual says one
     }
     BOOL has_punishment_sphere = has_fac_built(FAC_PUNISHMENT_SPHERE);
     for (int i = 8; i >= 0; i--) {
-        int val;
+        int talent_val;
         if (!i) {
-            val = PlayersData[faction_id].soc_effect_pending.talent;
-        } else if(*BaseUpkeepStage != 1) {
-            break;
+            talent_val = PlayersData[faction_id].soc_effect_pending.talent;
+        } else if (*BaseUpkeepStage == 1) {
+            talent_val = i - 4;
         } else {
-            val = i - 4;
+            continue;
         }
         for (int j = 9; j >= 0; j--) {
-            int val_2;// , k;
+            int police_val;
             if (!j) {
-                val_2 = PlayersData[faction_id].soc_effect_pending.police
-                    + has_fac_built(FAC_BROOD_PIT) * 2;
                 if (i) {
-                    break;
+                    continue; // the grid pass skips the current police value
                 }
-            } else if (*BaseUpkeepStage != 1 || !i) {
-                break;
+                police_val = PlayersData[faction_id].soc_effect_pending.police
+                    + has_fac_built(FAC_BROOD_PIT) * 2;
+            } else if (*BaseUpkeepStage == 1 && i) {
+                police_val = j - 6;
             } else {
-                val_2 = j - 6;
-                //val2 = val;
+                continue; // the current-value pass only runs j == 0
             }
-            val_2 = range(val_2 + 2, 0, 4);
-            if (val_2 > 1) {
-                val_2--;
+            int police_count = range(police_val + 2, 0, 4);
+            if (police_count >= 2) {
+                police_count--;
             }
-            (*BaseCurrent)->drone_total = drones_base;
-            (*BaseCurrent)->talent_total = talents_base;
-            if (val_2 >= 0) {
-                (*BaseCurrent)->talent_total += val_2;
+            // stage 0: social engineering talent effect and bureaucracy
+            base->drone_total = drones;
+            base->talent_total = talents;
+            if (talent_val < 0) {
+                base->drone_total -= talent_val;
             } else {
-                (*BaseCurrent)->drone_total -= val_2;
+                base->talent_total += talent_val;
+            }
+            base->drone_total = range(base->drone_total, 0, pop_size) + drones_num_bases;
+            base->super_drone_total = range(base->drone_total - pop_size, 0, pop_size);
+            base->drone_total = range(base->drone_total, 0, pop_size);
+            base_psych_stage(0);
+            // stage 1: psych energy allocation
+            base->talent_total += base->psych_total / 2;
+            base_psych_stage(1);
+            // stage 2: facilities
+            base->drone_total += drones_fac;
+            base->talent_total += talents_fac;
+            base_psych_stage(2);
+            // stage 3: police units and pacifism
+            if (police_count > 0) {
+                int policed = 0;
+                if (has_project(SP_SELF_AWARE_COLONY, faction_id)) {
+                    policed = 1;
+                    if (base->drone_total) {
+                        base->drone_total--;
+                    }
+                    if (police_val > 2 && base->drone_total) {
+                        base->drone_total--;
+                    }
+                }
+                // pass 0 counts the police-2x and native police units first, pass 1 the rest
+                for (int pass = 0; pass < 2 && policed < police_count; pass++) {
+                    for (int veh_id = stack_fix(veh_at(base->x, base->y)); veh_id >= 0;
+                        veh_id = Vehs[veh_id].next_veh_id_stack) {
+                        int proto_id = Vehs[veh_id].proto_id;
+                        if (VehPrototypes[proto_id].plan > PLAN_RECONNAISANCE) {
+                            continue;
+                        }
+                        BOOL is_native_police = (Players[faction_id].rule_flags & RFLAG_WORMPOLICE)
+                            && proto_id < MaxVehProtoFactionNum
+                            && (Weapon[VehPrototypes[proto_id].weapon_id].offense_rating < 0
+                                || proto_id == BSC_SPORE_LAUNCHER)
+                            && Chassis[VehPrototypes[proto_id].chassis_id].triad == TRIAD_LAND;
+                        BOOL is_police_2x = has_abil(proto_id, ABL_POLICE_2X);
+                        if ((is_police_2x || is_native_police) != (pass == 0)) {
+                            continue;
+                        }
+                        if (base->drone_total) {
+                            base->drone_total--;
+                        }
+                        if (is_police_2x && base->drone_total) {
+                            base->drone_total--;
+                        }
+                        if (police_val > 2 && base->drone_total) {
+                            base->drone_total--;
+                        }
+                        if (is_native_police && base->drone_total) {
+                            base->drone_total--;
+                        }
+                        if (++policed >= police_count) {
+                            break;
+                        }
+                    }
+                }
+            }
+            if (police_val < -2) {
+                if (police_val == -4) {
+                    base->drone_total += *BaseCurrentVehPacifismCount;
+                } else if (police_val == -3) {
+                    if (*BaseCurrentVehPacifismCount > 1) {
+                        base->drone_total += *BaseCurrentVehPacifismCount - 1;
+                    }
+                } else {
+                    base->drone_total += *BaseCurrentVehPacifismCount * 2;
+                }
+            }
+            base_psych_stage(3);
+            // stage 4: secret projects, punishment sphere and nerve stapling
+            base->talent_total += talents_sp;
+            if (has_project(SP_LONGEVITY_VACCINE, faction_id)) {
+                if (PlayersData[faction_id].soc_category_pending.economics == SE_PLANNED) {
+                    base->drone_total--;
+                }
+                if (PlayersData[faction_id].soc_category_pending.economics != SE_FREE_MARKET) {
+                    base->drone_total--;
+                }
+            }
+            if (has_punishment_sphere || base->nerve_staple_turns_left) {
+                base->drone_total = 0;
+                base->talent_total = 0;
+            }
+            base_psych_stage(4);
+            if (i) {
+                int balance = base->talent_total - base->drone_total;
+                if (balance > 0 && (base->drone_total || base->talent_total * 2 < pop_size)) {
+                    balance /= 2;
+                }
+                if (balance < 0) {
+                    balance -= pop_size;
+                    if (pop_size < 6) {
+                        balance *= 2;
+                    }
+                }
+                PlayersData[faction_id].unk_39[i - 1][j - 1] += balance;
             }
         }
     }
@@ -1214,7 +1367,7 @@ Purpose: Determine the value of the specified base between the requester and the
          This valuation could be triggered either from a gift, a threat or a base swap.
 Original Offset: 0054CB50
 Return Value: Value of base or -1 for invalid requests
-Status: Complete - testing
+Status: Complete (verified vs original: docs/regression-runs/2026-10-15-council-full.log)
 */
 int __cdecl value_of_base(int base_id, uint32_t faction_id_req, uint32_t faction_id_res, 
                           uint32_t overmatch_deg, BOOL tgl) {

@@ -1,0 +1,31 @@
+OpenSMACX regression run: turn 289, 281 bases, 1741 vehs, filter='world_borehole'
+world_raise_alt: 27 compared (24 changed state), 0 mismatches
+world_lower_alt: 27 compared (24 changed state), 0 mismatches
+world_crater: 27 compared (27 changed state), 0 mismatches
+world_monsoon: 27 compared (27 changed state), 0 mismatches
+world_sargasso: 27 compared (27 changed state), 0 mismatches
+world_ruin: 27 compared (27 changed state), 0 mismatches
+world_dune: 27 compared (27 changed state), 0 mismatches
+world_diamond: 27 compared (27 changed state), 0 mismatches
+world_fresh: 27 compared (14 changed state), 0 mismatches
+world_borehole: 27 compared (27 changed state), 0 mismatches
+world_temple: 27 compared (27 changed state), 0 mismatches
+world_unity: 27 compared (27 changed state), 0 mismatches
+world_fossil: 27 compared (27 changed state), 0 mismatches
+world_canyon: 27 compared (27 changed state), 0 mismatches
+world_mesa: 27 compared (27 changed state), 0 mismatches
+world_ridge: 27 compared (27 changed state), 0 mismatches
+world_geothermal: 27 compared (27 changed state), 0 mismatches
+world_volcano: 54 compared (54 changed state), 0 mismatches
+world_alt_set: 224 compared (224 changed state), 0 mismatches
+brush: 80 compared (73 changed state), 0 mismatches
+paint_land: 32 compared (32 changed state), 0 mismatches
+build_continent: 8 compared (8 changed state), 0 mismatches
+build_hills: 6 compared (4 changed state), 0 mismatches
+world_riverbeds: 3 compared (3 changed state), 0 mismatches
+world_temperature: 3 compared (3 changed state), 0 mismatches
+world_analysis: 3 compared (3 changed state), 0 mismatches
+world_polar_caps: 3 compared (3 changed state), 0 mismatches
+world_linearize_contours: 3 compared (3 changed state), 0 mismatches
+world_landmarks: 3 compared (3 changed state), 0 mismatches
+TOTAL mismatches: 0 (297 ms)

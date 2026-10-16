@@ -554,3 +554,9 @@
 0x001FCBB0	?do_all_draws@@YAXXZ
 0x001FCC20	?do_keyboard@@YAHXZ
 0x001FCC70	?do_all_keyboard@@YAXXZ
+# --- BASE: psych (talent/drone/super drone totals + social_ai talent table) ---
+0x000EA540	?base_psych@@YAXXZ
+# --- VEH/FACTION: combat (battle_compute, best_defender, wants_to_attack) ---
+0x00101DA0	?battle_compute@@YAXHHPAH0H@Z
+0x001044D0	?best_defender@@YAIIHH@Z
+0x0015BC80	?wants_to_attack@@YAHIIH@Z

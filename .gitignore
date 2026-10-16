@@ -270,3 +270,6 @@ __pycache__/
 *.pyc
 /#ImportAdder
 /tools/terranx_original.exe
+
+# regression harness logs that Status lines refer to
+!docs/regression-runs/*.log

@@ -395,7 +395,7 @@ void Path::continents() {
  Purpose: TBD
  Original Offset: 0059CCA0
  Return Value: true/false
- Status: Complete - testing
+ Status: Complete (verified vs original: docs/regression-runs/2026-10-15-council-full.log)
 */
 BOOL Path::sensors(uint32_t faction_id, int *x_sensor, int *y_sensor) {
     BOOL has_sensor = true; // cleared once a candidate tile is recorded

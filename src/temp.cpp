@@ -781,7 +781,7 @@ int *ControlTurnA = (int *)0x009B2068;
 Purpose: Process non-input related message.
 Original Offset: 005FCA30
 Return Value: Is message available? true/false
-Status: Complete - testing
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-full.log, message-level test)
 */
 BOOL __cdecl do_non_input() {
     do_video();
@@ -816,7 +816,7 @@ BOOL __cdecl do_non_input() {
 Purpose: Process all non-input related messages.
 Original Offset: 005FCB20
 Return Value: n/a
-Status: Complete - testing
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-full.log, message-level test)
 */
 void __cdecl do_all_non_input() {
     do {
@@ -831,7 +831,7 @@ void __cdecl do_all_non_input() {
 Purpose: Process draw related message.
 Original Offset: 005FCB60
 Return Value: Is message available? true/false
-Status: Complete - testing
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-full.log, message-level test)
 */
 BOOL __cdecl do_draw() {
     do_video();
@@ -850,7 +850,7 @@ BOOL __cdecl do_draw() {
 Purpose: Process all draw related messages.
 Original Offset: 005FCBB0
 Return Value: n/a
-Status: Complete - testing
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-full.log, message-level test)
 */
 void __cdecl do_all_draws() {
     do {
@@ -863,7 +863,7 @@ void __cdecl do_all_draws() {
 Purpose: Process keyboard related message.
 Original Offset: 005FCC20
 Return Value: Is message available? true/false
-Status: Complete - testing
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-full.log, message-level test)
 */
 BOOL __cdecl do_keyboard() {
     do_video();
@@ -882,7 +882,7 @@ BOOL __cdecl do_keyboard() {
 Purpose: Process all keyboard related messages.
 Original Offset: 005FCC70
 Return Value: n/a
-Status: Complete - testing
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-full.log, message-level test)
 */
 void __cdecl do_all_keyboard() {
     do {

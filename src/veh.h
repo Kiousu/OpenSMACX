@@ -492,7 +492,7 @@ extern uint32_t *VehBattleModCount;
 extern BOOL *VehBattleUnkTgl;
 extern int *VehBattleModifier;
 extern LPSTR *VehBattleDisplay;
-extern LPSTR VehBattleDisplayTerrain;
+extern LPSTR *VehBattleDisplayTerrain;
 
 DLLEXPORT void __cdecl say_morale(LPSTR morale_output, uint32_t veh_id, int faction_id_vs_native);
 DLLEXPORT void __cdecl say_morale(uint32_t veh_id, int faction_id_vs_native);

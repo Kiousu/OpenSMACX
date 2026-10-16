@@ -1,0 +1,110 @@
+OpenSMACX regression run: turn 289, 281 bases, 1741 vehs, filter=''
+value_of_base: 82614 compared, 0 mismatches, unstable orig=0 new=0
+  best_defender(2, -1, 0): new=1714 orig=601
+  best_defender(2, 81, 0): new=1714 orig=601
+  best_defender(2, 108, 0): new=1714 orig=601
+  best_defender(2, 135, 0): new=1714 orig=601
+  best_defender(2, 270, 0): new=1714 orig=601
+  best_defender(2, 297, 0): new=1714 orig=601
+  best_defender(2, 351, 0): new=1714 orig=601
+  best_defender(2, 405, 0): new=1714 orig=601
+  best_defender(2, 486, 0): new=1714 orig=601
+  best_defender(2, 513, 0): new=1714 orig=601
+  best_defender(2, 540, 0): new=1714 orig=601
+  best_defender(2, 567, 0): new=1714 orig=601
+  best_defender(2, 594, 0): new=1714 orig=601
+  best_defender(2, 621, 0): new=1714 orig=601
+  best_defender(2, 702, 0): new=1714 orig=601
+  best_defender(2, 729, 0): new=1714 orig=601
+  best_defender(2, 783, 0): new=1714 orig=601
+  best_defender(2, 810, 0): new=1714 orig=601
+  best_defender(2, 837, 0): new=1714 orig=601
+  best_defender(2, 864, 0): new=1714 orig=601
+  best_defender(2, 918, 0): new=1714 orig=601
+  best_defender(2, 999, 0): new=1714 orig=601
+  best_defender(2, 1053, 0): new=1714 orig=601
+  best_defender(2, 1107, 0): new=1714 orig=601
+  best_defender(2, 1215, 0): new=1714 orig=601
+best_defender: 229682 compared, 40131 mismatches, unstable orig=0 new=0
+  battle_compute(0, 36, type 0): new off=1152 def=576 mods=0/3; orig off=1152 def=1350 mods=0/3; display same morale same
+  battle_compute(0, 36, type 1): new off=8 def=8 mods=0/0; orig off=480 def=1800 mods=1/2; display same morale same
+  battle_compute(0, 36, type 2): new off=1152 def=864 mods=1/0; orig off=1440 def=864 mods=1/0; display same morale same
+  battle_compute(0, 72, type 0): new off=384 def=0 mods=0/2; orig off=384 def=168 mods=0/2; display same morale same
+  battle_compute(0, 72, type 1): new off=8 def=8 mods=0/0; orig off=384 def=168 mods=0/2; display same morale same
+  battle_compute(0, 108, type 0): new off=1728 def=448 mods=1/1; orig off=1728 def=672 mods=1/1; display same morale same
+  battle_compute(0, 108, type 1): new off=8 def=8 mods=0/0; orig off=480 def=896 mods=1/0; display same morale same
+  battle_compute(0, 108, type 2): new off=1152 def=672 mods=1/0; orig off=1440 def=672 mods=1/0; display same morale same
+  battle_compute(0, 144, type 0): new off=1152 def=0 mods=0/4; orig off=1152 def=525 mods=0/4; display same morale same
+  battle_compute(0, 144, type 1): new off=8 def=8 mods=0/0; orig off=384 def=262 mods=0/4; display same morale same
+  battle_compute(0, 144, type 2): new off=1152 def=1008 mods=0/2; orig off=1152 def=1260 mods=0/2; display same morale same
+  battle_compute(0, 180, type 0): new off=1152 def=0 mods=0/4; orig off=1152 def=525 mods=0/4; display same morale same
+  battle_compute(0, 180, type 1): new off=8 def=8 mods=0/0; orig off=384 def=262 mods=0/4; display same morale same
+  battle_compute(0, 180, type 2): new off=1152 def=1008 mods=0/2; orig off=1152 def=1260 mods=0/2; display same morale same
+  battle_compute(0, 216, type 0): new off=1152 def=0 mods=0/2; orig off=1152 def=320 mods=0/2; display same morale same
+  battle_compute(0, 216, type 1): new off=8 def=8 mods=0/0; orig off=384 def=240 mods=0/3; display same morale same
+  battle_compute(0, 252, type 0): new off=1152 def=1056 mods=0/4; orig off=1152 def=2062 mods=0/4; display same morale same
+  battle_compute(0, 252, type 1): new off=8 def=8 mods=0/0; orig off=384 def=19800 mods=0/3; display same morale same
+  battle_compute(0, 288, type 0): new off=1152 def=0 mods=0/4; orig off=1152 def=675 mods=0/4; display same morale same
+  battle_compute(0, 288, type 1): new off=8 def=8 mods=0/0; orig off=384 def=337 mods=0/4; display same morale same
+  battle_compute(0, 324, type 0): new off=1152 def=0 mods=0/2; orig off=1152 def=280 mods=0/2; display same morale same
+  battle_compute(0, 324, type 1): new off=8 def=8 mods=0/0; orig off=384 def=210 mods=0/3; display same morale same
+  battle_compute(0, 324, type 2): new off=1152 def=672 mods=0/1; orig off=1152 def=840 mods=0/1; display same morale same
+  battle_compute(0, 360, type 0): new off=384 def=0 mods=0/1; orig off=384 def=112 mods=0/1; display same morale same
+  battle_compute(0, 360, type 1): new off=8 def=8 mods=0/0; orig off=384 def=112 mods=0/1; display same morale same
+battle_compute: 7056 compared, 5148 mismatches (orig-unstable pairs excluded), unstable orig=0 new=0; by type: 2118/2352/678
+  wants_to_attack(1, 7, -1): new=0 orig=1
+  wants_to_attack(1, 7, 0): new=0 orig=1
+  wants_to_attack(1, 7, 1): new=0 orig=1
+  wants_to_attack(1, 7, 2): new=0 orig=1
+  wants_to_attack(1, 7, 3): new=0 orig=1
+  wants_to_attack(1, 7, 4): new=0 orig=1
+  wants_to_attack(1, 7, 5): new=0 orig=1
+  wants_to_attack(1, 7, 6): new=0 orig=1
+  wants_to_attack(1, 7, 7): new=0 orig=1
+wants_to_attack: 378 compared, 9 mismatches, unstable orig=3 new=0
+world_validate: 1 compared, 0 mismatches (new=1 orig=1)
+treaty_on: 1680 compared (1470 changed state), 0 mismatches
+treaty_off: 1680 compared (448 changed state), 0 mismatches
+agenda_on: 1680 compared (1634 changed state), 0 mismatches
+agenda_off: 1680 compared (122 changed state), 0 mismatches
+trade_maps: 42 compared (42 changed state), 0 mismatches
+do_withdrawal: 42 compared (14 moved units, 36 moves total), 0 mismatches
+base_mark: 281 compared (244 changed state), 0 mismatches
+base_psych: 562 compared (292 changed state), 0 mismatches
+enemy_capabilities: 8 compared (3 changed state), 0 mismatches
+  social_ai(5, AI self): PlayerData[5] +0x208C differs (orig 34 new 33)
+social_ai: 188 compared (4 changed state), 1 mismatches
+Path::sensors: 71 of 72 calls found a site
+Path::sensors: 72 compared (71 changed state), 0 mismatches
+world_raise_alt: 27 compared (24 changed state), 0 mismatches
+world_lower_alt: 27 compared (24 changed state), 0 mismatches
+world_crater: 27 compared (27 changed state), 0 mismatches
+world_monsoon: 27 compared (27 changed state), 0 mismatches
+world_sargasso: 27 compared (27 changed state), 0 mismatches
+world_ruin: 27 compared (27 changed state), 0 mismatches
+world_dune: 27 compared (27 changed state), 0 mismatches
+world_diamond: 27 compared (27 changed state), 0 mismatches
+world_fresh: 27 compared (14 changed state), 0 mismatches
+  world_borehole(43, 5): Map tile 149 +0x1 differs (orig 3D new 4E)
+  world_borehole(43, 53): Map tile 215 +0x8 differs (orig 00 new 01)
+world_borehole: 27 compared (27 changed state), 2 mismatches
+world_temple: 27 compared (27 changed state), 0 mismatches
+world_unity: 27 compared (27 changed state), 0 mismatches
+world_fossil: 27 compared (27 changed state), 0 mismatches
+world_canyon: 27 compared (27 changed state), 0 mismatches
+world_mesa: 27 compared (27 changed state), 0 mismatches
+world_ridge: 27 compared (27 changed state), 0 mismatches
+world_geothermal: 27 compared (27 changed state), 0 mismatches
+world_volcano: 54 compared (54 changed state), 0 mismatches
+world_alt_set: 224 compared (224 changed state), 0 mismatches
+brush: 80 compared (73 changed state), 0 mismatches
+paint_land: 32 compared (32 changed state), 0 mismatches
+build_continent: 8 compared (8 changed state), 0 mismatches
+build_hills: 6 compared (4 changed state), 0 mismatches
+world_riverbeds: 3 compared (3 changed state), 0 mismatches
+world_temperature: 3 compared (3 changed state), 0 mismatches
+world_analysis: 3 compared (3 changed state), 0 mismatches
+world_polar_caps: 3 compared (3 changed state), 0 mismatches
+world_linearize_contours: 3 compared (3 changed state), 0 mismatches
+world_landmarks: 3 compared (3 changed state), 0 mismatches
+TOTAL mismatches: 45291 (24078 ms)

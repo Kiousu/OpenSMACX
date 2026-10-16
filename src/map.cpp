@@ -1464,7 +1464,7 @@ BOOL __cdecl has_temple(int faction_id) {
 Purpose: Handle setting the world altitude.
 Original Offset: 005C2020
 Return Value: n/a
-Status: Complete - testing
+Status: Complete (verified vs original: docs/regression-runs/2026-10-15-council-full.log)
 */
 void __cdecl world_alt_set(int x, int y, int altitude, BOOL is_set_both) {
     ZeroMemory(MapBaseSubmergedCount, sizeof(int) * MaxPlayerNum);
@@ -1523,7 +1523,7 @@ void __cdecl world_alt_set(int x, int y, int altitude, BOOL is_set_both) {
 Purpose: Handle raising the altitude of the specified tile.
 Original Offset: 005C2380
 Return Value: n/a
-Status: Complete - testing
+Status: Complete (verified vs original: docs/regression-runs/2026-10-15-council-full.log)
 */
 void __cdecl world_raise_alt(int x, int y) {
     if (on_map(x, y)) {
@@ -1538,7 +1538,7 @@ void __cdecl world_raise_alt(int x, int y) {
 Purpose: Handle lowering the altitude of the specified tile.
 Original Offset: 005C23E0
 Return Value: n/a
-Status: Complete - testing
+Status: Complete (verified vs original: docs/regression-runs/2026-10-15-council-full.log)
 */
 void __cdecl world_lower_alt(int x, int y) {
     if (on_map(x, y)) {
@@ -1553,7 +1553,7 @@ void __cdecl world_lower_alt(int x, int y) {
 Purpose: Set up the brush for creating world terrain.
 Original Offset: 005C2440
 Return Value: n/a
-Status: Complete - testing
+Status: Complete (verified vs original: docs/regression-runs/2026-10-15-council-full.log)
 */
 void __cdecl brush(int x, int y, int altitude) {
     BOOL use_draw_radius = false;
@@ -1615,7 +1615,7 @@ void __cdecl brush(int x, int y, int altitude) {
 Purpose: Paint land to assist in the creation of the world terrain.
 Original Offset: 005C27F0
 Return Value: n/a
-Status: Complete - testing
+Status: Complete (verified vs original: docs/regression-runs/2026-10-15-council-full.log)
 */
 void __cdecl paint_land(int x, int y, uint32_t altitude, uint32_t radius) {
     *BrushVal2 = 0;
@@ -1648,7 +1648,7 @@ void __cdecl paint_land(int x, int y, uint32_t altitude, uint32_t radius) {
 Purpose: Build out the map continents.
 Original Offset: 005C28F0
 Return Value: n/a
-Status: Complete - testing
+Status: Complete (verified vs original: docs/regression-runs/2026-10-15-council-full.log)
 */
 void __cdecl build_continent(uint32_t size) {
     for (uint32_t i = 0; i < *MapArea; i++) {
@@ -1706,7 +1706,7 @@ void __cdecl build_continent(uint32_t size) {
 Purpose: Build out the map hills.
 Original Offset: 005C2B40
 Return Value: n/a
-Status: Complete - testing
+Status: Complete (verified vs original: docs/regression-runs/2026-10-15-council-full.log)
 */
 void __cdecl build_hills(int altitude) {
     int i = 0;
@@ -1753,7 +1753,7 @@ void __cdecl build_hills(int altitude) {
 Purpose: Build out the world river beds.
 Original Offset: 005C3680
 Return Value: n/a
-Status: Complete - testing
+Status: Complete (verified vs original: docs/regression-runs/2026-10-15-council-full.log)
 */
 void __cdecl world_riverbeds() {
     for (uint32_t i = 0; i < *MapArea; i++) {
@@ -1806,7 +1806,7 @@ void __cdecl world_riverbeds() {
 Purpose: Determine if there are any issues with how the world continents are set up.
 Original Offset: 005C40F0
 Return Value: Are there any issues with the world continents? true/false
-Status: Complete - testing
+Status: Complete (verified vs original: docs/regression-runs/2026-10-15-council-full.log)
 */
 BOOL __cdecl world_validate() {
     Paths->continents();
@@ -1832,7 +1832,7 @@ BOOL __cdecl world_validate() {
 Purpose: Set up the world temperature.
 Original Offset: 005C4170
 Return Value: n/a
-Status: Complete - testing
+Status: Complete (verified vs original: docs/regression-runs/2026-10-15-council-full.log)
 */
 void __cdecl world_temperature() {
     random_reseed(*MapRandSeed + 17);
@@ -1885,7 +1885,7 @@ void __cdecl world_temperature() {
 Purpose: Analysis of the world map.
 Original Offset: 005C55C0
 Return Value: n/a
-Status: Complete - testing
+Status: Complete (verified vs original: docs/regression-runs/2026-10-15-council-full.log)
 */
 void __cdecl world_analysis() {
     for (uint32_t i = 0; i < MaxContinentNum; i++) {
@@ -1960,12 +1960,12 @@ void __cdecl world_alt_put_detail(uint32_t x, uint32_t y) {
 Purpose: Set up the world polar caps.
 Original Offset: 005C58E0
 Return Value: n/a
-Status: Complete - testing
+Status: Complete (verified vs original: docs/regression-runs/sweep-2026-10-16/ (13 saves))
 */
 void __cdecl world_polar_caps() {
-    for (uint8_t x = 0; x < *MapLongitudeBounds; x += 2) {
+    for (int x = 0; x < *MapLongitudeBounds; x += 2) {
         world_alt_put_detail(x, 0);
-        world_alt_put_detail(x - 1, *MapLatitudeBounds - 1);
+        world_alt_put_detail(x + 1, *MapLatitudeBounds - 1);
     }
     uint32_t bounds = *MapLongitudeBounds / 16;
     for (uint32_t i = 0; i < bounds; i++) {
@@ -1980,7 +1980,7 @@ void __cdecl world_polar_caps() {
 Purpose: Set up the world contours.
 Original Offset: 005C5AE0
 Return Value: n/a
-Status: Complete - testing
+Status: Complete (verified vs original: docs/regression-runs/2026-10-15-council-full.log)
 */
 void __cdecl world_linearize_contours() {
     for (int y = 0; y < *MapLatitudeBounds; y++) {
@@ -2019,7 +2019,7 @@ BOOL __cdecl near_landmark(int x, int y) {
 Purpose: Setup the 'Garland Crater' landmark.
 Original Offset: 005C5C70
 Return Value: n/a
-Status: Complete - testing
+Status: Complete (verified vs original: docs/regression-runs/2026-10-15-council-full.log)
 */
 void __cdecl world_crater(int x, int y) {
     uint32_t loc_attempts = 0;
@@ -2064,7 +2064,7 @@ void __cdecl world_crater(int x, int y) {
 Purpose: Setup the 'Monsoon Jungle' landmark.
 Original Offset: 005C5EF0
 Return Value: n/a
-Status: Complete - testing
+Status: Complete (verified vs original: docs/regression-runs/2026-10-15-council-full.log)
 */
 void __cdecl world_monsoon(int x, int y) {
     world_rainfall();
@@ -2112,7 +2112,7 @@ void __cdecl world_monsoon(int x, int y) {
 Purpose: Setup the 'New Sargasso' landmark.
 Original Offset: 005C6200
 Return Value: n/a
-Status: Complete - testing
+Status: Complete (verified vs original: docs/regression-runs/2026-10-15-council-full.log)
 */
 void __cdecl world_sargasso(int x, int y) {
     uint32_t loc_attempts = 0;
@@ -2157,7 +2157,7 @@ void __cdecl world_sargasso(int x, int y) {
 Purpose: Setup 'The Ruins' landmark.
 Original Offset: 005C64A0
 Return Value: n/a
-Status: Complete - testing
+Status: Complete (verified vs original: docs/regression-runs/2026-10-15-council-full.log)
 */
 void __cdecl world_ruin(int x, int y) {
     uint32_t loc_attempts = 0;
@@ -2206,7 +2206,7 @@ void __cdecl world_ruin(int x, int y) {
 Purpose: Setup the 'Great Dunes' landmark.
 Original Offset: 005C6740
 Return Value: n/a
-Status: Complete - testing
+Status: Complete (verified vs original: docs/regression-runs/2026-10-15-council-full.log)
 */
 void __cdecl world_dune(int x, int y) {
     world_rainfall();
@@ -2249,7 +2249,7 @@ void __cdecl world_dune(int x, int y) {
 Purpose: Setup the 'Uranium Flats' landmark.
 Original Offset: 005C69E0
 Return Value: n/a
-Status: Complete - testing
+Status: Complete (verified vs original: docs/regression-runs/2026-10-15-council-full.log)
 */
 void __cdecl world_diamond(int x, int y) {
     uint32_t loc_attempts = 0;
@@ -2288,7 +2288,7 @@ void __cdecl world_diamond(int x, int y) {
 Purpose: Setup the 'Freshwater Sea' landmark.
 Original Offset: 005C6C40
 Return Value: n/a
-Status: Complete - testing
+Status: Complete (verified vs original: docs/regression-runs/2026-10-15-council-full.log)
 */
 void __cdecl world_fresh(int x, int y) {
     uint32_t region;
@@ -2335,7 +2335,7 @@ void __cdecl world_fresh(int x, int y) {
 Purpose: Setup the 'Mount Planet' landmark.
 Original Offset: 005C6DB0
 Return Value: n/a
-Status: Complete - testing
+Status: Complete (verified vs original: docs/regression-runs/2026-10-15-council-full.log)
 */
 void __cdecl world_volcano(int x, int y, BOOL is_not_landmark) {
     uint32_t loc_attempts = 0;
@@ -2384,7 +2384,7 @@ void __cdecl world_volcano(int x, int y, BOOL is_not_landmark) {
 Purpose: Setup the 'Borehole Cluster' landmark. Added to SMAC in 3.0 patch.
 Original Offset: 005C7020
 Return Value: n/a
-Status: Complete - testing
+Status: Complete (verified vs original: docs/regression-runs/2026-10-15-council-world-timepin.log with timeGetTime pinned)
 */
 void __cdecl world_borehole(int x, int y) {
     uint32_t loc_attempts = 0;
@@ -2472,7 +2472,7 @@ void __cdecl world_borehole(int x, int y) {
 Purpose: Setup 'The Manifold Nexus' landmark. Added to SMAC in 4.0 patch.
 Original Offset: 005C7540
 Return Value: n/a
-Status: Complete - testing
+Status: Complete (verified vs original: docs/regression-runs/2026-10-15-council-full.log)
 */
 void __cdecl world_temple(int x, int y) {
     uint32_t loc_attempts = 0;
@@ -2508,7 +2508,7 @@ void __cdecl world_temple(int x, int y) {
 Purpose: Setup the 'Unity Wreckage' landmark (SMACX only).
 Original Offset: 005C7750
 Return Value: n/a
-Status: Complete - testing
+Status: Complete (verified vs original: docs/regression-runs/2026-10-15-council-full.log)
 */
 void __cdecl world_unity(int x, int y) {
     if (*ExpansionEnabled) {
@@ -2572,7 +2572,7 @@ void __cdecl world_unity(int x, int y) {
 Purpose: Setup the 'Fossil Ridge' landmark (SMACX only).
 Original Offset: 005C7A80
 Return Value: n/a
-Status: Complete - testing
+Status: Complete (verified vs original: docs/regression-runs/2026-10-15-council-full.log)
 */
 void __cdecl world_fossil(int x, int y) {
     if (*ExpansionEnabled) { // added check similar to Unity Wreckage
@@ -2609,7 +2609,7 @@ void __cdecl world_fossil(int x, int y) {
 Purpose: Setup the 'Nessus Canyon' landmark.
 Original Offset: 005C7CB0
 Return Value: n/a
-Status: Complete - testing
+Status: Complete (verified vs original: docs/regression-runs/2026-10-15-council-full.log)
 */
 void __cdecl world_canyon(int x, int y) {
     uint32_t loc_attempts = 0;
@@ -2646,7 +2646,7 @@ void __cdecl world_canyon(int x, int y) {
 Purpose: Setup the 'Sunny Mesa' landmark.
 Original Offset: 005C7F40
 Return Value: n/a
-Status: Complete - testing
+Status: Complete (verified vs original: docs/regression-runs/2026-10-15-council-full.log)
 */
 void __cdecl world_mesa(int x, int y) {
     uint32_t loc_attempts = 0;
@@ -2681,7 +2681,7 @@ void __cdecl world_mesa(int x, int y) {
 Purpose: Setup the 'Pholus Ridge' landmark.
 Original Offset: 005C8150
 Return Value: n/a
-Status: Complete - testing
+Status: Complete (verified vs original: docs/regression-runs/2026-10-15-council-full.log)
 */
 void __cdecl world_ridge(int x, int y) {
     uint32_t loc_attempts = 0;
@@ -2723,7 +2723,7 @@ void __cdecl world_ridge(int x, int y) {
 Purpose: Setup the 'Geothermal Shallows' landmark.
 Original Offset: 005C83B0
 Return Value: n/a
-Status: Complete - testing
+Status: Complete (verified vs original: docs/regression-runs/2026-10-15-council-full.log)
 */
 void __cdecl world_geothermal(int x, int y) {
     uint32_t loc_attempts = 0;
@@ -2763,7 +2763,7 @@ void __cdecl world_geothermal(int x, int y) {
 Purpose: Set up all the landmarks.
 Original Offset: 005C8630
 Return Value: n/a
-Status: Complete - testing
+Status: Complete (verified vs original: docs/regression-runs/sweep-2026-10-16/ (13 saves))
 */
 void __cdecl world_landmarks() {
     world_monsoon(-1, -1);
@@ -2781,7 +2781,8 @@ void __cdecl world_landmarks() {
     world_dune(-1, -1);
     world_fresh(-1, -1);
     world_geothermal(-1, -1);
-    world_canyon(-1, -1); // Change: add "Nessus Canyon" to random map generation
+    // upstream added world_canyon(-1, -1) here ("Nessus Canyon" on random maps); the original
+    // places none, so it is left out to match it (see docs/regression-testing.md)
     fixup_landmarks();
 }
 

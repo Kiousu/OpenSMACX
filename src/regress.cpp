@@ -26,6 +26,8 @@
 #include "random.h"
 #include "regress.h"
 
+#ifdef OPENSMACX_REGRESS
+
 static const char *TRIGGER_FILE = "opensmacx_regress.txt";
 static const char *LOG_FILE = "opensmacx_regress.log";
 
@@ -46,6 +48,53 @@ static void logf(const char *fmt, ...) {
     fflush(regress_log);
 }
 
+// Crash guard: a test that faults (access violation in either version) is logged with the
+// faulting address and the last input the test announced, and the suite moves on.
+static char regress_ctx[160];
+#define REGRESS_CTX(...) sprintf_s(regress_ctx, __VA_ARGS__)
+static int regress_crash_filter(EXCEPTION_POINTERS *ep, const char *name) {
+    void *addr = ep->ExceptionRecord->ExceptionAddress;
+    HMODULE mod = NULL;
+    GetModuleHandleEx(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+        (LPCSTR)addr, &mod);
+    char mod_name[MAX_PATH] = "?";
+    if (mod) {
+        GetModuleFileNameA(mod, mod_name, sizeof(mod_name));
+    }
+    logf("CRASH in %s: exception %08X at %p (%s+%X), last input: %s", name,
+        ep->ExceptionRecord->ExceptionCode, addr, strrchr(mod_name, '\\') ? strrchr(mod_name, '\\') + 1 : mod_name,
+        (unsigned)((uintptr_t)addr - (uintptr_t)mod), regress_ctx);
+    CONTEXT *c = ep->ContextRecord;
+    logf("  access %s %08X; eax %08X ebx %08X ecx %08X edx %08X esi %08X edi %08X ebp %08X esp %08X",
+        ep->ExceptionRecord->ExceptionInformation[0] ? "write" : "read",
+        (unsigned)ep->ExceptionRecord->ExceptionInformation[1], c->Eax, c->Ebx, c->Ecx, c->Edx,
+        c->Esi, c->Edi, c->Ebp, c->Esp);
+    // code addresses on the stack near esp: the callers
+    char chain[400] = "";
+    uint32_t *sp = (uint32_t *)c->Esp;
+    for (int i = 0; i < 64 && strlen(chain) < 360; i++) {
+        uint32_t v = sp[i];
+        HMODULE m2 = NULL;
+        if ((v >= 0x401000 && v < 0x700000)
+            || (GetModuleHandleEx(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                (LPCSTR)(uintptr_t)v, &m2) && m2 == mod)) {
+            char item[32];
+            sprintf_s(item, " %s%X", m2 == mod ? "dll+" : "exe:", m2 == mod ? (unsigned)(v - (uintptr_t)mod) : v);
+            strcat_s(chain, item);
+        }
+    }
+    logf("  code pointers on stack:%s", chain);
+    logf("  Vehs[-1].proto_id %d faction %u", Vehs[-1].proto_id, Vehs[-1].faction_id);
+    return EXCEPTION_EXECUTE_HANDLER;
+}
+static int run_guarded(const char *name, int (*fn)()) {
+    regress_ctx[0] = 0;
+    __try {
+        return fn();
+    } __except (regress_crash_filter(GetExceptionInformation(), name)) {
+        return 1;
+    }
+}
 static BOOL test_enabled(const char *name) {
     return !regress_filter[0] || strstr(regress_filter, name) != NULL;
 }
@@ -94,14 +143,17 @@ static int test_value_of_base() {
 static int test_best_defender() {
     int compared = 0, mismatches = 0, unstable_orig = 0, unstable_new = 0;
     int veh_count = *VehCurrentCount;
-    // every defender against a spread of attackers: stride keeps the pair count bounded
+    // every defender against a spread of attackers: stride keeps the pair count bounded.
+    // Attacker -1 is not compared: the original reads Vehs[-1] for it and faults on most heap
+    // layouts (the DLL treats it as "no attacker", a documented deviation).
     int stride = veh_count > 64 ? veh_count / 64 : 1;
     for (int def = 0; def < veh_count; def++) {
-        for (int atk = -1; atk < veh_count; atk += (atk < 0 ? 1 : stride)) {
+        for (int atk = 0; atk < veh_count; atk += stride) {
             if (atk == def) {
                 continue;
             }
             for (BOOL art = 0; art <= 1; art++) {
+                REGRESS_CTX("best_defender(%d, %d, %d)", def, atk, art);
                 uint32_t b = best_defender_OG(def, atk, art);
                 uint32_t b2 = best_defender_OG(def, atk, art);
                 uint32_t a = best_defender(def, atk, art);
@@ -153,6 +205,7 @@ static int test_battle_compute() {
             }
             for (int type = 0; type <= 2; type++) {
                 int off1 = 0, def1 = 0, off2 = 0, def2 = 0, off3 = 0, def3 = 0;
+                REGRESS_CTX("battle_compute(%d, %d, type %d)", atk, def, type);
                 battle_compute_OG(atk, def, &off2, &def2, type);
                 battle_snapshot(&b, off2, def2);
                 battle_compute_OG(atk, def, &off3, &def3, type);
@@ -187,6 +240,16 @@ static int test_battle_compute() {
     return mismatches;
 }
 
+// wants_to_attack() in the exe never initialises a 64-entry buffer on its stack; on the game's
+// own call paths the slots hold small leftovers and the function behaves as if zero-filled.
+// Between harness calls the DLL leaves return addresses there, so the stack is zeroed first.
+static __declspec(noinline) void scrub_stack() {
+    volatile char pad[0x800];
+    for (size_t i = 0; i < sizeof(pad); i++) {
+        pad[i] = 0;
+    }
+}
+
 static int test_wants_to_attack() {
     int compared = 0, mismatches = 0, unstable_orig = 0, unstable_new = 0;
     for (uint32_t f = 1; f < MaxPlayerNum; f++) {
@@ -195,7 +258,9 @@ static int test_wants_to_attack() {
                 continue;
             }
             for (int other = -1; other < (int)MaxPlayerNum; other++) {
+                scrub_stack();
                 BOOL b = wants_to_attack_OG(f, tgt, other);
+                scrub_stack();
                 BOOL b2 = wants_to_attack_OG(f, tgt, other);
                 BOOL a = wants_to_attack(f, tgt, other);
                 BOOL a2 = wants_to_attack(f, tgt, other);
@@ -632,18 +697,234 @@ static int test_base_psych() {
     int selected_saved = *BaseIDCurrentSelected;
     Base *current_saved = *BaseCurrent;
     char label[64];
-    for (uint32_t stage = 0; stage < 2; stage++) { // stage 1 enables the full psych loop
+    int st_orig[15], st_new[15]; // talents[5], drones[5], super drones[5] after each psych stage
+    auto grab = [](int *st) {
+        memcpy(st, BaseCurrentTalentsStage, 5 * sizeof(int));
+        memcpy(st + 5, BaseCurrentDronesStage, 5 * sizeof(int));
+        memcpy(st + 10, BaseCurrentSuperDronesStage, 5 * sizeof(int));
+    };
+    for (uint32_t stage = 0; stage < 2; stage++) { // stage 1 enables the full talent/police grid
         for (int i = 0; i < *BaseCurrentCount; i++) {
             sprintf_s(label, "base_psych(base %d, upkeep stage %u)", i, stage);
-            h.compare(label,
-                [&] { *BaseUpkeepStage = stage; set_base(i); base_psych_OG(); },
-                [&] { *BaseUpkeepStage = stage; set_base(i); base_psych(); });
+            BOOL bad = h.compare(label,
+                [&] { *BaseUpkeepStage = stage; set_base(i); base_psych_OG(); grab(st_orig); },
+                [&] { *BaseUpkeepStage = stage; set_base(i); base_psych(); grab(st_new); });
+            if (bad) { // the stage arrays hold the last grid cell evaluated (the only one at stage 0)
+                Base *b = &Bases[i];
+                logf("    faction %u pop %d spec %d psych %d SE talent %d police %d pacifism %u\n",
+                    b->faction_id_current, b->population_size, b->specialist_total, b->psych_total,
+                    PlayersData[b->faction_id_current].soc_effect_pending.talent,
+                    PlayersData[b->faction_id_current].soc_effect_pending.police,
+                    *BaseCurrentVehPacifismCount);
+                for (int side = 0; side < 2; side++) {
+                    int *st = side ? st_new : st_orig;
+                    logf("    %s T %d %d %d %d %d D %d %d %d %d %d S %d %d %d %d %d\n",
+                        side ? "new " : "orig", st[0], st[1], st[2], st[3], st[4], st[5], st[6],
+                        st[7], st[8], st[9], st[10], st[11], st[12], st[13], st[14]);
+                }
+            }
         }
+    }
+    // Synthetic inputs for branches no save exercises: pacifism drones (the count is only set
+    // during base_upkeep, so it is 0 whenever the harness runs; police -3/-4/-5 in the grid use
+    // it) and nerve-stapled bases (none in any available save). Every 4th base, grid pass.
+    uint32_t pacifism_saved = *BaseCurrentVehPacifismCount;
+    for (uint32_t pacifism = 1; pacifism <= 3; pacifism++) {
+        for (int i = 0; i < *BaseCurrentCount; i += 4) {
+            sprintf_s(label, "base_psych(base %d, upkeep stage 1, pacifism %u)", i, pacifism);
+            h.compare(label,
+                [&] { *BaseUpkeepStage = 1; *BaseCurrentVehPacifismCount = pacifism; set_base(i); base_psych_OG(); },
+                [&] { *BaseUpkeepStage = 1; *BaseCurrentVehPacifismCount = pacifism; set_base(i); base_psych(); });
+        }
+    }
+    *BaseCurrentVehPacifismCount = pacifism_saved;
+    for (int i = 0; i < *BaseCurrentCount; i += 4) {
+        sprintf_s(label, "base_psych(base %d, upkeep stage 1, nerve stapled)", i);
+        h.compare(label,
+            [&] { *BaseUpkeepStage = 1; Bases[i].nerve_staple_turns_left = 3; set_base(i); base_psych_OG(); },
+            [&] { *BaseUpkeepStage = 1; Bases[i].nerve_staple_turns_left = 3; set_base(i); base_psych(); });
     }
     *BaseUpkeepStage = stage_saved;
     *BaseIDCurrentSelected = selected_saved;
     *BaseCurrent = current_saved;
     return h.report();
+}
+
+// --- do_* message-pump wrappers: message-level test -------------------------------------------
+// Probe messages are posted to the game window, one wrapper call is made, and the result is the
+// return value plus which probes are still queued. The probes sit on the range boundaries the
+// wrappers filter on (0..0xFF, 0x100..0x108, 0x109..0x1FF, 0x200..0x209, 0x20A..0xFFFF) and are
+// ones the game's window procedure ignores. Needs an exe patched WITHOUT the do_* rows, else
+// the *_OG pointers land in the DLL.
+typedef BOOL(__cdecl *msg_fn_bool)();
+typedef void(__cdecl *msg_fn_void)();
+static msg_fn_bool do_non_input_OG = (msg_fn_bool)0x005FCA30;
+static msg_fn_void do_all_non_input_OG = (msg_fn_void)0x005FCB20;
+static msg_fn_bool do_draw_OG = (msg_fn_bool)0x005FCB60;
+static msg_fn_void do_all_draws_OG = (msg_fn_void)0x005FCBB0;
+static msg_fn_bool do_keyboard_OG = (msg_fn_bool)0x005FCC20;
+static msg_fn_void do_all_keyboard_OG = (msg_fn_void)0x005FCC70;
+
+static const uint32_t MsgProbe[] = {
+    0x00FE,          // WM_INPUT_DEVICE_CHANGE: last-but-one of the first range (0 cannot be peeked alone)
+    WM_KEYUP,        // 0x101: keyboard range
+    0x0108,          // WM_KEYLAST of the game's SDK: top of the keyboard range
+    0x0109,          // WM_UNICHAR: first id above it
+    0x01F5,          // unassigned, inside 0x109..0x1FF
+    WM_MOUSEMOVE,    // 0x200: mouse range, excluded from do_non_input
+    WM_MOUSEWHEEL,   // 0x20A: first id above the mouse range (newer SDKs put WM_MOUSELAST at 0x20E)
+    WM_USER + 0x123, // 0x523
+};
+static const int MsgProbeNum = sizeof(MsgProbe) / sizeof(MsgProbe[0]);
+
+static void msg_drain(HWND hwnd) {
+    MSG m;
+    for (int n = 0; n < 500 && PeekMessage(&m, NULL, 0, 0, PM_REMOVE); n++) {
+        if (m.message == WM_PAINT) {
+            ValidateRect(m.hwnd, NULL);
+        } else if (m.message == WM_QUIT) {
+            PostQuitMessage((int)m.wParam);
+            break;
+        }
+    }
+    (void)hwnd;
+}
+
+// remove every queued message that is not one of the probes (timer ticks and the like)
+static void msg_drain_others(HWND hwnd) {
+    static const uint32_t ranges[][2] = {
+        { 0x0001, 0x00FD }, { 0x00FF, 0x0100 }, { 0x0102, 0x0107 }, { 0x010A, 0x01F4 },
+        { 0x01F6, 0x01FF }, { 0x0201, 0x0209 }, { 0x020B, 0x0522 }, { 0x0524, 0xFFFF },
+    };
+    MSG m;
+    for (size_t r = 0; r < sizeof(ranges) / sizeof(ranges[0]); r++) {
+        for (int n = 0; n < 100 && PeekMessage(&m, NULL, ranges[r][0], ranges[r][1], PM_REMOVE); n++) {
+            if (m.message == WM_PAINT) {
+                ValidateRect(m.hwnd, NULL);
+            }
+        }
+    }
+    (void)hwnd;
+}
+
+static uint32_t msg_pending(HWND hwnd) {
+    uint32_t mask = 0;
+    MSG m;
+    for (int i = 0; i < MsgProbeNum; i++) {
+        if (PeekMessage(&m, hwnd, MsgProbe[i], MsgProbe[i], PM_NOREMOVE)) {
+            mask |= 1u << i;
+        }
+    }
+    return mask;
+}
+
+static void msg_post(HWND hwnd, const uint32_t *ids, int n) {
+    POINT p;
+    GetCursorPos(&p);
+    ScreenToClient(hwnd, &p);
+    for (int i = 0; i < n; i++) {
+        WPARAM w = ids[i] == WM_KEYUP ? VK_F24 : 0;
+        LPARAM l = ids[i] == WM_MOUSEMOVE ? MAKELPARAM(p.x, p.y) : 0;
+        PostMessage(hwnd, ids[i], w, l);
+        Sleep(2); // distinct MSG.time per probe: do_non_input picks the oldest of its ranges
+    }
+}
+
+struct MsgCase {
+    uint32_t ids[8];
+    int n;
+};
+
+static int test_do_wrappers() {
+    HWND hwnd = *HandleMain;
+    int compared = 0, mismatches = 0;
+    if (!hwnd || !IsWindow(hwnd)) {
+        logf("do_wrappers: no main window, skipped");
+        return 0;
+    }
+    static const MsgCase cases[] = {
+        { { 0x00FE }, 1 }, { { WM_KEYUP }, 1 }, { { 0x0108 }, 1 }, { { 0x0109 }, 1 },
+        { { 0x01F5 }, 1 }, { { WM_MOUSEMOVE }, 1 }, { { WM_MOUSEWHEEL }, 1 }, { { WM_USER + 0x123 }, 1 },
+        { { WM_USER + 0x123, 0x00FE }, 2 }, { { 0x00FE, 0x0109, WM_MOUSEWHEEL }, 3 },
+        { { WM_KEYUP, 0x01F5 }, 2 }, { { WM_MOUSEWHEEL, 0x0109, 0x00FE }, 3 },
+        { { WM_KEYUP, 0x0108 }, 2 }, { { WM_MOUSEMOVE, 0x0108, WM_KEYUP }, 3 },
+        { { 0x00FE, WM_KEYUP, 0x0108, 0x0109, 0x01F5, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_USER + 0x123 }, 8 },
+    };
+    struct Wrapper {
+        const char *name;
+        msg_fn_bool one_orig, one_new;  // single-message form (returns BOOL)
+        msg_fn_void all_orig, all_new;  // process-all form
+    };
+    static const Wrapper wrappers[] = {
+        { "do_non_input", do_non_input_OG, do_non_input, NULL, NULL },
+        { "do_all_non_input", NULL, NULL, do_all_non_input_OG, do_all_non_input },
+        { "do_keyboard", do_keyboard_OG, do_keyboard, NULL, NULL },
+        { "do_all_keyboard", NULL, NULL, do_all_keyboard_OG, do_all_keyboard },
+    };
+    int retried = 0;
+    for (size_t w = 0; w < sizeof(wrappers) / sizeof(wrappers[0]); w++) {
+        for (size_t c = 0; c < sizeof(cases) / sizeof(cases[0]); c++) {
+            BOOL ret[2] = { 0, 0 };
+            uint32_t left[2] = { 0, 0 };
+            uint32_t status[2] = { 0, 0 };
+            BOOL same = false;
+            for (int attempt = 0; attempt < 3 && !same; attempt++) {
+                for (int side = 0; side < 2; side++) {
+                    msg_drain(hwnd);
+                    msg_post(hwnd, cases[c].ids, cases[c].n);
+                    msg_drain_others(hwnd);
+                    *MsgStatus = 0;
+                    if (wrappers[w].one_orig) {
+                        ret[side] = side ? wrappers[w].one_new() : wrappers[w].one_orig();
+                    } else {
+                        side ? wrappers[w].all_new() : wrappers[w].all_orig();
+                    }
+                    status[side] = *MsgStatus;
+                    left[side] = msg_pending(hwnd);
+                    msg_drain(hwnd);
+                }
+                same = ret[0] == ret[1] && left[0] == left[1] && status[0] == status[1];
+                if (!same) {
+                    retried++;
+                }
+            }
+            compared++;
+            if (!same) {
+                mismatches++;
+                logf("  %s case %u: orig ret=%d left=%02X status=%u; new ret=%d left=%02X status=%u",
+                    wrappers[w].name, (unsigned)c, ret[0], left[0], status[0], ret[1], left[1],
+                    status[1]);
+            }
+        }
+    }
+    // do_draw / do_all_draws: WM_PAINT is synthesised from the window's update region
+    for (int form = 0; form < 2; form++) {
+        BOOL ret[2][2] = { { 0, 0 }, { 0, 0 } };
+        BOOL paint_left[2];
+        MSG m;
+        for (int side = 0; side < 2; side++) {
+            msg_drain(hwnd);
+            InvalidateRect(hwnd, NULL, FALSE);
+            if (form == 0) {
+                ret[side][0] = side ? do_draw() : do_draw_OG();
+                ret[side][1] = side ? do_draw() : do_draw_OG(); // nothing left to paint afterwards?
+            } else {
+                side ? do_all_draws() : do_all_draws_OG();
+            }
+            paint_left[side] = PeekMessage(&m, hwnd, WM_PAINT, WM_PAINT, PM_NOREMOVE) != 0;
+            msg_drain(hwnd);
+        }
+        compared++;
+        if (memcmp(ret[0], ret[1], sizeof(ret[0])) != 0 || paint_left[0] != paint_left[1]) {
+            mismatches++;
+            logf("  %s: orig ret=%d/%d paint left=%d; new ret=%d/%d paint left=%d",
+                form ? "do_all_draws" : "do_draw", ret[0][0], ret[0][1], paint_left[0],
+                ret[1][0], ret[1][1], paint_left[1]);
+        }
+    }
+    logf("do_wrappers: %d compared, %d mismatches, %d attempts retried (stray messages)",
+        compared, mismatches, retried);
+    return mismatches;
 }
 
 static int test_enemy_capabilities() {
@@ -753,6 +1034,67 @@ static void sample_tile(int k, int n, int *x, int *y) {
     *x = (idx % *MapLongitude) * 2 + (*y & 1);
 }
 
+// world_borehole seeds its layout from timeGetTime(), so the original and the DLL only agree when
+// both calls land in the same millisecond. During that test both modules' import slots for
+// timeGetTime are pointed at a stub that returns a value chosen per sample.
+static DWORD FixedTimeValue = 0;
+static DWORD WINAPI fixed_time_get_time() { return FixedTimeValue; }
+
+static void **iat_slot(HMODULE module, const char *dll_name, const char *func_name) {
+    uint8_t *base = (uint8_t *)module;
+    IMAGE_NT_HEADERS *nt = (IMAGE_NT_HEADERS *)(base + ((IMAGE_DOS_HEADER *)base)->e_lfanew);
+    IMAGE_DATA_DIRECTORY *dir = &nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
+    if (!dir->VirtualAddress) {
+        return NULL;
+    }
+    for (IMAGE_IMPORT_DESCRIPTOR *desc = (IMAGE_IMPORT_DESCRIPTOR *)(base + dir->VirtualAddress);
+        desc->Name; desc++) {
+        if (_stricmp((const char *)(base + desc->Name), dll_name) != 0) {
+            continue;
+        }
+        IMAGE_THUNK_DATA *names = (IMAGE_THUNK_DATA *)(base + desc->OriginalFirstThunk);
+        IMAGE_THUNK_DATA *slots = (IMAGE_THUNK_DATA *)(base + desc->FirstThunk);
+        for (; names->u1.AddressOfData; names++, slots++) {
+            if (names->u1.Ordinal & IMAGE_ORDINAL_FLAG) {
+                continue;
+            }
+            IMAGE_IMPORT_BY_NAME *imp = (IMAGE_IMPORT_BY_NAME *)(base + names->u1.AddressOfData);
+            if (strcmp((const char *)imp->Name, func_name) == 0) {
+                return (void **)&slots->u1.Function;
+            }
+        }
+    }
+    return NULL;
+}
+
+static void *iat_patch(void **slot, void *replacement) {
+    if (!slot) {
+        return NULL;
+    }
+    DWORD old_protect;
+    VirtualProtect(slot, sizeof(void *), PAGE_READWRITE, &old_protect);
+    void *previous = *slot;
+    *slot = replacement;
+    VirtualProtect(slot, sizeof(void *), old_protect, &old_protect);
+    return previous;
+}
+
+struct TimeGetTimePin {
+    void **exe_slot, **dll_slot;
+    void *exe_saved, *dll_saved;
+    TimeGetTimePin() {
+        exe_slot = iat_slot(GetModuleHandle(NULL), "winmm.dll", "timeGetTime");
+        dll_slot = iat_slot(GetModuleHandle("OpenSMACX.dll"), "winmm.dll", "timeGetTime");
+        exe_saved = iat_patch(exe_slot, (void *)fixed_time_get_time);
+        dll_saved = iat_patch(dll_slot, (void *)fixed_time_get_time);
+    }
+    ~TimeGetTimePin() {
+        iat_patch(exe_slot, exe_saved);
+        iat_patch(dll_slot, dll_saved);
+    }
+    BOOL ok() const { return exe_slot && dll_slot; }
+};
+
 struct WorldXYFn {
     const char *name;
     func_xy *orig;
@@ -787,20 +1129,31 @@ static int test_world_xy() {
         }
         SnapHarness h(fns[i].name);
         h.empty_world();
+        BOOL is_borehole = strcmp(fns[i].name, "world_borehole") == 0;
+        TimeGetTimePin *pin = is_borehole ? new TimeGetTimePin() : NULL;
+        if (pin && !pin->ok()) {
+            logf("  timeGetTime import not found (exe %p, dll %p); layout may differ by timing",
+                pin->exe_slot, pin->dll_slot);
+        }
+        auto prepare = [&](uint32_t seed) {
+            reseed(seed);
+            FixedTimeValue = seed * 2654435761u; // varies seed % 8 and (seed / 8) % 4 across samples
+        };
         const int samples = 24;
         for (int k = 0; k < samples; k++) {
             int x, y;
             sample_tile(k, samples, &x, &y);
             sprintf_s(label, "%s(%d, %d)", fns[i].name, x, y);
             uint32_t seed = k + 1;
-            h.compare(label, [&] { reseed(seed); fns[i].orig(x, y); },
-                [&] { reseed(seed); fns[i].neu(x, y); });
+            h.compare(label, [&] { prepare(seed); fns[i].orig(x, y); },
+                [&] { prepare(seed); fns[i].neu(x, y); });
         }
         for (uint32_t seed = 1; seed <= 3; seed++) { // random placement
             sprintf_s(label, "%s(-1, -1) seed %u", fns[i].name, seed);
-            h.compare(label, [&] { reseed(seed); fns[i].orig(-1, -1); },
-                [&] { reseed(seed); fns[i].neu(-1, -1); });
+            h.compare(label, [&] { prepare(seed); fns[i].orig(-1, -1); },
+                [&] { prepare(seed); fns[i].neu(-1, -1); });
         }
+        delete pin;
         total += h.report();
     }
     return total;
@@ -939,10 +1292,15 @@ static int test_world_void() {
         }
         SnapHarness h(fns[i].name);
         h.empty_world();
+        TimeGetTimePin pin; // world_landmarks runs world_borehole, which reads the clock
+        auto prepare = [&](uint32_t seed) {
+            reseed(seed);
+            FixedTimeValue = seed * 2654435761u;
+        };
         for (uint32_t seed = 1; seed <= 3; seed++) {
             sprintf_s(label, "%s() seed %u", fns[i].name, seed);
-            h.compare(label, [&] { reseed(seed); fns[i].orig(); },
-                [&] { reseed(seed); fns[i].neu(); });
+            h.compare(label, [&] { prepare(seed); fns[i].orig(); },
+                [&] { prepare(seed); fns[i].neu(); });
         }
         total += h.report();
     }
@@ -950,6 +1308,55 @@ static int test_world_void() {
 }
 
 // ------------------------------------------------------------------------------------------
+
+// One-line-per-faction summary of the loaded save: the inputs the psych/combat/diplomacy tests
+// depend on, so a sweep over saves shows which branches each save exercises.
+static void log_survey() {
+    logf("survey: map %dx%d, SP owners: SAC %d LV %d HGP %d CI %d VW %d PTS %d",
+        *MapLongitudeBounds, *MapLatitudeBounds, SecretProject->self_aware_colony,
+        SecretProject->longevity_vaccine, SecretProject->human_genome_project,
+        SecretProject->clinical_immortality, SecretProject->virtual_world,
+        SecretProject->planetary_transit_system);
+    for (uint32_t f = 1; f < MaxPlayerNum; f++) {
+        if (!PlayersData[f].current_num_bases && !is_alive(f)) {
+            continue;
+        }
+        int staple = 0, punish = 0, brood = 0, rec = 0, holo = 0, paradise = 0, assim = 0;
+        int away = 0, units = 0;
+        for (int i = 0; i < *BaseCurrentCount; i++) {
+            if (Bases[i].faction_id_current != f) {
+                continue;
+            }
+            staple += Bases[i].nerve_staple_turns_left != 0;
+            punish += has_fac_built(FAC_PUNISHMENT_SPHERE, i);
+            brood += has_fac_built(FAC_BROOD_PIT, i);
+            rec += has_fac_built(FAC_RECREATION_COMMONS, i);
+            holo += has_fac_built(FAC_HOLOGRAM_THEATRE, i);
+            paradise += has_fac_built(FAC_PARADISE_GARDEN, i);
+            assim += Bases[i].assimilation_turns_left != 0;
+        }
+        for (int v = 0; v < *VehCurrentCount; v++) {
+            if (Vehs[v].faction_id != f) {
+                continue;
+            }
+            units++;
+            if (VehPrototypes[Vehs[v].proto_id].plan <= PLAN_RECONNAISANCE
+                && whose_territory(f, Vehs[v].x, Vehs[v].y, NULL, false) != (int)f) {
+                away++; // combat unit outside own territory: the pacifism drone source
+            }
+        }
+        logf("survey: faction %u %-12s %s diff %u bases %u units %d away %d | SE talent %d police %d"
+            " econ %u eff %d | rules talent %d drone %d%s | staple %d punish %d brood %d rec %d holo %d"
+            " paradise %d assim %d",
+            f, Players[f].noun_faction, is_human(f) ? "human" : "AI", PlayersData[f].diff_level,
+            PlayersData[f].current_num_bases, units, away,
+            PlayersData[f].soc_effect_pending.talent, PlayersData[f].soc_effect_pending.police,
+            PlayersData[f].soc_category_pending.economics, PlayersData[f].soc_effect_pending.efficiency,
+            Players[f].rule_talent, Players[f].rule_drone,
+            (Players[f].rule_flags & RFLAG_WORMPOLICE) ? " WORMPOLICE" : "",
+            staple, punish, brood, rec, holo, paradise, assim);
+    }
+}
 
 static DWORD WINAPI regress_watcher(LPVOID) {
     for (;;) {
@@ -986,32 +1393,36 @@ void regress_run() {
     DWORD t0 = GetTickCount();
     logf("OpenSMACX regression run: turn %d, %d bases, %d vehs, filter='%s'",
         *TurnCurrentNum, *BaseCurrentCount, *VehCurrentCount, regress_filter);
+    log_survey();
     int total = 0;
-    if (test_enabled("value_of_base")) total += test_value_of_base();
-    if (test_enabled("best_defender")) total += test_best_defender();
-    if (test_enabled("battle_compute")) total += test_battle_compute();
-    if (test_enabled("wants_to_attack")) total += test_wants_to_attack();
-    if (test_enabled("world_validate")) total += test_world_validate();
-    if (test_enabled("treaty_on")) total += test_treaty_on();
-    if (test_enabled("treaty_off")) total += test_treaty_off();
-    if (test_enabled("agenda_on")) total += test_agenda_on();
-    if (test_enabled("agenda_off")) total += test_agenda_off();
-    if (test_enabled("trade_maps")) total += test_trade_maps();
-    if (test_enabled("do_withdrawal")) total += test_do_withdrawal();
-    if (test_enabled("base_mark")) total += test_base_mark();
-    if (test_enabled("base_psych")) total += test_base_psych();
-    if (test_enabled("enemy_capabilities")) total += test_enemy_capabilities();
-    if (test_enabled("social_ai")) total += test_social_ai();
-    if (test_enabled("Path::sensors") || test_enabled("path_sensors")) total += test_path_sensors();
-    total += test_world_xy();
-    if (test_enabled("world", "world_volcano")) total += test_world_volcano();
-    if (test_enabled("world", "world_alt_set")) total += test_world_alt_set();
-    if (test_enabled("world", "brush")) total += test_brush();
-    if (test_enabled("world", "paint_land")) total += test_paint_land();
-    if (test_enabled("world", "build_continent")) total += test_build_continent();
-    if (test_enabled("world", "build_hills")) total += test_build_hills();
-    total += test_world_void();
+    if (test_enabled("value_of_base")) total += run_guarded("value_of_base", test_value_of_base);
+    if (test_enabled("best_defender")) total += run_guarded("best_defender", test_best_defender);
+    if (test_enabled("battle_compute")) total += run_guarded("battle_compute", test_battle_compute);
+    if (test_enabled("wants_to_attack")) total += run_guarded("wants_to_attack", test_wants_to_attack);
+    if (test_enabled("world_validate")) total += run_guarded("world_validate", test_world_validate);
+    if (test_enabled("treaty_on")) total += run_guarded("treaty_on", test_treaty_on);
+    if (test_enabled("treaty_off")) total += run_guarded("treaty_off", test_treaty_off);
+    if (test_enabled("agenda_on")) total += run_guarded("agenda_on", test_agenda_on);
+    if (test_enabled("agenda_off")) total += run_guarded("agenda_off", test_agenda_off);
+    if (test_enabled("trade_maps")) total += run_guarded("trade_maps", test_trade_maps);
+    if (test_enabled("do_withdrawal")) total += run_guarded("do_withdrawal", test_do_withdrawal);
+    if (test_enabled("base_mark")) total += run_guarded("base_mark", test_base_mark);
+    if (test_enabled("base_psych")) total += run_guarded("base_psych", test_base_psych);
+    if (test_enabled("do_wrappers")) total += run_guarded("do_wrappers", test_do_wrappers);
+    if (test_enabled("enemy_capabilities")) total += run_guarded("enemy_capabilities", test_enemy_capabilities);
+    if (test_enabled("social_ai")) total += run_guarded("social_ai", test_social_ai);
+    if (test_enabled("Path::sensors") || test_enabled("path_sensors")) total += run_guarded("path_sensors", test_path_sensors);
+    total += run_guarded("world_xy", test_world_xy);
+    if (test_enabled("world", "world_volcano")) total += run_guarded("world_volcano", test_world_volcano);
+    if (test_enabled("world", "world_alt_set")) total += run_guarded("world_alt_set", test_world_alt_set);
+    if (test_enabled("world", "brush")) total += run_guarded("brush", test_brush);
+    if (test_enabled("world", "paint_land")) total += run_guarded("paint_land", test_paint_land);
+    if (test_enabled("world", "build_continent")) total += run_guarded("build_continent", test_build_continent);
+    if (test_enabled("world", "build_hills")) total += run_guarded("build_hills", test_build_hills);
+    total += run_guarded("world_void", test_world_void);
     logf("TOTAL mismatches: %d (%lu ms)", total, GetTickCount() - t0);
     fclose(regress_log);
     regress_log = NULL;
 }
+
+#endif // OPENSMACX_REGRESS

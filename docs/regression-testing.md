@@ -7,7 +7,9 @@ state, so they can be promoted (or fixed) with evidence.
 
 ## How to run
 
-1. Build the DLL and patch an exe as usual; the harness is always compiled in and inert.
+1. Build the DLL with `/DOPENSMACX_REGRESS` (the harness, its watcher thread and the `veh_at()`
+   hook are compiled out otherwise) and patch an exe as usual. To test a function that is
+   already redirected, patch with a table that omits it (`opensmacx_patch.py -t <table>`).
 2. Start the game and load a save. Late saves give the widest coverage (hundreds of bases,
    >1000 units, all factions in contact).
 3. Create `opensmacx_regress.txt` in the game directory. Empty = all tests; otherwise list test
@@ -32,31 +34,65 @@ used for its own (unpublished) regression tests.
 |---|---|---|---|---|
 | value_of_base | 82,614 | 0 | 0 | matches; candidate for promotion |
 | world_validate | 1 | 0 | 0 | matches on this map; needs more maps |
-| battle_compute | 7,056 | 5,148 | 0 | decompile bug, see below |
-| best_defender | 229,682 | 40,131 | 0 | calls the DLL's battle_compute; retest after the fix |
-| wants_to_attack | 378 | 9 | 16 | original is not self-consistent; the 9 are all faction 1 vs 7, new=0 orig=1 |
+| battle_compute | 7,056 | 5,148, then 0 | 0 | 20 transcription errors, see below |
+| best_defender | 229,682 | 40,131, then 0 | 0 | 5 errors of its own plus battle_compute's |
+| wants_to_attack | 378 | 9, then 0 | 16, then 0 | 8 errors; the instability was an uninitialised stack buffer |
+
+The "then" columns are the 2026-10-16 rerun after the fixes
+(`docs/regression-runs/2026-10-16-council-full.log`), with every unit pair of the save, the
+attacker -1 case included.
 
 ### battle_compute
 
-Every artillery/bombard case (`combat_type & 1`) returns the defaults (offense 8, defense 8,
-no modifiers) from the decompiled version. Cause: in the original the block guarded by
-`!is_bombard || spore launcher involved` closes before `get_basic_offense()` is called
-(Ghidra decompile of 0x501DA0, the block ends at the `}` before the call); in
-`src/veh.cpp` that `if` wraps the whole offense/defense computation, so bombard attacks skip it.
-Type 0 and type 2 cases also differ in the defense value for about a third of pairs (e.g.
-new def=0 vs orig 168; new 576 vs orig 1350), which is a second, separate problem to chase
-after the nesting is fixed.
+Re-transcribed line by line against the Ghidra decompile of 0x501DA0. The bombard block
+(`!is_bombard || spore launcher involved`) wrapped the whole computation in the C++, so every
+artillery/missile case returned 8/8; the original closes it after the PSI display modifiers.
+About twenty percentage multipliers were written as `x *= (rule + 100) / 100` (truncating the
+factor to 1, or 0 for penalties) where the original computes `(rule + 100) * x / 100`: Empath,
+airdrop, alien offense/defense, altitude, mobile, rough, road, uphill, downhill, psi base,
+sensor, trance, air-to-air, ground strike, non-combat, jammer, AAA. Further differences:
+Empath requires a PSI defender; airdrop uses `combat_pen_pct_atk_airdrop` as a penalty; alien
+modifiers display `val - 100`; info-warfare x4 checks the attacker's plan; artillery altitude
+displays `diff * rule`; mobile-in-open uses `<=`; rough-vs-mobile has no rockiness test;
+downhill displays the elevation label; the base block starts `fac_modifier` at 2, checks the
+Maritime/Cloudbase projects against the base owner, applies Tachyon outside the attacker test
+and the blink displacer outside the base block; "Infantry vs Base" and "Open Ground" sit outside
+the base block (the latter was unreachable) with the original's conditions; `defense *=
+def_multi` applies to a bunker without a base; with no attacker the function ends after the
+resonance check; the attacker/defender air-superiority branches were swapped; "In Port"
+requires a non-sea attacker; the Pulse armor `||`/`&&` precedence applied Pulse-3 to every
+unit; speed vs `move_rate_roads` compares signed.
 
-Interleaving the two versions also makes the original's next result change (first run showed
-746 "unstable" original pairs when new ran between two original calls; 0 when the originals run
-back to back). So the decompiled version leaves some battle global in a different state than the
-original does. Worth finding, since battle_compute is called from inside best_defender.
+Two more things the harness needed: the terrain label that `defense_value()` sets and
+battle_compute appends is the exe global at 0x90F550 (`VehBattleDisplayTerrain` is now a
+pointer to it; the DLL had a private copy, so the exe side showed stale text); and the
+original reads `Vehs[veh_id_atk]` without a bounds check. `best_defender()` calls it with
+attacker -1, which reads the Reactor table just below the Vehs array (the prototype id lands on
+the high half of a string pointer, a small valid index), so the C++ now does the same instead
+of defaulting the attacker fields.
+
+### best_defender
+
+Five errors of its own: the stack filter `triad != LAND || (!ocean && base >= 0)` is
+`triad != LAND || !ocean || base >= 0` in the original; the artillery flag tested
+`veh_id_atk || can_arty(atk)` (true for any attacker but 0) instead of `can_arty(atk proto)`;
+the air-combat flag tested the attacker triad `!= AIR` instead of `== AIR`; the added bounds
+checks on the attacker hid the original's `Vehs[-1]` read; and `proto_pwr_def` was unsigned, so
+the `/ power ... / 8` chain divided unsigned where the original uses `idiv`.
 
 ### wants_to_attack
 
-16 of 378 inputs give a different answer when the original is called twice in a row with no
-intervening game activity, so it depends on something it (or a callee) mutates, or on
-uninitialized stack. Resolve that before reading anything into the 9 mismatches.
+The original never initialises a 64-entry buffer on its stack; on the game's own call paths the
+slots hold small leftovers and it behaves as if zero-filled, but between back-to-back harness
+calls the DLL leaves return addresses there, which is what made 16 of 378 inputs unstable. The
+harness now zeroes 2 KB of stack before each original call (`scrub_stack()`), and the C++
+zero-initialises the buffer (with signed compares). Eight transcription errors: the atrocity
+test returned true for "both have atrocities" instead of "target has, we have none"; the peace
+test accepted either of SURRENDERED/PACT instead of both; the base threshold was
+`(top / 4) * 3` instead of `(top * 3) / 4`; `cmbt + bases_f ? x : 0` parsed as
+`(cmbt + bases_f) ? x : 0`; the best-weapon value was read from the target instead of this
+faction; the pact bonus and the Intense Rivalry penalty were inverted; and the score and factors
+were unsigned.
 
 ## State-mutating functions (snapshot / restore)
 
@@ -89,7 +125,7 @@ first run of each test against the upstream code):
 | function | inputs | before | after | notes |
 |---|---|---|---|---|
 | base_mark | every base (281) | 0 | 0 | matched as written; candidate for promotion |
-| base_psych | every base x upkeep stage 0/1 (562) | 296 | 296 | WIP upstream, see below |
+| base_psych | every base x upkeep stage 0/1 (562) | 296 | 0 | retranscribed, see below |
 | enemy_capabilities | each faction + all in sequence (8) | 7 | 0 | treaty check used the pass index as the faction |
 | social_ai | 7 factions x (AI self + 16 priority sets + 10 "optimize effect" forms) (188) | crash, then 126 | 0 | eleven transcription errors, see below |
 | Path::sensors | every 4th base of each faction (72) | 71 | 0 | rewritten from the original |
@@ -97,13 +133,27 @@ first run of each test against the upstream code):
 The one remaining `social_ai` difference seen once (faction 5, AI self, `unk_103`) did not
 reproduce in two reruns; that path calls the exe's `consider_designs`, which is not reseeded.
 
-### base_psych (WIP upstream)
+### base_psych (was WIP upstream)
 
-With upkeep stage 0 the two versions differ in `Base.talent_total` / `drone_total` /
-`super_drone_total` for 15 bases. With upkeep stage 1 the original also accumulates into
-`PlayerData.unk_39[talent][police]` (the 8x9 table at +0x6B0 that `social_ai` later reads as the
-talent weight) for every base, which the decompiled version does not do at all. The Ghidra
-decompile is in `build/ghidra/out_held/004ea540_base_psych.c` (the store is near its end).
+The upstream version stopped after the SE talent/police adjustment, so it never produced the
+real totals and never filled `PlayerData.unk_39[talent][police]` (the 8x9 table at +0x6B0 that
+`social_ai` reads as the talent weight). Retranscribed from
+`build/ghidra/out_held/004ea540_base_psych.c`: five stages (SE talent + bureaucracy, psych
+allocation, facilities, police/pacifism, secret projects/punishment sphere/nerve staple), each
+clamped to the population, fitted to the non-specialist citizens (talents cancel super drones
+then drones; with no talents left drones are shed) and recorded in the three per-stage arrays
+at 0x90E984/0x90E920/0x90E94C (now `BaseCurrentTalentsStage` etc.). With upkeep stage 1 the
+whole talent (-3..4) x police (-5..3) grid is evaluated and `(talents - drones)` (halved when
+positive unless the base is drone-free and more than half talents; minus the population when
+negative, doubled below size 6) is added to the table cell. Mistakes found while matching the
+original: the -2 drones facility is the Recreation Commons (id 6), not the Children's Creche;
+the assimilation drones are `range((pop + diff - 2) / 4, 0, (turns + 9) / 10)` (arguments were
+swapped); the bureaucracy formula must be signed (`current_num_bases` is unsigned, the
+subtraction wraps and the result clamps to the population); stage 0 clamps the drones but not
+the talents before the fit. Police units are counted in two passes (police-2x and, for
+`RFLAG_WORMPOLICE` factions, native land units first), the Self-Aware Colony counts as one unit,
+and under police -5 the pacifism drones double. Clinical Immortality gives two talents in the
+original (the manual says one), kept as is.
 
 ## World generators
 
@@ -134,17 +184,62 @@ passes.
 | world_raise_alt / world_lower_alt | 27 each | 24 / 24 | 0 / 0 |
 | world_crater, monsoon, sargasso, ruin, dune, diamond, fresh, temple, unity, fossil, canyon, mesa, ridge, geothermal | 27 each | 14..27 each | 0 |
 | world_volcano | 54 | 54 | 0 |
-| world_borehole | 27 | 27 | 1-2, varies per run (see below) |
+| world_borehole | 27 | 27 | 0 with the clock pinned (see below) |
 | brush | 80 | 74 | 0 |
 | paint_land | 32 | 32 | 0 |
 | build_continent | 8 | 8 | 0 |
 | build_hills | 6 | 6 | 0 |
 | world_riverbeds, world_temperature, world_analysis, world_linearize_contours, world_landmarks | 3 each | 3 each | 0 |
-| world_polar_caps | 3 | 0 | 0 |
+| world_polar_caps | 3 | 0 | 0 (2 on 160-wide maps until the sweep fix, see below) |
 
 `world_borehole` reads `timeGetTime()` to pick its layout; the two sides read it a few
-milliseconds apart and occasionally straddle a timer tick. Pinning the clock during the compare
-(exe IAT entry plus a DLL-side pointer) would close it; nothing in the transcription differs.
+milliseconds apart and occasionally straddled a timer tick (1-2 mismatches per run). The harness
+now pins the clock for that test: `TimeGetTimePin` in regress.cpp walks the import tables of the
+exe and of OpenSMACX.dll, points both `winmm.dll!timeGetTime` slots at a stub, and each sample
+sets the stub's value from its seed so the four layout branches are all exercised. 27/27 match.
+
+## Save sweep (2026-10-16)
+
+One save is not a standard. `tools/mp/regress_sweep.ps1` (built on the same ui.ps1 driver as the multiplayer scripts) loads a list of
+saves into one running game (Ctrl+L), triggers the suite on each and keeps every log under
+`docs/regression-runs/sweep-2026-10-16/`. The exe for a sweep is patched from the 507-row table
+(`build/redirects_507.tsv`), so every held-back function still runs on the exe side and is
+compared, not just the ones promoted last. Thirteen saves from three games were swept: the
+2026 game at turns 1, 48, 53, 71, 74, 75 and 272, the 2023 Aki Zeta-5 game at turns 20, 52, 113
+and 147, and two 2024 Steam autosaves (turns 20 and 32); 128x128 and 160x160 maps, 5 to 300
+bases, 51 to 1637 units. Result after the fixes below: every test 0 mismatches on every save,
+no crashes; the one exception is the known timing-dependent social_ai case on Bugged.SAV.
+
+What the sweep found that Council.SAV had hidden:
+
+- `world_polar_caps` placed the bottom-row detail at `x - 1` instead of `x + 1`, and its loop
+  counter was a byte. Invisible on a 128-wide map, two tiles off on 160-wide ones.
+- `world_landmarks` in the C++ placed a Nessus Canyon on random maps, an upstream addition the
+  original does not make. Removed to match the original (a comment marks the spot; it is a
+  one-line change to put back as an option). The borehole inside it also needed the clock pin.
+- `best_defender(def, -1, ...)` crashed inside `has_abil()` on 8 of 13 saves, in the original's
+  own code path: with no attacker the exe reads `Vehs[-1]`, which is the Reactor table, and
+  takes the high half of a heap string pointer as the attacker's prototype id. On a late save
+  that pointer happened to be low (and the test even matched); on most others it is not, the
+  implied "faction" is in the thousands and the exe faults. The DLL now treats a negative
+  attacker as no attacker in `battle_compute` and `best_defender` (the only intentional
+  deviation from the original in this set; both functions say so in a comment), and the
+  harness no longer compares attacker -1.
+
+`tools/savescan.py` reads a .SAV offline and reports the states these tests depend on, so saves
+can be chosen for coverage instead of guessed at: per faction the SE values, rules (talent,
+drone, worm police), base counts with nerve staples, punishment spheres, brood pits and the
+drone-related facilities, combat units outside their own territory (the pacifism source), and
+who owns the psych-related secret projects. The save is a dump of the game's own structures;
+the fixed offsets are the game globals block at 0x3xx (file = exe address - 0x9A6168), the
+faction data at 0x6C4, the faction rules at 0x10D24, the map globals at 0x13A24 and the tiles
+at 0x144C8; the prototype table is found by its first name, the units follow it by 0x7DB0, the
+bases follow the units by 0x2BC and end 0x21E4 before the end of the file. `--table` gives one
+line per save with coverage flags; the table for all 106 saves on this machine is kept next to
+the sweep logs. It showed that no save has a nerve-stapled base or a Genejack Factory, and
+that the pacifism count is never set outside base_upkeep, so `base_psych` now also runs with
+synthetic inputs (pacifism 1..3 across the grid and stapled bases); 846 comparisons per save,
+0 mismatches on Council, Bugged and Starcraft.
 
 ## Fixes made while testing (all verified by the runs above)
 
@@ -184,11 +279,12 @@ milliseconds apart and occasionally straddle a timer tick. Pinning the clock dur
   `world_temperature` (bore loop 8 instead of 9 tiles, unsigned orbit term), `world_analysis`
   (byte offset 0x20 read as index 32, thresholds).
 
-## Promotion (548 redirects)
+## Promotion (552 redirects)
 
 `tools/redirects.tsv` now redirects value_of_base, world_validate, base_mark,
 enemy_capabilities, social_ai, Path::sensors, the 29 world generators and the six `do_*`
-wrappers (41 new rows, 548 in total). Boot-tested with a Quick Start game (map generation,
+wrappers (41 new rows, 548 in total), then base_psych (549), then battle_compute, best_defender
+and wants_to_attack (552). Boot-tested with a Quick Start game (map generation,
 founding a base, turns) and with the 2389 save (a turn, then the whole suite: 45 tests, no
 crash). Promoting `do_non_input` exposed one more transcription error that the earlier
 disassembly reading had missed: the three `PeekMessage` ranges are tried in turn and the first
@@ -200,14 +296,27 @@ harness then compares the DLL with itself. To re-test a promoted function, patch
 table that omits it (`opensmacx_patch.py -t <table>`), e.g. the previous 507-row table from
 `git show 851367d:tools/redirects.tsv`.
 
-## Verified by disassembly only
+## Status lines and logs
+
+Every redirected function's `Status:` line now reads `Complete (verified vs original: <log>)`,
+naming the run under `docs/regression-runs/` that compared it with the exe. The 2026-10-15 full
+run covers the held-back set and base_psych, the time-pinned run covers world_borehole, and the
+2026-10-16 full run covers the combat trio and the message-pump wrappers. The combat and wrapper
+rows of that run were produced with an exe patched from a table without the six `do_*` rows, so
+the wrappers ran on the exe side; everything already redirected compared the DLL with itself.
+
+## do_* message-pump wrappers (message-level test)
 
 `do_non_input`, `do_all_non_input`, `do_draw`, `do_all_draws`, `do_keyboard`,
-`do_all_keyboard`: message-pump wrappers; compared instruction by instruction against the exe
-(see the fix above).
+`do_all_keyboard` were first compared instruction by instruction (see the fix above). The
+harness now also tests them at message level (`do_wrappers`): probe messages that the game's
+window procedure ignores are posted to the main window on each range boundary the wrappers
+filter on (0xFE, WM_KEYUP, 0x108, 0x109, 0x1F5, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_USER+0x123) in
+fifteen orderings, one wrapper call is made, and the return value, the probes still queued and
+`MsgStatus` are compared between the exe and the DLL; the draw pair is checked by invalidating
+the window and seeing whether a WM_PAINT is left. Stray timer messages are removed right before
+the call and a case is retried up to three times. 62 cases, 0 mismatches, 0 retries needed.
 
 ## Not covered
 
 - `Path::find` and `Path::move` are stubs upstream (`return 0`), nothing to test yet.
-- `base_psych` needs the missing table accumulation before a test can pass.
-- `battle_compute` / `best_defender` / `wants_to_attack`: see the first results table.

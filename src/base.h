@@ -507,6 +507,9 @@ extern uint32_t *BaseCurrentConvoyFrom; // resources convoyed from base
 extern uint32_t *BaseCurrentConvoyTo; // resources convoyed/extracted to base
 extern int *BaseCurrentGrowthRate;
 extern uint32_t *BaseCurrentVehPacifismCount;
+extern int *BaseCurrentTalentsStage;
+extern int *BaseCurrentDronesStage;
+extern int *BaseCurrentSuperDronesStage;
 extern uint32_t *BaseCurrentForcesSupported; // Forces Supported by Base
 extern uint32_t *BaseCurrentForcesMaintCost; // Minerals expended for Forces Supported maintenance
 

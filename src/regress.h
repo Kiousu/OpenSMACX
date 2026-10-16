@@ -26,9 +26,18 @@
   * loaded. The next time the main thread passes through veh_at() the suite runs once, writes
   * "opensmacx_regress.log" next to it and deletes the trigger. The file may list test names,
   * one per line, to run a subset; empty runs everything.
+  *
+  * The harness (this file's implementation, the watcher thread and the veh_at() hook) is only
+  * compiled in with /DOPENSMACX_REGRESS; a normal build contains none of it.
   */
 
+#ifdef OPENSMACX_REGRESS // build with /DOPENSMACX_REGRESS to compile the harness in
 extern volatile LONG RegressPending; // set by the watcher thread, consumed on the main thread
 
 void regress_init(); // starts the trigger watcher thread (idempotent, cheap)
 void regress_run(); // runs the suite now on the calling thread
+#else
+#define RegressPending 0
+inline void regress_init() {}
+inline void regress_run() {}
+#endif

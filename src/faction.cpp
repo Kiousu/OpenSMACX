@@ -649,7 +649,7 @@ uint32_t __cdecl has_agenda(uint32_t faction_id, uint32_t faction_id_with, uint3
 Purpose: Determine if the specified faction want to attack the target faction.
 Original Offset: 0055BC80
 Return Value: Does the faction want to attack target? true/false
-Status: Complete - testing
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-full.log)
 */
 BOOL __cdecl wants_to_attack(uint32_t faction_id, uint32_t faction_id_tgt, int faction_id_unk) {
     uint32_t peace_faction_id = 0;
@@ -662,22 +662,25 @@ BOOL __cdecl wants_to_attack(uint32_t faction_id, uint32_t faction_id_tgt, int f
         DTREATY_WANT_REVENGE | DTREATY_UNK_40 | DTREATY_ATROCITY_VICTIM)) {
         return true;
     }
-    if (PlayersData[faction_id_tgt].major_atrocities && PlayersData[faction_id].major_atrocities) {
+    // target has committed major atrocities while this faction has not
+    if (PlayersData[faction_id_tgt].major_atrocities && !PlayersData[faction_id].major_atrocities) {
         return true;
     }
     if (has_treaty(faction_id, faction_id_tgt, DTREATY_UNK_4000000)) {
         return false;
     }
-    if (PlayersData[faction_id].current_num_bases <= 1) {
+    if ((int)PlayersData[faction_id].current_num_bases <= 1) {
         return false;
     }
     if (!is_human(faction_id_tgt) && PlayersData[faction_id].flags & PFLAG_TEAM_UP_VS_HUMAN) {
         return false;
     }
-    uint32_t want_to_attack = 0;
+    int want_to_attack = 0; // signed: the original's comparisons on it are signed
     for (uint32_t i = 1; i < MaxPlayerNum; i++) {
         if (i != faction_id && i != faction_id_tgt) {
-            if (has_treaty(faction_id, i, DTREATY_HAVE_SURRENDERED | DTREATY_PACT)) {
+            // both flags are required (surrendered to i and pact with i)
+            if (has_treaty(faction_id, i, DTREATY_HAVE_SURRENDERED)
+                && has_treaty(faction_id, i, DTREATY_PACT)) {
                 peace_faction_id = i;
             }
             if (has_treaty(faction_id, i, DTREATY_VENDETTA)
@@ -724,10 +727,16 @@ BOOL __cdecl wants_to_attack(uint32_t faction_id, uint32_t faction_id_tgt, int f
     if (PlayersData[faction_id].ai_fight < 0 && !unk_tgl && FactionRankings[7] != faction_id_tgt) {
         return false;
     }
-    uint32_t region_top_base_count[8] = { 0 }; // bug fix: initialize to zero, original doesn't and
-    for (int region = 1; region < MaxRegionLandNum; region++) { // compares arbitrary data on stack
+    // The original never initializes this array (a 64-entry uint stack buffer at [ebp-0x134]):
+    // each [f] starts as stale stack data and is max()'d (signed) against the bases counts, so a
+    // stale value larger than the real maximum survives into the thresholds below. This is the
+    // source of the original's run-to-run instability. Zero matches the original whenever the
+    // stale value is <= the real maximum (e.g. left over from a previous call of this function,
+    // which leaves max - max / 4 in each slot); the garbage case cannot be reproduced.
+    int region_top_base_count[8] = { 0 };
+    for (int region = 1; region < MaxRegionLandNum; region++) {
         for (uint32_t f = 1; f < MaxPlayerNum; f++) {
-            uint32_t total_bases = PlayersData[f].region_total_bases[region];
+            int total_bases = PlayersData[f].region_total_bases[region];
             if (total_bases > region_top_base_count[f]) {
                 region_top_base_count[f] = total_bases;
             }
@@ -748,19 +757,19 @@ BOOL __cdecl wants_to_attack(uint32_t faction_id, uint32_t faction_id_tgt, int f
             }
         }
     }
-    uint32_t factor_force_rating = 0;
-    uint32_t factor_count = 0;
-    uint32_t factor_unk = 1;
+    int factor_force_rating = 0; // signed: the original's final division/compare are signed
+    int factor_count = 0;
+    int factor_unk = 1;
     for (int region = 1; region < MaxRegionLandNum; region++) {
         if (!bad_reg(region)) {
             uint32_t force_rating = PlayersData[faction_id].region_force_rating[region];
             if (force_rating) {
-                uint32_t total_cmbt_vehs 
+                uint32_t total_cmbt_vehs
                     = PlayersData[faction_id_tgt].region_total_combat_vehs[region];
                 uint32_t total_bases_tgt = PlayersData[faction_id_tgt].region_total_bases[region];
                 if (total_cmbt_vehs || total_bases_tgt) {
-                    if (PlayersData[faction_id].region_total_bases[region] 
-                        >= ((region_top_base_count[faction_id] / 4) * 3) || region == region_hq) {
+                    if ((int)PlayersData[faction_id].region_total_bases[region]
+                        >= ((region_top_base_count[faction_id] * 3) / 4) || region == region_hq) {
                         uint32_t compare = force_rating +
                             PlayersData[faction_id].region_total_combat_vehs[region] +
                             (faction_id_unk > 0 
@@ -773,14 +782,14 @@ BOOL __cdecl wants_to_attack(uint32_t faction_id, uint32_t faction_id_tgt, int f
                         factor_force_rating += force_rating + (faction_id_unk > 0
                             ? PlayersData[faction_id_unk].region_force_rating[region] / 2 : 0);
                     }
-                    if ((total_bases_tgt >= ((region_top_base_count[faction_id_tgt] / 4) * 3)
+                    if (((int)total_bases_tgt >= ((region_top_base_count[faction_id_tgt] * 3) / 4)
                         || region == region_target_hq) && force_rating > total_cmbt_vehs) {
                         factor_force_rating += force_rating + (faction_id_unk > 0
                             ? PlayersData[faction_id_unk].region_force_rating[region] / 2 : 0);
                     }
-                    factor_unk += total_cmbt_vehs 
-                        + PlayersData[faction_id].region_total_bases[region]
-                        ? PlayersData[faction_id_tgt].region_force_rating[region] / 2 : 0;
+                    factor_unk += total_cmbt_vehs
+                        + (PlayersData[faction_id].region_total_bases[region]
+                        ? PlayersData[faction_id_tgt].region_force_rating[region] / 2 : 0);
                     if (PlayersData[faction_id].region_total_bases[region]) {
                         factor_count++;
                     }
@@ -798,7 +807,7 @@ BOOL __cdecl wants_to_attack(uint32_t faction_id, uint32_t faction_id_tgt, int f
         want_to_attack--;
     }
     int best_armor_target = PlayersData[faction_id_tgt].best_armor_value;
-    int best_weapon = PlayersData[faction_id_tgt].best_weapon_value;
+    int best_weapon = PlayersData[faction_id].best_weapon_value;
     if (best_weapon > (best_armor_target * 2)) {
         want_to_attack--;
     }
@@ -808,14 +817,14 @@ BOOL __cdecl wants_to_attack(uint32_t faction_id, uint32_t faction_id_tgt, int f
     if (!has_treaty(faction_id, faction_id_tgt, DTREATY_VENDETTA)) {
         want_to_attack++;
     }
-    if (!has_treaty(faction_id, faction_id_tgt, DTREATY_PACT)) {
+    if (has_treaty(faction_id, faction_id_tgt, DTREATY_PACT)) {
         want_to_attack++;
     }
     if (faction_id_unk > 0 && !great_satan(faction_id_unk, false)) {
         want_to_attack--;
     }
     if (has_agenda(faction_id, faction_id_tgt, DAGENDA_UNK_200)
-        && *GameRules & RULES_INTENSE_RIVALRY) {
+        && !(*GameRules & RULES_INTENSE_RIVALRY)) {
         want_to_attack--;
     }
     want_to_attack -= range((PlayersData[faction_id_tgt].integrity_blemishes 
@@ -1263,7 +1272,7 @@ BOOL __cdecl society_avail(int soc_category, int soc_model, uint32_t faction_id)
 Purpose: Calculate an AI faction's social engineering.
 Original Offset: 005B4790
 Return Value: n/a
-Status: Complete - testing (likely has multiple issues due to length + complexity)
+Status: Complete (verified vs original: docs/regression-runs/2026-10-15-council-full.log; one timing-dependent case, see docs/regression-testing.md)
 */
 void __cdecl social_ai(uint32_t faction_id, int growth_val, int tech_val, int wealth_val, 
                        int power_val, SocialCategory *output) {
@@ -1780,7 +1789,7 @@ Purpose: Calculate specified faction's best available weapon and armor ratings a
          capabilities based on current diplomacy.
 Original Offset: 00560DD0
 Return Value: n/a
-Status: Complete - testing / WIP
+Status: Complete (verified vs original: docs/regression-runs/2026-10-15-council-full.log)
 */
 void __cdecl enemy_capabilities(uint32_t faction_id) {
     BOOL has_worms = veh_avail(BSC_MIND_WORMS, faction_id, -1);
