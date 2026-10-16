@@ -3668,6 +3668,243 @@ static int test_scan_prototypes() {
     return mismatches;
 }
 
+// ---------------------------------------------------------------- batch 10
+
+static int test_set_course() {
+    GameSnapshot base, after_orig, after_new;
+    snap_alloc(&base); snap_alloc(&after_orig); snap_alloc(&after_new);
+    snap_take(&base);
+    int compared = 0, mismatches = 0, ordered = 0;
+    char label[80];
+    int w = *MapLongitudeBounds, h = *MapLatitudeBounds;
+    for (int veh_id = 0; veh_id < base.veh_count; veh_id += 4) {
+        // the unit's own tile, three fixed tiles, and a tile near the unit
+        int targets[5][2] = { { base.vehs[veh_id].x, base.vehs[veh_id].y }, { 10, 10 }, { 61, 31 },
+            { 40, 100 }, { xrange(base.vehs[veh_id].x + 6), (base.vehs[veh_id].y + 4) % h } };
+        for (int k = 0; k < 5; k++) {
+            int x = targets[k][0], y = targets[k][1];
+            if (((x ^ y) & 1) || x < 0 || x >= w || y < 0 || y >= h) {
+                continue;
+            }
+            uint8_t type = (uint8_t)(k % 3);
+            snap_restore(&base);
+            set_course_OG(veh_id, type, x, y);
+            snap_take(&after_orig);
+            ordered += after_orig.vehs[veh_id].order == ORDER_MOVE_TO;
+            snap_restore(&base);
+            set_course(veh_id, type, x, y);
+            snap_take(&after_new);
+            compared++;
+            sprintf_s(label, "set_course(%d, %u, %d, %d)", veh_id, type, x, y);
+            if (snap_differs(&after_orig, &after_new, mismatches < MAX_DETAIL ? label : NULL)) {
+                mismatches++;
+            }
+        }
+    }
+    snap_restore(&base);
+    snap_free(&base); snap_free(&after_orig); snap_free(&after_new);
+    logf("set_course: %d compared (%d move orders set by the original), %d mismatches", compared, ordered,
+        mismatches);
+    return mismatches;
+}
+
+// tech_achieved() replaced by a five byte jump into a C++ recorder that keeps the arguments of
+// every call (the callers' cdecl frames pass straight through). Used where a test triggers more
+// than one call.
+struct TechAchievedCall { int faction_id, tech_id, faction_id_from; };
+static TechAchievedCall TechAchievedCallLog[8];
+static int TechAchievedCallCount = 0;
+static void __cdecl tech_achieved_recorder(int faction_id, int tech_id, int faction_id_from, int) {
+    if (TechAchievedCallCount < 8) {
+        TechAchievedCallLog[TechAchievedCallCount].faction_id = faction_id;
+        TechAchievedCallLog[TechAchievedCallCount].tech_id = tech_id;
+        TechAchievedCallLog[TechAchievedCallCount].faction_id_from = faction_id_from;
+    }
+    TechAchievedCallCount++;
+    TechAchievedRecorded = tech_id;
+}
+struct TechAchievedJmpStub {
+    uint8_t *entry;
+    uint8_t saved_code[5];
+    DWORD old_protect;
+    BOOL ok;
+    TechAchievedJmpStub() : entry((uint8_t *)tech_achieved), old_protect(0), ok(false) {
+        uint8_t stub[5] = { 0xE9, 0, 0, 0, 0 };
+        int32_t rel = (int32_t)((uint8_t *)tech_achieved_recorder - (entry + 5));
+        memcpy(stub + 1, &rel, 4);
+        if (!VirtualProtect(entry, sizeof(stub), PAGE_EXECUTE_READWRITE, &old_protect)) {
+            logf("cannot unprotect tech_achieved (%u)", GetLastError());
+            return;
+        }
+        memcpy(saved_code, entry, sizeof(stub));
+        memcpy(entry, stub, sizeof(stub));
+        FlushInstructionCache(GetCurrentProcess(), entry, sizeof(stub));
+        ok = true;
+    }
+    ~TechAchievedJmpStub() {
+        if (ok) {
+            memcpy(entry, saved_code, sizeof(saved_code));
+            FlushInstructionCache(GetCurrentProcess(), entry, sizeof(saved_code));
+            VirtualProtect(entry, sizeof(saved_code), old_protect, &old_protect);
+        }
+    }
+};
+
+static int test_enemies_trade_tech() {
+    TechAchievedJmpStub stub;
+    if (!stub.ok) {
+        return 1;
+    }
+    GameSnapshot base, after_orig, after_new;
+    snap_alloc(&base); snap_alloc(&after_orig); snap_alloc(&after_new);
+    snap_take(&base);
+    int compared = 0, mismatches = 0, trades = 0;
+    char label[80];
+    for (int f1 = 1; f1 < MaxPlayerNum; f1++) {
+        for (int f2 = 1; f2 < MaxPlayerNum; f2++) {
+            if (f1 == f2) {
+                continue;
+            }
+            for (int variant = 0; variant < 2; variant++) {
+                // as loaded, and as pact partners
+                auto prepare = [&]() {
+                    snap_restore(&base);
+                    if (variant) {
+                        PlayersData[f1].diplo_treaties[f2] |= DTREATY_PACT;
+                        PlayersData[f2].diplo_treaties[f1] |= DTREATY_PACT;
+                    }
+                    TechAchievedCallCount = 0;
+                    memset(TechAchievedCallLog, 0, sizeof(TechAchievedCallLog));
+                    reseed(f1 * 23 + f2 * 5 + variant);
+                };
+                prepare();
+                enemies_trade_tech_OG(f1, f2);
+                snap_take(&after_orig);
+                int count_o = TechAchievedCallCount;
+                TechAchievedCall calls_o[8];
+                memcpy(calls_o, TechAchievedCallLog, sizeof(calls_o));
+                prepare();
+                enemies_trade_tech(f1, f2);
+                snap_take(&after_new);
+                int count_n = TechAchievedCallCount;
+                compared++;
+                trades += count_o;
+                sprintf_s(label, "enemies_trade_tech(%d, %d) variant %d", f1, f2, variant);
+                BOOL diff = false;
+                if (count_o != count_n || memcmp(calls_o, TechAchievedCallLog, sizeof(calls_o)) != 0) {
+                    if (mismatches < MAX_DETAIL) {
+                        logf("  %s: orig %d calls (first %d/%d/%d), new %d calls (first %d/%d/%d)", label,
+                            count_o, calls_o[0].faction_id, calls_o[0].tech_id, calls_o[0].faction_id_from,
+                            count_n, TechAchievedCallLog[0].faction_id, TechAchievedCallLog[0].tech_id,
+                            TechAchievedCallLog[0].faction_id_from);
+                    }
+                    diff = true;
+                }
+                if (!diff) {
+                    diff = snap_differs(&after_orig, &after_new, mismatches < MAX_DETAIL ? label : NULL);
+                }
+                if (diff) {
+                    mismatches++;
+                }
+            }
+        }
+    }
+    snap_restore(&base);
+    snap_free(&base); snap_free(&after_orig); snap_free(&after_new);
+    logf("enemies_trade_tech: %d compared (%d techs traded by the original), %d mismatches", compared,
+        trades, mismatches);
+    return mismatches;
+}
+
+static int test_tech_analysis() {
+    int *const globals[15] = { DiploTechProjectID, DiploTechGiveID4, DiploTechGiveID3, DiploTechGiveID2,
+        DiploTechGiveID1, DiploTechGetID2, DiploTechGetID1, DiploTechGetValue2, DiploTechGiveValue2,
+        DiploTechGetValue1, DiploTechGiveValue1, DiploTechGiveValue4, DiploTechGiveValue3,
+        DiploTechGetProject2, DiploTechGetProject1 };
+    int saved[15], orig[15], fresh[15];
+    for (int i = 0; i < 15; i++) {
+        saved[i] = *globals[i];
+    }
+    int compared = 0, mismatches = 0, with_project = 0;
+    for (int f = 1; f < MaxPlayerNum; f++) {
+        int diff_saved = PlayersData[f].diff_level;
+        for (uint32_t other = 1; other < MaxPlayerNum; other++) {
+            if ((int)other == f) {
+                continue;
+            }
+            for (int variant = 0; variant < 5; variant++) {
+                // difficulty as loaded, 1 and 5; then, at difficulty 5 and 1, a secret project made
+                // unbuilt whose prerequisite the other faction has and this one lacks, queued at
+                // one of the other faction's bases
+                PlayersData[f].diff_level = variant == 0 ? diff_saved : variant == 1 || variant == 4 ? 1 : 5;
+                int sp_patched = -1, sp_base_saved = -1, sp_queue_saved = 0, sp_base = -1;
+                uint8_t tech_saved = 0;
+                int tech_patched = -1;
+                if (variant >= 3) {
+                    for (uint32_t sp = 0; sp < MaxSecretProjectNum && sp_patched < 0; sp++) {
+                        int tech = Facility[FAC_HUMAN_GENOME_PROJ + sp].preq_tech;
+                        if (tech >= 0 && has_tech(tech, other)) {
+                            sp_patched = sp;
+                            tech_patched = tech;
+                        }
+                    }
+                    if (sp_patched >= 0) {
+                        sp_base_saved = (&SecretProject->human_genome_project)[sp_patched];
+                        (&SecretProject->human_genome_project)[sp_patched] = -1;
+                        tech_saved = GameTechAchieved[tech_patched];
+                        GameTechAchieved[tech_patched] &= ~(uint8_t)(1 << f);
+                        for (int i = 0; i < *BaseCurrentCount; i++) {
+                            if (Bases[i].faction_id_current == other) {
+                                sp_base = i;
+                                sp_queue_saved = Bases[i].queue_production_id[0];
+                                Bases[i].queue_production_id[0] = -(int)(FAC_HUMAN_GENOME_PROJ + sp_patched);
+                                break;
+                            }
+                        }
+                    }
+                }
+                for (int i = 0; i < 15; i++) {
+                    *globals[i] = -77;
+                }
+                tech_analysis_OG(f, other);
+                for (int i = 0; i < 15; i++) {
+                    orig[i] = *globals[i];
+                    *globals[i] = -77;
+                }
+                tech_analysis(f, other);
+                for (int i = 0; i < 15; i++) {
+                    fresh[i] = *globals[i];
+                }
+                if (sp_patched >= 0) {
+                    (&SecretProject->human_genome_project)[sp_patched] = sp_base_saved;
+                    GameTechAchieved[tech_patched] = tech_saved;
+                    if (sp_base >= 0) {
+                        Bases[sp_base].queue_production_id[0] = sp_queue_saved;
+                    }
+                }
+                compared++;
+                with_project += orig[0] != -1;
+                if (memcmp(orig, fresh, sizeof(orig)) != 0) {
+                    if (mismatches < MAX_DETAIL) {
+                        int i = 0;
+                        while (i < 15 && orig[i] == fresh[i]) i++;
+                        logf("  tech_analysis(%d, %u) variant %d: global %d differs (orig %d new %d)", f, other,
+                            variant, i, orig[i], fresh[i]);
+                    }
+                    mismatches++;
+                }
+            }
+        }
+        PlayersData[f].diff_level = diff_saved;
+    }
+    for (int i = 0; i < 15; i++) {
+        *globals[i] = saved[i];
+    }
+    logf("tech_analysis: %d compared (%d with a project found), %d mismatches", compared, with_project,
+        mismatches);
+    return mismatches;
+}
+
 static DWORD WINAPI regress_watcher(LPVOID) {
     for (;;) {
         Sleep(1000);
@@ -3769,6 +4006,9 @@ void regress_run() {
     if (test_enabled("batch8", "territory")) total += run_guarded("territory", test_territory);
     if (test_enabled("batch9", "suggest_plan")) total += run_guarded("suggest_plan", test_suggest_plan);
     if (test_enabled("batch9", "scan_prototypes")) total += run_guarded("scan_prototypes", test_scan_prototypes);
+    if (test_enabled("batch10", "set_course")) total += run_guarded("set_course", test_set_course);
+    if (test_enabled("batch10", "enemies_trade_tech")) total += run_guarded("enemies_trade_tech", test_enemies_trade_tech);
+    if (test_enabled("batch10", "tech_analysis")) total += run_guarded("tech_analysis", test_tech_analysis);
     if (test_enabled("enemy_capabilities")) total += run_guarded("enemy_capabilities", test_enemy_capabilities);
     if (test_enabled("social_ai")) total += run_guarded("social_ai", test_social_ai);
     if (test_enabled("Path::sensors") || test_enabled("path_sensors")) total += run_guarded("path_sensors", test_path_sensors);

@@ -45,6 +45,23 @@ int *DiploFriction = (int *)0x0093FA74; // not always bounded, should it be 0-20
 int *DiploSecondFaction = (int *)0x0093F7CC; // second faction of a joint plan; see suggest_plan()
 int *DiploProtoIDBest = (int *)0x0093F804; // another faction's design wanted most; see scan_prototypes()
 int *DiploProtoIDTradeable = (int *)0x0093FA40; // the one obtainable in diplomacy
+// tech_analysis() results: the four techs this faction could give (best first) and the two it
+// could get, with the secret project a pick unlocks
+int *DiploTechGiveID1 = (int *)0x0093FAA8; // Thinker: diplo_entry_id
+int *DiploTechGiveID2 = (int *)0x0093FA18; // Thinker: diplo_tech_id2
+int *DiploTechGiveID3 = (int *)0x0093FA1C;
+int *DiploTechGiveID4 = (int *)0x0093FA28;
+int *DiploTechGiveValue1 = (int *)0x0093F814;
+int *DiploTechGiveValue2 = (int *)0x0093FA44;
+int *DiploTechGiveValue3 = (int *)0x0093FA20;
+int *DiploTechGiveValue4 = (int *)0x0093F7C0;
+int *DiploTechGetID1 = (int *)0x0093F800; // Thinker: diplo_tech_id1
+int *DiploTechGetID2 = (int *)0x0093F80C;
+int *DiploTechGetValue1 = (int *)0x0093FAA4;
+int *DiploTechGetValue2 = (int *)0x0093F7EC;
+int *DiploTechGetProject1 = (int *)0x0093FA6C;
+int *DiploTechGetProject2 = (int *)0x0093FA84;
+int *DiploTechProjectID = (int *)0x0093F7F4; // project index the other faction is building (or -2 - index)
 uint32_t *DiploFrictionFactionIDWith = (uint32_t *)0x0093FABC;
 uint32_t *DiploFrictionFactionID = (uint32_t *)0x0093FAC0;
 
@@ -452,6 +469,114 @@ void __cdecl scan_prototypes(uint32_t faction_id, uint32_t faction_id_other) {
                 score_trade = trade;
             }
         }
+    }
+}
+
+/*
+Purpose: Work out what technologies two factions could trade: the four most valuable techs this
+         faction could give the other (by the other's valuation) and the two most valuable it
+         could get (by its own valuation, halved when the tech unlocks a secret project the
+         other faction is building or, at high difficulty, any unbuilt project). The project
+         found is recorded, and a second pick tied to a project is dropped.
+Original Offset: 0053E800
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch10.log)
+*/
+void __cdecl tech_analysis(int faction_id, uint32_t faction_id_other) {
+    *DiploTechProjectID = -1;
+    *DiploTechGiveID4 = -1;
+    *DiploTechGiveID3 = -1;
+    *DiploTechGiveID2 = -1;
+    *DiploTechGiveID1 = -1;
+    *DiploTechGetID2 = -1;
+    *DiploTechGetID1 = -1;
+    *DiploTechGetValue2 = 0;
+    *DiploTechGiveValue2 = 0;
+    *DiploTechGetValue1 = 0;
+    *DiploTechGiveValue1 = 0;
+    *DiploTechGiveValue4 = 0;
+    *DiploTechGiveValue3 = 0;
+    *DiploTechGetProject2 = -1;
+    *DiploTechGetProject1 = -1;
+    if (*GameRules & RULES_SCN_NO_TECH_TRADING) {
+        return;
+    }
+    for (int tech_id = 0; tech_id < MaxTechnologyNum; tech_id++) {
+        if (!has_tech(tech_id, faction_id_other)) {
+            if (!has_tech(tech_id, faction_id)) {
+                continue;
+            }
+            int value = tech_val(tech_id, faction_id_other, false);
+            if (value >= *DiploTechGiveValue1) {
+                *DiploTechGiveID4 = *DiploTechGiveID3;
+                *DiploTechGiveID3 = *DiploTechGiveID2;
+                *DiploTechGiveID2 = *DiploTechGiveID1;
+                *DiploTechGiveValue4 = *DiploTechGiveValue3;
+                *DiploTechGiveValue3 = *DiploTechGiveValue2;
+                *DiploTechGiveValue2 = *DiploTechGiveValue1;
+                *DiploTechGiveValue1 = value;
+                *DiploTechGiveID1 = tech_id;
+            } else if (value >= *DiploTechGiveValue2) {
+                *DiploTechGiveValue4 = *DiploTechGiveValue3;
+                *DiploTechGiveValue3 = *DiploTechGiveValue2;
+                *DiploTechGiveID4 = *DiploTechGiveID3;
+                *DiploTechGiveID3 = *DiploTechGiveID2;
+                *DiploTechGiveID2 = tech_id;
+                *DiploTechGiveValue2 = value;
+            } else if (value >= *DiploTechGiveValue3) {
+                *DiploTechGiveValue4 = *DiploTechGiveValue3;
+                *DiploTechGiveID4 = *DiploTechGiveID3;
+                *DiploTechGiveID3 = tech_id;
+                *DiploTechGiveValue3 = value;
+            } else if (value >= *DiploTechGiveValue4) {
+                *DiploTechGiveValue4 = value;
+                *DiploTechGiveID4 = tech_id;
+            }
+        } else if (!has_tech(tech_id, faction_id)) {
+            int project = -1;
+            if (PlayersData[faction_id].diff_level > 2
+                || strcmp(Players[faction_id_other].filename, "HIVE") == 0) {
+                for (uint32_t sp = 0; sp < MaxSecretProjectNum; sp++) {
+                    if ((&SecretProject->human_genome_project)[sp] != -1
+                        || Facility[FAC_HUMAN_GENOME_PROJ + sp].preq_tech != tech_id) {
+                        continue;
+                    }
+                    for (int i = 0; i < *BaseCurrentCount; i++) {
+                        if (Bases[i].faction_id_current == faction_id_other
+                            && Bases[i].queue_production_id[0] == -(int)(FAC_HUMAN_GENOME_PROJ + sp)) {
+                            *DiploTechProjectID = sp;
+                            project = sp;
+                        }
+                    }
+                    if (((PlayersData[faction_id].diff_level > 4
+                        && (!*IsMultiplayerNet || faction_id != (int)*RankingFactionIDUnk2))
+                        || (*IsMultiplayerNet && faction_id == (int)*RankingFactionIDUnk1))
+                        && *DiploTechProjectID == -1) {
+                        *DiploTechProjectID = -2 - sp;
+                        project = -2 - sp;
+                    }
+                }
+            }
+            int value = tech_val(tech_id, faction_id, false);
+            if (project != -1) {
+                value = (value + 1) / 2;
+            }
+            if (value >= *DiploTechGetValue1) {
+                *DiploTechGetValue2 = *DiploTechGetValue1;
+                *DiploTechGetProject2 = *DiploTechGetProject1;
+                *DiploTechGetID2 = *DiploTechGetID1;
+                *DiploTechGetID1 = tech_id;
+                *DiploTechGetProject1 = project;
+                *DiploTechGetValue1 = value;
+            } else if (value >= *DiploTechGetValue2) {
+                *DiploTechGetValue2 = value;
+                *DiploTechGetID2 = tech_id;
+                *DiploTechGetProject2 = project;
+            }
+        }
+    }
+    if (*DiploTechGetProject2 != -1) {
+        *DiploTechGetID2 = -1;
     }
 }
 
@@ -939,6 +1064,69 @@ BOOL __cdecl wants_to_attack(uint32_t faction_id, uint32_t faction_id_tgt, int f
         return false;
     }
     return true;
+}
+
+/*
+Purpose: Let two pact factions swap technologies: each side rolls for the tech it lacks and the other
+         has (weighted by tech_val(), skipping techs whose source is a pact partner or a treaty
+         partner the holder is not annoyed enough with) and both get their pick. If only one
+         side has a pick, the exchange still happens one way when the top-ranked faction is a
+         threat to everyone and the receiver is not ahead of the technology leader.
+Original Offset: 0055D430
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch10.log)
+*/
+void __cdecl enemies_trade_tech(int faction_id, int faction_id_2) {
+    if (*GameRules & RULES_SCN_NO_TECH_TRADING) {
+        return;
+    }
+    int tech_for_1 = -1, tech_for_2 = -1;
+    int roll_1 = -9999, roll_2 = -9999;
+    BOOL pact = (PlayersData[faction_id].diplo_treaties[faction_id_2] & DTREATY_PACT) != 0;
+    int friction_needed = pact ? 6 : 16;
+    for (int tech_id = 0; tech_id < MaxTechnologyNum; tech_id++) {
+        if (!has_tech(tech_id, faction_id) && has_tech(tech_id, faction_id_2)) {
+            int source = PlayersData[faction_id_2].tech_trade_source[tech_id];
+            if ((source == 0 || !(PlayersData[faction_id_2].diplo_treaties[source] & DTREATY_PACT))
+                && (!(PlayersData[faction_id_2].diplo_treaties[source] & DTREATY_TREATY)
+                    || (int)PlayersData[faction_id_2].diplo_friction[source] >= friction_needed)) {
+                int value = tech_val(tech_id, faction_id, false);
+                int roll = (value == 1 || value - 1 < 0) ? 0 : _rand() % value;
+                if (roll > roll_1) {
+                    tech_for_1 = tech_id;
+                    roll_1 = roll;
+                }
+            }
+        } else if (!has_tech(tech_id, faction_id_2) && has_tech(tech_id, faction_id)) {
+            int source = PlayersData[faction_id].tech_trade_source[tech_id];
+            // the friction test looks up the second faction's source (as the original does)
+            int source_2 = PlayersData[faction_id_2].tech_trade_source[tech_id];
+            if ((source == 0 || !(PlayersData[faction_id].diplo_treaties[source] & DTREATY_PACT))
+                && (!(PlayersData[faction_id].diplo_treaties[source] & DTREATY_TREATY)
+                    || (int)PlayersData[faction_id_2].diplo_friction[source_2] >= friction_needed)) {
+                int value = tech_val(tech_id, faction_id_2, false);
+                int roll = (value == 1 || value - 1 < 0) ? 0 : _rand() % value;
+                if (roll > roll_2) {
+                    roll_2 = roll;
+                    tech_for_2 = tech_id;
+                }
+            }
+        }
+    }
+    if (tech_for_1 >= 0 && tech_for_2 >= 0) {
+        tech_achieved(faction_id, tech_for_1, faction_id_2, 0);
+        tech_achieved(faction_id_2, tech_for_2, faction_id, 0);
+        return;
+    }
+    if (pact && great_satan(FactionRankings[7], false)) {
+        int tech_ranking_leader = PlayersData[*RankingFactionIDUnk1].tech_ranking;
+        if (tech_for_1 >= 0 && PlayersData[faction_id_2].tech_ranking <= tech_ranking_leader) {
+            tech_achieved(faction_id, tech_for_1, faction_id_2, 0);
+        }
+        if (tech_for_2 >= 0 && PlayersData[faction_id].tech_ranking <= tech_ranking_leader) {
+            tech_achieved(faction_id_2, tech_for_2, faction_id, 0);
+        }
+    }
 }
 
 /*

@@ -565,3 +565,29 @@ Log: `regression-runs/2026-10-16-council-batch9.log`. Notes: 0x93F7CC is `DiploS
 prototype flags 0x10/0x20 keep a design out of diplomacy offers.
 Boot test: the 612-redirect exe loaded Council.SAV and advanced the turn 289 -> 290 (38 s) with
 the game alive.
+
+## Batch 10, 2026-10-16 (Council.SAV, 612-redirect exe)
+
+`set_course` (veh.cpp), `enemies_trade_tech` and `tech_analysis` (faction.cpp). Trigger group
+`batch10`, three tests. `set_course` runs every 4th unit against five destinations through the
+snapshot. `enemies_trade_tech` ends in up to two `tech_achieved()` calls, so the test replaces
+that entry point with a five byte jump into a C++ recorder (`TechAchievedJmpStub`, which keeps
+every call's arguments) and compares the call list and the snapshot for every faction pair, as
+loaded and as pact partners. `tech_analysis` compares its fifteen result globals for every
+faction pair at the loaded difficulty, 1 and 5, plus two synthetic passes with an unbuilt secret
+project whose prerequisite the other faction holds and this one lacks, queued at one of the
+other faction's bases.
+
+| function | inputs | compared | mismatches |
+|---|---|---|---|
+| set_course | every 4th unit x 5 destinations x 3 move types | 2,180 (1,029 orders set) | 0 |
+| enemies_trade_tech | 42 pairs x as loaded / pact | 84 (78 techs traded) | 0 |
+| tech_analysis | 42 pairs x 5 variants | 210 (42 projects found) | 0 |
+
+Log: `regression-runs/2026-10-16-council-batch10.log`. Notes: `enemies_trade_tech` looks up the
+friction of the second faction's tech source in both directions (original quirk, kept) and
+uses the top-ranked faction (`FactionRankings[7]`) for the great_satan test; `tech_analysis`
+keeps its four give and two get candidates in fifteen scattered globals (named
+`DiploTechGive*`/`DiploTechGet*`/`DiploTechProjectID` in faction.cpp, Thinker's names noted).
+Boot test: the 615-redirect exe loaded Council.SAV and advanced the turn 289 -> 290 (38 s) with
+the game alive.

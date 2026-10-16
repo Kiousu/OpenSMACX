@@ -1314,6 +1314,73 @@ void __cdecl go_to(uint32_t veh_id, uint8_t type, int x, int y) {
 }
 
 /*
+Purpose: Give a sea unit a move-to order towards a destination. When the destination shares the
+         unit's sea region the unit heads straight there; otherwise, out of the 21 tiles around the
+         destination, the reachable ocean tile (same region, or a sea region the unit's base
+         opens onto) with the most free land tiles of the destination's region next to it is
+         picked. Colony pods also get their terraforming counter cleared.
+Original Offset: 00564890
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch10.log)
+*/
+void __cdecl set_course(int veh_id, uint8_t move_to_ai_type, int x, int y) {
+    Veh *veh = &Vehs[veh_id];
+    int lat = *MapLatitudeBounds, lon = *MapLongitudeBounds;
+    uint8_t region_veh = map_loc(veh->x, veh->y)->region;
+    int base_id = base_at(veh->x, veh->y);
+    Map *dest = map_loc(x, y);
+    uint8_t region_dest = dest->region;
+    if (region_veh == region_dest && (map_loc(veh->x, veh->y)->climate & 0xE0) < ALT_BIT_SHORE_LINE) {
+        veh->order = ORDER_MOVE_TO;
+        veh->move_to_ai_type = move_to_ai_type;
+        veh->waypoint_x[0] = (int16_t)x;
+        veh->waypoint_y[0] = (int16_t)y;
+        if (VehPrototypes[veh->proto_id].plan == PLAN_COLONIZATION) {
+            veh->terraforming_turns = 0;
+        }
+        return;
+    }
+    int best = ((dest->climate & 0xE0) >= ALT_BIT_SHORE_LINE) - 1;
+    for (int i = 0; i <= 20; i++) {
+        int x_radius = xrange(x + RadiusOffsetX[i]);
+        int y_radius = y + RadiusOffsetY[i];
+        if (y_radius < 0 || y_radius >= lat || x_radius < 0 || x_radius >= lon) {
+            continue;
+        }
+        Map *tile = map_loc(x_radius, y_radius);
+        if ((tile->climate & 0xE0) >= ALT_BIT_SHORE_LINE) {
+            continue;
+        }
+        if (base_id < 0 ? tile->region != region_veh : !base_on_sea(base_id, tile->region)) {
+            continue;
+        }
+        int land = 0;
+        for (int j = 0; j < 8; j++) {
+            int x_land = xrange(x_radius + RadiusBaseX[j]);
+            int y_land = y_radius + RadiusBaseY[j];
+            if (y_land < 0 || y_land >= lat || x_land < 0 || x_land >= lon) {
+                continue;
+            }
+            Map *shore = map_loc(x_land, y_land);
+            if ((shore->climate & 0xE0) >= ALT_BIT_SHORE_LINE && shore->region == region_dest
+                && (!(shore->bit & BIT_BASE_IN_TILE) || (shore->val2 & 0xF) > 7)) {
+                land++;
+            }
+        }
+        if (land > best) {
+            best = land;
+            veh->order = ORDER_MOVE_TO;
+            veh->move_to_ai_type = move_to_ai_type;
+            veh->waypoint_x[0] = (int16_t)x_radius;
+            veh->waypoint_y[0] = (int16_t)y_radius;
+            if (VehPrototypes[veh->proto_id].plan == PLAN_COLONIZATION) {
+                veh->terraforming_turns = 0;
+            }
+        }
+    }
+}
+
+/*
 Purpose: Check whether a supply crawler could convoy resources from a tile: it must hold no unit
          that would block the convoy, and no base within two tiles may be working the tile.
 Original Offset: 00564D90

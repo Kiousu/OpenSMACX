@@ -630,3 +630,7 @@
 # --- batch 9: joint attack target, design scan
 0x0014ACC0	?suggest_plan@@YAHII@Z
 0x0013A4A0	?scan_prototypes@@YAXII@Z
+# --- batch 10: sea move orders, AI tech trade, tech trade analysis
+0x00164890	?set_course@@YAXHEHH@Z
+0x0015D430	?enemies_trade_tech@@YAXHH@Z
+0x0013E800	?tech_analysis@@YAXHI@Z
