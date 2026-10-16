@@ -3420,6 +3420,161 @@ static int test_yields() {
     return total;
 }
 
+// ---------------------------------------------------------------- batch 8
+
+static int test_world_site() {
+    int compared = 0, mismatches = 0, usable = 0;
+    int w = *MapLongitudeBounds, h = *MapLatitudeBounds;
+    for (uint32_t sea = 0; sea < 2; sea++) {
+        for (int y = 0; y < h; y++) {
+            for (int x = y & 1; x < w; x += 2) {
+                int b = world_site_OG(x, y, sea);
+                int a = world_site(x, y, sea);
+                compared++;
+                usable += (b != 0);
+                if (a != b) {
+                    if (mismatches < MAX_DETAIL) {
+                        logf("  world_site(%d, %d, %u): new=%d orig=%d", x, y, sea, a, b);
+                    }
+                    mismatches++;
+                }
+            }
+        }
+    }
+    logf("world_site: %d compared (%d usable), %d mismatches", compared, usable, mismatches);
+    return mismatches;
+}
+
+static int test_good_sensor() {
+    int compared = 0, mismatches = 0, good = 0;
+    int w = *MapLongitudeBounds, h = *MapLatitudeBounds;
+    for (uint32_t f = 1; f < MaxPlayerNum; f++) {
+        for (int y = 0; y < h; y++) {
+            for (int x = y & 1; x < w; x += 2) {
+                BOOL b = good_sensor_OG(f, x, y);
+                BOOL a = good_sensor(f, x, y);
+                compared++;
+                good += (b != 0);
+                if ((a != 0) != (b != 0)) {
+                    if (mismatches < MAX_DETAIL) {
+                        logf("  good_sensor(%u, %d, %d): new=%d orig=%d", f, x, y, a, b);
+                    }
+                    mismatches++;
+                }
+            }
+        }
+    }
+    logf("good_sensor: %d compared (%d good), %d mismatches", compared, good, mismatches);
+    return mismatches;
+}
+
+static int test_spot_loc() {
+    GameSnapshot base, after_orig, after_new;
+    snap_alloc(&base); snap_alloc(&after_orig); snap_alloc(&after_new);
+    snap_take(&base);
+    int compared = 0, mismatches = 0;
+    char label[64];
+    int w = *MapLongitudeBounds, h = *MapLatitudeBounds;
+    for (int y = 0; y < h; y += 5) {
+        for (int x = y & 1; x < w; x += 6) {
+            for (uint32_t f = 0; f < MaxPlayerNum; f++) {
+                snap_restore(&base);
+                spot_loc_OG(x, y, f);
+                snap_take(&after_orig);
+                snap_restore(&base);
+                spot_loc(x, y, f);
+                snap_take(&after_new);
+                compared++;
+                sprintf_s(label, "spot_loc(%d, %d, %u)", x, y, f);
+                BOOL diff = snap_differs(&after_orig, &after_new, mismatches < MAX_DETAIL ? label : NULL);
+                if (!diff && after_orig.draw_state != after_new.draw_state) {
+                    if (mismatches < MAX_DETAIL) {
+                        logf("  %s: draw state differs (orig %X new %X)", label, after_orig.draw_state,
+                            after_new.draw_state);
+                    }
+                    diff = true;
+                }
+                if (diff) {
+                    mismatches++;
+                }
+            }
+        }
+    }
+    snap_restore(&base);
+    snap_free(&base); snap_free(&after_orig); snap_free(&after_new);
+    logf("spot_loc: %d compared, %d mismatches", compared, mismatches);
+    return mismatches;
+}
+
+static int test_territory() {
+    GameSnapshot base, after_orig, after_new;
+    snap_alloc(&base); snap_alloc(&after_orig); snap_alloc(&after_new);
+    snap_take(&base);
+    int friction_saved = *DiploFriction;
+    int compared = 0, mismatches = 0, intrusions = 0;
+    char label[80];
+    for (uint32_t f = 1; f < MaxPlayerNum; f++) {
+        for (uint32_t tgt = 1; tgt < MaxPlayerNum; tgt++) {
+            if (f == tgt) {
+                continue;
+            }
+            for (int flags = 0; flags < 4; flags++) {
+                for (int variant = 0; variant < 3; variant++) {
+                    // as loaded; no pact/vendetta/unk_200 between the two; high friction with
+                    // some units already flagged
+                    auto prepare = [&]() {
+                        snap_restore(&base);
+                        *DiploFriction = friction_saved;
+                        if (variant) {
+                            PlayersData[f].diplo_treaties[tgt] &= ~(DTREATY_PACT | DTREATY_VENDETTA
+                                | DTREATY_UNK_200);
+                        }
+                        if (variant == 2) {
+                            *DiploFriction = 15;
+                            for (int v = 0; v < *VehCurrentCount; v += 2) {
+                                Vehs[v].flags |= VFLAG_UNK_1;
+                                if (v % 4 == 0) {
+                                    Vehs[v].state |= VSTATE_UNK_800;
+                                }
+                            }
+                        }
+                    };
+                    int b1_o = -5, c_o = -5, b1_n = -5, c_n = -5;
+                    prepare();
+                    int r_o = territory_OG(f, tgt, flags, &b1_o, &c_o);
+                    snap_take(&after_orig);
+                    prepare();
+                    int r_n = territory(f, tgt, flags, &b1_n, &c_n);
+                    snap_take(&after_new);
+                    compared++;
+                    intrusions += r_o;
+                    sprintf_s(label, "territory(%u, %u, %d) variant %d", f, tgt, flags, variant);
+                    BOOL diff = false;
+                    if (r_o != r_n || b1_o != b1_n || c_o != c_n) {
+                        if (mismatches < MAX_DETAIL) {
+                            logf("  %s: orig %d (base %d count %d) new %d (base %d count %d)", label, r_o,
+                                b1_o, c_o, r_n, b1_n, c_n);
+                        }
+                        diff = true;
+                    }
+                    if (!diff) {
+                        diff = snap_differs(&after_orig, &after_new, mismatches < MAX_DETAIL ? label : NULL);
+                    }
+                    if (diff) {
+                        mismatches++;
+                    }
+                }
+            }
+        }
+    }
+    snap_restore(&base);
+    *DiploFriction = friction_saved;
+    snap_free(&base); snap_free(&after_orig); snap_free(&after_new);
+    logf("territory: %d compared (%d intrusions counted by the original), %d mismatches", compared,
+        intrusions, mismatches);
+    return mismatches;
+}
+
 static DWORD WINAPI regress_watcher(LPVOID) {
     for (;;) {
         Sleep(1000);
@@ -3515,6 +3670,10 @@ void regress_run() {
     if (test_enabled("batch6", "social_set")) total += run_guarded("social_set", test_social_set);
     if (test_enabled("batch6", "bases_reset")) total += run_guarded("bases_reset", test_bases_reset);
     if (test_enabled("batch7", "yields")) total += run_guarded("yields", test_yields);
+    if (test_enabled("batch8", "world_site")) total += run_guarded("world_site", test_world_site);
+    if (test_enabled("batch8", "good_sensor")) total += run_guarded("good_sensor", test_good_sensor);
+    if (test_enabled("batch8", "spot_loc")) total += run_guarded("spot_loc", test_spot_loc);
+    if (test_enabled("batch8", "territory")) total += run_guarded("territory", test_territory);
     if (test_enabled("enemy_capabilities")) total += run_guarded("enemy_capabilities", test_enemy_capabilities);
     if (test_enabled("social_ai")) total += run_guarded("social_ai", test_social_ai);
     if (test_enabled("Path::sensors") || test_enabled("path_sensors")) total += run_guarded("path_sensors", test_path_sensors);

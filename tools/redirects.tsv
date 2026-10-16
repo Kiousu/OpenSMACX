@@ -622,3 +622,8 @@
 0x000E7310	?mine_yield@@YAHIHIIH@Z
 0x000E7750	?energy_yield@@YAIIHHIH@Z
 0x000E7DC0	?resource_yield@@YAHIIHHH@Z
+# --- batch 8: site rating, sensor sites, spotting a location, territory intrusions
+0x001C4FD0	?world_site@@YAHHHI@Z
+0x00164EB0	?good_sensor@@YAHIHH@Z
+0x001B5AD0	?spot_loc@@YAXHHI@Z
+0x0015EB80	?territory@@YAHIIEPAH0@Z

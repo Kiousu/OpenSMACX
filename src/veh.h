@@ -167,6 +167,8 @@ enum VehOrdersAutoType {
 };
 
 enum VehFlagsBitfield {
+    VFLAG_UNK_1 = 0x1, // set by territory() on an intruder near a base; counted on the next call
+    VFLAG_UNK_2 = 0x2, // set with VFLAG_UNK_1 by territory()
     VFLAG_PROBE_PACT_OPERATIONS = 0x4,
     VFLAG_IS_OBJECTIVE = 0x20,
     VFLAG_LURKER = 0x40,
@@ -578,6 +580,7 @@ DLLEXPORT int __cdecl stack_check(int veh_id, uint32_t type, int cond1, int cond
 DLLEXPORT void __cdecl stack_kill(int veh_id);
 DLLEXPORT void __cdecl unspot_stack(int veh_id);
 DLLEXPORT void __cdecl spot_stack(int veh_id, int faction_id);
+DLLEXPORT void __cdecl spot_loc(int x, int y, uint32_t faction_id);
 DLLEXPORT int __cdecl pick_top_veh(int veh_id);
 DLLEXPORT BOOL __cdecl can_convoy(int x, int y);
 DLLEXPORT void __cdecl promote(int veh_id);

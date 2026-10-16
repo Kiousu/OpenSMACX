@@ -521,3 +521,27 @@ tripled) and 0x93A934 `ControlUpkeepA` selects which of its two bits applies. Th
 Harmonics owner gets the planet-rating bonuses on fungus and monoliths.
 Boot test: the 606-redirect exe loaded Council.SAV and advanced the turn 289 -> 290 (38 s) with
 the game alive.
+
+## Batch 8, 2026-10-16 (Council.SAV, 606-redirect exe)
+
+`world_site` and `good_sensor` (map.cpp), `spot_loc` (veh.cpp) and `territory` (faction.cpp).
+Trigger group `batch8`, four tests: the two pure ratings over every tile (`world_site` for land
+and sea sites, `good_sensor` for every faction), `spot_loc` through the snapshot with the draw
+flag compared, and `territory` for every faction pair, all four flag values, as loaded, with the
+blocking treaty bits cleared, and with high friction and half the units pre-flagged.
+
+| function | inputs | compared | mismatches |
+|---|---|---|---|
+| world_site | every tile x land/sea | 16,384 (12,229 usable) | 0 |
+| good_sensor | every tile x factions 1-7 | 57,344 (277 good) | 0 |
+| spot_loc | every 5th row, every 3rd tile x 8 factions | 4,576 | 0 |
+| territory | 42 faction pairs x 4 flags x 3 variants | 504 (82 intrusions) | 0 |
+
+Log: `regression-runs/2026-10-16-council-batch8.log`. Notes: `world_site` checks the
+`BIT_UNK_40000000 | BIT_UNK_4000` bits of the last radius tile it visited rather than the center
+(kept); `territory` sets `VSTATE_UNK_400` on every intruder, flags 1 and 2 of `Veh.flags`
+(`VFLAG_UNK_1/2`) and `VSTATE_UNK_800` on repeat offenders, and `PFLAG_UNK_10000` on the
+faction whose territory was entered; the shared-region test uses `region_total_bases` of
+factions both sides are at war with.
+Boot test: the 610-redirect exe loaded Council.SAV and advanced the turn 289 -> 290 (38 s) with
+the game alive.

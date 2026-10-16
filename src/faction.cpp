@@ -868,6 +868,106 @@ BOOL __cdecl wants_to_attack(uint32_t faction_id, uint32_t faction_id_tgt, int f
 }
 
 /*
+Purpose: Count another faction's units inside this faction's territory (combat and terraforming
+         units, and convoying crawlers) on land, marking each with VSTATE_UNK_400. Nothing counts
+         under a pact or vendetta, under the unk_200 treaty flag unless bit 2 of flags is set,
+         or in regions where a faction both are at war with has bases (unless this faction wants
+         revenge or the intruder's integrity is poor). Units on improved tiles count double. With
+         bit 1 of flags, intruders near the base (or any, given bad relations or high friction)
+         are flagged: the first time they get VSTATE_UNK_800, afterwards they count once more
+         (five times under a treaty) and the number of repeat offenders goes to count_out.
+Original Offset: 0055EB80
+Return Value: Intrusion count; base_id_out gets the last base whose territory was entered
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch8.log)
+*/
+int __cdecl territory(uint32_t faction_id, uint32_t faction_id_tgt, uint8_t flags, int *base_id_out,
+                      int *count_out) {
+    int result = 0;
+    if (base_id_out) {
+        *base_id_out = -1;
+    }
+    if (count_out) {
+        *count_out = 0;
+    }
+    uint32_t treaties = PlayersData[faction_id].diplo_treaties[faction_id_tgt];
+    if (treaties & (DTREATY_PACT | DTREATY_VENDETTA)) {
+        return 0;
+    }
+    if (!(flags & 2) && (treaties & DTREATY_UNK_200)) {
+        return 0;
+    }
+    BOOL region_shared[64];
+    for (int region = 0; region < 64; region++) {
+        region_shared[region] = false;
+        if ((treaties & DTREATY_WANT_REVENGE) || PlayersData[faction_id_tgt].integrity_blemishes >= 5) {
+            continue;
+        }
+        for (uint32_t i = 1; i < MaxPlayerNum; i++) {
+            if (i != faction_id && i != faction_id_tgt
+                && (PlayersData[faction_id].diplo_treaties[i] & DTREATY_VENDETTA)
+                && (PlayersData[faction_id_tgt].diplo_treaties[i] & DTREATY_VENDETTA)
+                && PlayersData[i].region_total_bases[region]) {
+                region_shared[region] = true;
+                break;
+            }
+        }
+    }
+    for (int veh_id = 0; veh_id < *VehCurrentCount; veh_id++) {
+        Veh *veh = &Vehs[veh_id];
+        veh->state &= ~VSTATE_UNK_400;
+        if (veh->faction_id != faction_id_tgt) {
+            continue;
+        }
+        uint32_t plan = VehPrototypes[veh->proto_id].plan;
+        if (plan >= PLAN_TERRAFORMING && !(plan == PLAN_SUPPLY_CONVOY && veh->order == ORDER_CONVOY)) {
+            continue;
+        }
+        Map *tile = map_loc(veh->x, veh->y);
+        if ((tile->climate & 0xE0) < ALT_BIT_SHORE_LINE || region_shared[tile->region]) {
+            continue;
+        }
+        int base_id;
+        if (whose_territory(faction_id_tgt, veh->x, veh->y, &base_id, true) != (int)faction_id
+            || base_id < 0) {
+            continue;
+        }
+        if (base_id_out) {
+            *base_id_out = base_id;
+        }
+        int before = result;
+        result++;
+        veh->state |= VSTATE_UNK_400;
+        if (tile->bit & 0x81608850) {
+            result = before + 2; // an improved tile counts double
+        }
+        if (flags & 1) {
+            int x_dist = abs(Bases[base_id].x - veh->x);
+            if (!*MapIsFlat && x_dist > (int)*MapLongitude) {
+                x_dist = *MapLongitudeBounds - x_dist;
+            }
+            int y_dist = abs(Bases[base_id].y - veh->y);
+            if (((x_dist + y_dist) & ~1) < 5
+                || (treaties & (DTREATY_UNK_800 | DTREATY_SHALL_BETRAY | DTREATY_WANT_REVENGE))
+                || *DiploFriction > 12) {
+                if (count_out && (veh->flags & VFLAG_UNK_1)) {
+                    (*count_out)++;
+                }
+                veh->flags |= VFLAG_UNK_1 | VFLAG_UNK_2;
+                if (!(veh->state & VSTATE_UNK_800) && *SunspotDuration < 1) {
+                    veh->state |= VSTATE_UNK_800;
+                } else {
+                    result += ((treaties & DTREATY_TREATY) << 1) | 1;
+                }
+            }
+        }
+    }
+    if (result) {
+        PlayersData[faction_id].flags |= PFLAG_UNK_10000;
+    }
+    return result;
+}
+
+/*
 Purpose: Determine the ideal unit count to protect a faction's bases in the specified land region.
 Original Offset: 00560D50
 Return Value: Amount of non-offensive units needed to guard region

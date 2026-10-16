@@ -204,6 +204,13 @@ extern func_yield5 *mine_yield_OG;
 extern func_yield5 *energy_yield_OG;
 typedef int func_rsc_yield(uint32_t, uint32_t, int, int, int);
 extern func_rsc_yield *resource_yield_OG;
+// batch 8
+extern func_iii *world_site_OG;
+typedef BOOL func_uii(uint32_t, int, int);
+extern func_uii *good_sensor_OG;
+extern func_xyi *spot_loc_OG;
+typedef int func_territory(uint32_t, uint32_t, uint8_t, int *, int *);
+extern func_territory *territory_OG;
 extern func_void *base_psych_OG;
 extern func_social_ai *social_ai_OG;
 extern func_path_sensors *Path_sensors_OG; // Path::sensors()
@@ -310,7 +317,6 @@ extern void *NetMsgVar; // global NetMsg instance
 extern int *BaseIDUnk; // never written by the exe; compared against base ids in study_artifact(),
                        // order_veh(), capture_base(), enemy_move() and Console::go_to()
 extern func_iii *wants_prop; // wants_prop(faction_id, proposal, faction_id_proposer)
-extern func_iii *world_site; // world_site(x, y, unk): base site rating of a tile
 typedef int func_upgrade_proto(int, int, int, int);
 extern func_upgrade_proto *upgrade_prototype; // upgrade_prototype(faction_id, proto_id, proto_id_other, flag)
 typedef int __fastcall func_console_focus(void *This, void *edx_unused, int x, int y, int faction_id);

@@ -25,6 +25,7 @@
 #include "path.h"
 #include "random.h"
 #include "strings.h"
+#include "technology.h"
 #include "veh.h"
 
 int *MapLongitudeBounds = (int *)0x00949870;
@@ -410,6 +411,73 @@ Status: Complete
 */
 BOOL __cdecl bad_reg(int region) {
     return (region & RegionBounds) == RegionBounds || !(region & RegionBounds);
+}
+
+/*
+Purpose: Check whether a tile is a good place for a sensor array: inside the faction's territory,
+         not fungus it cannot improve, no sensor of its own within the 25-tile radius, and either
+         not fully covered by its bases' sensors or at the territory's edge; the tile itself must
+         be empty of bonuses, bases, boreholes, condensers, monoliths, solar collectors and
+         mines, and be rocky, arid or fungus.
+Original Offset: 00564EB0
+Return Value: Is the tile a good sensor site? true/false
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch8.log)
+*/
+BOOL __cdecl good_sensor(uint32_t faction_id, int x, int y) {
+    if (whose_territory(faction_id, x, y, NULL, false) != (int)faction_id) {
+        return false;
+    }
+    int lat = *MapLatitudeBounds, lon = *MapLongitudeBounds;
+    Map *tile = map_loc(x, y);
+    if ((tile->bit & BIT_FUNGUS) && (tile->climate & 0xE0) >= ALT_BIT_OCEAN_SHELF
+        && !has_tech(Rules->tech_improve_fungus_sqr, faction_id)) {
+        return false;
+    }
+    uint32_t status = 0;
+    for (int i = 0; i < 25; i++) {
+        int x_radius = xrange(x + RadiusOffsetX[i]);
+        int y_radius = y + RadiusOffsetY[i];
+        if (y_radius < 0 || y_radius >= lat || x_radius < 0 || x_radius >= lon) {
+            continue;
+        }
+        if (is_sensor(x_radius, y_radius)
+            && whose_territory(faction_id, x_radius, y_radius, NULL, false) == (int)faction_id) {
+            return false;
+        }
+        if (i < 9) {
+            int base_id = base_at(x_radius, y_radius);
+            if (base_id >= 0 && Bases[base_id].faction_id_current == faction_id) {
+                BOOL covered = false;
+                for (int j = 0; j < 25; j++) {
+                    int x_sensor = xrange(x_radius + RadiusOffsetX[j]);
+                    int y_sensor = y_radius + RadiusOffsetY[j];
+                    if (y_sensor >= 0 && y_sensor < lat && x_sensor >= 0 && x_sensor < lon
+                        && is_sensor(x_sensor, y_sensor)
+                        && whose_territory(faction_id, x_sensor, y_sensor, NULL, false)
+                            == (int)faction_id) {
+                        covered = true;
+                        break;
+                    }
+                }
+                status |= covered ? 2 : 6;
+            }
+            if (whose_territory(faction_id, x_radius, y_radius, NULL, false) != (int)faction_id) {
+                status |= 1;
+            }
+        }
+    }
+    if (!status || bonus_at(x, y, 0)) {
+        return false;
+    }
+    if ((tile->bit & BIT_BASE_IN_TILE) && (tile->val2 & 0xF) <= 7) {
+        return false;
+    }
+    uint32_t bit = tile->bit;
+    if (bit & (BIT_THERMAL_BORE | BIT_CONDENSER | BIT_MONOLITH | BIT_SOLAR_TIDAL | BIT_MINE)) {
+        return false;
+    }
+    return (tile->val3 & 0xC0) > 0x40 || !(tile->climate & 0x18)
+        || ((bit & BIT_FUNGUS) && (tile->climate & 0xE0) >= ALT_BIT_OCEAN_SHELF);
 }
 
 /*
@@ -2371,6 +2439,164 @@ void __cdecl world_rainfall() {
         }
         do_all_non_input();
     }
+}
+
+/*
+Purpose: Rate a tile as a base site (1-15, 0 for unusable) for a land or a sea base: bonus
+         resources, landmarks, pods, rivers and good land in the base radius count for it,
+         deep ocean, rocky ground, fungus (after turn 150) and bases in the outer ring count
+         against it; the wrong kind of terrain for the base type costs more. Fungus, monolith
+         and rocky center tiles rate zero, as does a mismatched tile near too many bases.
+Original Offset: 005C4FD0
+Return Value: Site rating
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch8.log)
+*/
+int __cdecl world_site(int x, int y, uint32_t sea) {
+    int lat = *MapLatitudeBounds, lon = *MapLongitudeBounds;
+    Map *center = map_loc(x, y);
+    BOOL center_ocean = (center->climate & 0xE0) < ALT_BIT_SHORE_LINE;
+    int bases_near = 0;
+    for (int i = 21; i < 49; i++) {
+        int x_radius = xrange(x + RadiusOffsetX[i]);
+        int y_radius = y + RadiusOffsetY[i];
+        if (y_radius < 0 || y_radius >= lat || x_radius < 0 || x_radius >= lon) {
+            continue;
+        }
+        Map *tile = map_loc(x_radius, y_radius);
+        if (!(tile->bit & BIT_BASE_IN_TILE)) {
+            continue;
+        }
+        if (i >= 25) {
+            bases_near++;
+        } else if (center_ocean && (tile->climate & 0xE0) < ALT_BIT_SHORE_LINE) {
+            bases_near += 4;
+        } else {
+            bases_near += 2;
+        }
+    }
+    int score = 0, ocean = 0, deep = 0, big_sea = 0, rocky = 0, fungus = 0, rivers = 0;
+    int arable = 0, improved = 0;
+    Map *last = NULL;
+    for (int i = 0; i <= 20; i++) {
+        int x_radius = xrange(x + RadiusOffsetX[i]);
+        int y_radius = y + RadiusOffsetY[i];
+        if (y_radius < 0 || y_radius >= lat || x_radius < 0 || x_radius >= lon) {
+            continue;
+        }
+        Map *tile = map_loc(x_radius, y_radius);
+        last = tile;
+        int weight = i ? 1 : 0;
+        if ((tile->climate & 0xE0) < ALT_BIT_SHORE_LINE) {
+            ocean++;
+            if ((tile->climate & 0xE0) < ALT_BIT_OCEAN_SHELF) {
+                deep++;
+            }
+            if (i < 9 && (int)Continents[tile->region].tile_count > 0x31) {
+                big_sea = 1;
+            }
+            if (i && bonus_at(x_radius, y_radius, 1)
+                && (!(tile->bit & BIT_FUNGUS) || (tile->climate & 0xE0) < ALT_BIT_OCEAN_SHELF)) {
+                score++;
+            }
+            continue;
+        }
+        uint32_t rockiness = tile->val3 >> 6;
+        if (rockiness && i && rockiness > 1) {
+            rocky++;
+        }
+        if (!(tile->bit & BIT_FUNGUS)) {
+            if (bonus_at(x_radius, y_radius, 1)) {
+                score += weight * 3 - 1;
+            }
+            uint32_t bit2 = tile->bit2;
+            int code = (int)(bit2 & 0xFF000000);
+            if ((bit2 & (BIT2_VOLCANO | BIT2_UNK_80000000)) == BIT2_VOLCANO && code < 0x9000000) {
+                score += weight * 2 - 1;
+            }
+            if ((bit2 & (BIT2_CRATER | BIT2_UNK_80000000)) == BIT2_CRATER && code < 0x9000000) {
+                score += weight * 3 - 1;
+            }
+            if ((bit2 & (BIT2_URANIUM | BIT2_UNK_80000000)) == BIT2_URANIUM) {
+                score += weight * 4 - 3;
+            }
+            if ((bit2 & (BIT2_JUNGLE | BIT2_UNK_80000000)) == BIT2_JUNGLE
+                && (tile->climate & 0xE0) >= ALT_BIT_SHORE_LINE) {
+                score += 2;
+            }
+            if (i && goody_at(x_radius, y_radius)) {
+                score++;
+            }
+        }
+        uint32_t rainfall = (tile->climate & 0x18) >> 3;
+        int altitude = (tile->climate >> 5) - 2;
+        if (altitude < 0) {
+            altitude = 0;
+        }
+        if (rockiness == 2 || (tile->bit2 & (BIT2_VOLCANO | BIT2_UNK_80000000)) == BIT2_VOLCANO) {
+            rainfall = 0;
+        }
+        uint32_t bit = tile->bit;
+        BOOL has_fungus = (bit & BIT_FUNGUS) != 0;
+        if (has_fungus) {
+            fungus++;
+        }
+        if (bit & BIT_BASE_RADIUS) {
+            continue;
+        }
+        BOOL good = (bit & (BIT_FOREST | BIT_MONOLITH)) != 0;
+        if (!good && rainfall && rockiness == 1) {
+            if (altitude && !has_fungus) {
+                good = true;
+            } else {
+                arable += weight * 2 - 1;
+                if (rainfall > 1 && !has_fungus) {
+                    arable += weight * 2 - 1;
+                }
+            }
+        }
+        if (good) {
+            improved += weight * 2 - 1;
+            if ((bit & BIT_MONOLITH) && !(bit & BIT_FOREST) && (rainfall > 1 || altitude > 1)) {
+                improved += weight * 3 - 2;
+            }
+        }
+        if (bit & BIT_RIVER) {
+            rivers++;
+        }
+    }
+    score += rivers / 4;
+    if (big_sea) {
+        score += sea ? -2 : 4;
+    }
+    if (last->bit & (BIT_UNK_40000000 | BIT_UNK_4000)) {
+        score += 4;
+    }
+    if (!sea) {
+        score += -((ocean - big_sea) / 2) - deep / 2;
+    } else {
+        score += deep / 2 + (ocean - big_sea) / 2;
+    }
+    int total = (arable + 1) / 3 + score + (improved * 3 + 6) / 4;
+    if (*TurnCurrentNum > 150) {
+        total -= fungus / 3;
+    }
+    uint32_t mismatch = (uint32_t)center_ocean != sea;
+    total += -(int)((mismatch + 1) * bases_near) - rocky / 4;
+    uint32_t center_bit = center->bit;
+    if (((center_bit & BIT_FUNGUS) && (center->climate & 0xE0) >= ALT_BIT_OCEAN_SHELF)
+        || (center_bit & BIT_MONOLITH)) {
+        return 0;
+    }
+    if ((center->val3 & 0xC0) > 0x40 && (center->climate & 0xE0) >= ALT_BIT_SHORE_LINE) {
+        return 0;
+    }
+    if (mismatch && bases_near > 3) {
+        return 0;
+    }
+    if (total < 1) {
+        return 1;
+    }
+    return total > 15 ? 15 : total;
 }
 
 /*

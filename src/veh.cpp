@@ -2589,6 +2589,64 @@ void __cdecl unspot_stack(int veh_id) {
     }
 }
 
+// Mark a tile as seen by a faction; the faction at the controls also gets the first-sight redraw
+// flag (see spot_stack()). The tile must be on the map.
+static void spot_tile(int x, int y, uint32_t faction_id) {
+    Map *tile = map_loc(x, y);
+    uint8_t bit = (uint8_t)(1 << faction_id);
+    if (faction_id == (uint32_t)*FactionIDCurrent && !(tile->visibility & bit)
+        && !(*GameState & STATE_OMNISCIENT_VIEW)
+        && !(PlayersData[faction_id].flags & PFLAG_MAP_REVEALED)) {
+        tile->bit2 |= BIT2_UNK_400000;
+        *UnkBitfield1 |= 1;
+    }
+    tile->visibility |= bit;
+    synch_bit(x, y, faction_id);
+}
+
+/*
+Purpose: Reveal a location to a faction: the tile itself, and whatever sits there (a base, with
+         its population intel, or a stack of units, which also lose their lurker/invisible
+         flags for a non-native spotter).
+Original Offset: 005B5AD0
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch8.log)
+*/
+void __cdecl spot_loc(int x, int y, uint32_t faction_id) {
+    int lat = *MapLatitudeBounds, lon = *MapLongitudeBounds;
+    if (y >= 0 && y < lat && x >= 0 && x < lon) {
+        spot_tile(x, y, faction_id);
+    }
+    int base_id = base_at(x, y);
+    if (base_id >= 0) {
+        Bases[base_id].visibility |= (uint8_t)(1 << faction_id);
+        Bases[base_id].faction_pop_size_intel[faction_id] = Bases[base_id].population_size;
+        int x_base = Bases[base_id].x, y_base = Bases[base_id].y;
+        if (y_base >= 0 && y_base < lat && x_base >= 0 && x_base < lon) {
+            spot_tile(x_base, y_base, faction_id);
+        }
+        return;
+    }
+    int veh_id = veh_at(x, y);
+    if (veh_id < 0) {
+        return;
+    }
+    int x_veh = Vehs[veh_id].x, y_veh = Vehs[veh_id].y;
+    if (y_veh >= 0 && y_veh < lat && x_veh >= 0 && x_veh < lon) {
+        spot_tile(x_veh, y_veh, faction_id);
+    }
+    int i = veh_id;
+    while (Vehs[i].prev_veh_id_stack >= 0) {
+        i = Vehs[i].prev_veh_id_stack;
+    }
+    for (; i >= 0; i = Vehs[i].next_veh_id_stack) {
+        Vehs[i].visibility |= (uint8_t)(1 << faction_id);
+        if (faction_id) {
+            Vehs[i].flags &= ~(VFLAG_LURKER | VFLAG_INVISIBLE);
+        }
+    }
+}
+
 /*
 Purpose: Determine if the specified unit wants to wake up based on certain conditions and 
          preferences. Optional parameter for spotted veh_id (-1 to skip).
