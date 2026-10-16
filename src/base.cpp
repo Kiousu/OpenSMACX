@@ -55,6 +55,9 @@ int *BaseGovPickID = (int *)0x0090EA44; // [4] production item picked by base_re
 int *BaseGovPickValue = (int *)0x0090EA54; // [4] value of each pick; see base_claimed()
 int *BaseTerraformEnergy = (int *)0x0090E914; // energy_yield() of the base square, clamped to 0-99
 int *BaseTerraformReduce = (int *)0x0090E998; // yield lost to the three-per-square caps; see resource_yield()
+int *BaseTileFlags = (int *)0x0090E99C; // [25] availability flags of the radius tiles; see farm_compute()
+uint32_t *BaseCurrentUsedTiles = (uint32_t *)0x0090EA00; // radius tiles the current base can't work
+uint32_t *BaseCurrentForcesMaintCount = (uint32_t *)0x0090EA08; // units the current base pays for
 
 /*
 Purpose: Check if the base already has a particular facility built or if it's in the queue.
@@ -738,6 +741,138 @@ static int yield_planet_penalty(uint32_t faction_id) {
 }
 
 /*
+Purpose: Work out which of the current base's 21 radius tiles it may farm. Each tile gets flags:
+         1 outside the radius, 2 off the map or never seen, 4 holding a base, 8 holding a
+         convoy-like stack or a visible unit of a faction without a treaty or pact, 0x10
+         worked by a nearby base (its own, or at sea any faction's), 0x20 another faction's
+         territory. Tiles with any flag are marked unavailable in BaseCurrentUsedTiles. During
+         the AI upkeep pass, supply pods on land in the radius become scout, defend and attack
+         goals.
+Original Offset: 004E68B0
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch13.log)
+*/
+void __cdecl farm_compute() {
+    Base *base = *BaseCurrent;
+    int x = base->x;
+    int y = base->y;
+    uint32_t faction_id = base->faction_id_current;
+    for (int i = 0; i < 25; i++) {
+        if (i >= BaseRadiusTiles) {
+            BaseTileFlags[i] = 1;
+            continue;
+        }
+        int x_radius = x + RadiusOffsetX[i];
+        if (!*MapIsFlat) {
+            if (x_radius < 0) {
+                x_radius += *MapLongitudeBounds;
+            } else if (x_radius >= (int)*MapLongitudeBounds) {
+                x_radius -= *MapLongitudeBounds;
+            }
+        }
+        int y_radius = y + RadiusOffsetY[i];
+        if (y_radius < 0 || y_radius >= (int)*MapLatitudeBounds || x_radius < 0
+            || x_radius >= (int)*MapLongitudeBounds) {
+            BaseTileFlags[i] = 2;
+            continue;
+        }
+        Map *tile = map_loc(x_radius, y_radius);
+        if (*BaseUpkeepStage == 1 && goody_at(x_radius, y_radius)
+            && (tile->climate & 0xE0) >= ALT_BIT_SHORE_LINE) {
+            add_goal(faction_id, AI_GOAL_SCOUT, 1, x_radius, y_radius, -1);
+            add_goal(faction_id, AI_GOAL_DEFEND, 1, x_radius, y_radius, -1);
+            add_goal(faction_id, AI_GOAL_ATTACK, 1, x_radius, y_radius, -1);
+        }
+        if (!(PlayersData[faction_id].flags & PFLAG_MAP_REVEALED)
+            && !(tile->visibility & (1 << faction_id))) {
+            BaseTileFlags[i] = 2;
+            continue;
+        }
+        BaseTileFlags[i] = 0;
+        if ((tile->bit & BIT_BASE_IN_TILE) && (tile->val2 & 0xF) < 8) {
+            BaseTileFlags[i] = 4;
+        }
+        int veh_id = stack_fix(veh_at(x_radius, y_radius));
+        if (veh_id >= 0) {
+            if (stack_check(veh_id, 9, 3, -1, -1)) {
+                BaseTileFlags[i] |= 8;
+            }
+            while (Vehs[veh_id].prev_veh_id_stack >= 0) {
+                veh_id = Vehs[veh_id].prev_veh_id_stack;
+            }
+            for (; veh_id >= 0; veh_id = Vehs[veh_id].next_veh_id_stack) {
+                uint32_t faction_id_veh = Vehs[veh_id].faction_id;
+                if (faction_id_veh != faction_id && (Vehs[veh_id].visibility & (1 << faction_id))
+                    && !(PlayersData[faction_id].diplo_treaties[faction_id_veh]
+                        & (DTREATY_PACT | DTREATY_TREATY))) {
+                    BaseTileFlags[i] |= 8;
+                }
+            }
+        }
+        // veh_id is always negative here, so any foreign territory is flagged
+        int owner = whose_territory(faction_id, x_radius, y_radius, NULL, false);
+        if (owner >= 0 && (uint32_t)owner != faction_id
+            && ((PlayersData[faction_id].diplo_treaties[owner] & (DTREATY_PACT | DTREATY_TREATY))
+                || veh_id < 0 || Vehs[veh_id].faction_id != faction_id)) {
+            BaseTileFlags[i] |= 0x20;
+        }
+    }
+    for (int base_id = 0; base_id < *BaseCurrentCount; base_id++) {
+        if (base_id == *BaseIDCurrentSelected) {
+            continue;
+        }
+        Base *other = &Bases[base_id];
+        if (vector_dist(x, y, other->x, other->y) >= 6) {
+            continue;
+        }
+        for (int j = 0; j < BaseRadiusTiles; j++) {
+            if (j && !(other->resource_sqr_radius & (1 << j))) {
+                continue;
+            }
+            int x_worked = other->x + RadiusOffsetX[j];
+            if (!*MapIsFlat) {
+                if (x_worked < 0) {
+                    x_worked += *MapLongitudeBounds;
+                } else if (x_worked >= (int)*MapLongitudeBounds) {
+                    x_worked -= *MapLongitudeBounds;
+                }
+            }
+            int y_worked = other->y + RadiusOffsetY[j];
+            if (y_worked < 0 || y_worked >= (int)*MapLatitudeBounds || x_worked < 0
+                || x_worked >= (int)*MapLongitudeBounds) {
+                continue;
+            }
+            if (other->faction_id_current != faction_id
+                && (map_loc(x_worked, y_worked)->climate & 0xE0) >= ALT_BIT_SHORE_LINE) {
+                continue;
+            }
+            if (vector_dist(x, y, x_worked, y_worked) >= 3) {
+                continue;
+            }
+            for (int k = 0; k < BaseRadiusTiles; k++) {
+                int x_radius = x + RadiusOffsetX[k];
+                if (!*MapIsFlat) {
+                    if (x_radius < 0) {
+                        x_radius += *MapLongitudeBounds;
+                    } else if (x_radius >= (int)*MapLongitudeBounds) {
+                        x_radius -= *MapLongitudeBounds;
+                    }
+                }
+                if (x_radius == x_worked && y + RadiusOffsetY[k] == y_worked) {
+                    BaseTileFlags[k] |= 0x10;
+                }
+            }
+        }
+    }
+    *BaseCurrentUsedTiles = 0;
+    for (int i = 0; i < BaseRadiusTiles; i++) {
+        if (BaseTileFlags[i]) {
+            *BaseCurrentUsedTiles |= 1 << i;
+        }
+    }
+}
+
+/*
 Purpose: Calculate the nutrients a tile yields for a faction (and base): base squares, boreholes,
          monoliths, fungus, land by rainfall (zero on rocky ground) with farms and the mine
          penalty, forests with tree farm facilities, ocean with kelp farms and the aquafarm, plus
@@ -1201,6 +1336,127 @@ int __cdecl resource_yield(uint32_t rsc_type, uint32_t faction_id, int base_id, 
         break;
     }
     return 0;
+}
+
+/*
+Purpose: Tally what the current base's units cost and bring in. Supply convoys out in the field
+         add their tile's yield to the base (BaseCurrentConvoyTo), those parked in a base count
+         one unit per resource (BaseCurrentConvoyFrom, or ConvoyTo for another base's convoy in
+         this one). Each home unit up to the supply convoy plan is counted for support, beyond
+         the faction's free allowance costing 1 mineral (2 at SUPPORT -4); native units on fungus
+         are free and clean reactors exempt. Armed units in foreign territory, or aircraft other
+         than interceptors, become pacifism drones under police -3 or lower (the first is free
+         at -3). Armed units also feed the faction's military weight, and during the AI upkeep
+         pass the support cost at every SUPPORT level is recorded for social engineering.
+Original Offset: 004E9550
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch13.log)
+*/
+void __cdecl base_support() {
+    uint32_t faction_id = (*BaseCurrent)->faction_id_current;
+    for (int i = 0; i < 4; i++) {
+        BaseCurrentConvoyTo[i] = 0;
+        BaseCurrentConvoyFrom[i] = 0;
+    }
+    *BaseCurrentVehPacifismCount = 0;
+    *BaseCurrentForcesMaintCount = 0;
+    *BaseCurrentForcesSupported = 0;
+    *BaseCurrentForcesMaintCost = 0;
+    int support_free[8]; // units supported for free at SUPPORT -4 to +3
+    for (int level = -4; level < 4; level++) {
+        int free;
+        if (level >= 3) {
+            free = (*BaseCurrent)->population_size < 5 ? 4 : (*BaseCurrent)->population_size;
+        } else if (level < -2) {
+            free = 0;
+        } else if (level == -2) {
+            free = 1;
+        } else {
+            free = level + 2;
+        }
+        support_free[level + 4] = free;
+    }
+    for (int veh_id = 0; veh_id < *VehCurrentCount; veh_id++) {
+        Veh *veh = &Vehs[veh_id];
+        if (veh->faction_id != faction_id) {
+            continue;
+        }
+        int base_id = *BaseIDCurrentSelected;
+        if (veh->home_base_id != base_id) {
+            if (VehPrototypes[veh->proto_id].plan == PLAN_SUPPLY_CONVOY
+                && veh->x == (*BaseCurrent)->x && veh->y == (*BaseCurrent)->y
+                && veh->order == ORDER_CONVOY && veh->home_base_id >= 0) {
+                BaseCurrentConvoyTo[veh->order_auto_type]++;
+            }
+            continue;
+        }
+        if (VehPrototypes[veh->proto_id].plan == PLAN_SUPPLY_CONVOY && base_who(veh->x, veh->y) < 0
+            && veh->order == ORDER_CONVOY) {
+            BaseCurrentConvoyTo[veh->order_auto_type] += resource_yield(veh->order_auto_type,
+                faction_id, base_id, veh->x, veh->y);
+        }
+        int offense = Weapon[VehPrototypes[veh->proto_id].weapon_id].offense_rating;
+        uint8_t plan = VehPrototypes[veh->proto_id].plan;
+        if (offense && (offense > 0 || veh->proto_id >= MaxVehProtoFactionNum)
+            && plan != PLAN_RECONNAISANCE && plan != PLAN_PLANET_BUSTER) {
+            PlayersData[faction_id].armed_unit_weight += (plan == PLAN_OFFENSIVE || plan == PLAN_COMBAT) ? 2 : 1;
+        }
+        veh->state &= ~(VSTATE_REQUIRES_SUPPORT | VSTATE_PACIFISM_DRONE | VSTATE_PACIFISM_FREE_SKIP);
+        if (plan == PLAN_SUPPLY_CONVOY && veh->order == ORDER_CONVOY && base_who(veh->x, veh->y) >= 0) {
+            BaseCurrentConvoyFrom[veh->order_auto_type]++;
+        }
+        if (plan >= PLAN_SUPPLY_CONVOY) {
+            continue;
+        }
+        if (!has_abil(veh->proto_id, ABL_CLEAN_REACTOR)) {
+            Map *tile = map_loc(veh->x, veh->y);
+            BOOL native = veh->proto_id < MaxVehProtoFactionNum
+                && (offense < 0 || veh->proto_id == BSC_SPORE_LAUNCHER);
+            if (!native || !(tile->bit & BIT_FUNGUS) || (tile->climate & 0xE0) < ALT_BIT_OCEAN_SHELF) {
+                (*BaseCurrentForcesSupported)++;
+                int support = PlayersData[faction_id].soc_effect_pending.support;
+                int level = support + 4;
+                level = level < 0 ? 0 : (level > 7 ? 7 : level);
+                if (support_free[level] < (int)*BaseCurrentForcesSupported) {
+                    (*BaseCurrentForcesMaintCount)++;
+                    *BaseCurrentForcesMaintCost += (support < -3) + 1;
+                    veh->state |= VSTATE_REQUIRES_SUPPORT;
+                }
+            }
+            if (*BaseUpkeepStage == 1) {
+                for (int level = -4; level < 4; level++) {
+                    if (support_free[level + 4] < (int)*BaseCurrentForcesSupported) {
+                        int cost = (level < -3) + 1;
+                        int intake = (*BaseCurrent)->mineral_intake_2;
+                        if (cost < intake) {
+                            if (intake / 2 < cost) {
+                                cost = cost * 2 - intake / 2;
+                            }
+                        } else {
+                            cost = cost * 3 - (intake / 2) * 2;
+                        }
+                        PlayersData[faction_id].support_cost_by_level[level + 4] += cost;
+                    }
+                }
+            }
+        }
+        if (Weapon[VehPrototypes[veh->proto_id].weapon_id].offense_rating) {
+            if ((base_who(veh->x, veh->y) < 0
+                && whose_territory(faction_id, veh->x, veh->y, NULL, false) != (int)faction_id)
+                || (Chassis[VehPrototypes[veh->proto_id].chassis_id].triad == TRIAD_AIR
+                    && VehPrototypes[veh->proto_id].plan != PLAN_AIR_SUPERIORITY)) {
+                (*BaseCurrentVehPacifismCount)++;
+                int police = PlayersData[faction_id].soc_effect_pending.police
+                    + (has_fac_built(FAC_BROOD_PIT, *BaseIDCurrentSelected) ? 2 : 0);
+                if (police == -3) {
+                    veh->state |= (*BaseCurrentVehPacifismCount == 1) ? VSTATE_PACIFISM_FREE_SKIP
+                        : VSTATE_PACIFISM_DRONE;
+                } else if (police < -3) {
+                    veh->state |= VSTATE_PACIFISM_DRONE;
+                }
+            }
+        }
+    }
 }
 
 /*

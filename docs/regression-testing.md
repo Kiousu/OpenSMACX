@@ -645,3 +645,29 @@ purge even when the shortfall remains. `base_research` keeps its fractional carr
 named `net_random_event` (PlayerData 0x3D8).
 Boot test: the 620-redirect exe loaded Council.SAV and advanced the turn 289 -> 290 (38 s) with
 the game alive.
+
+## Batch 13, 2026-10-16 (Council.SAV, 620-redirect exe)
+
+`farm_compute` and `base_support` (base.cpp). Trigger group `batch13`, two snapshot tests that
+also compare the current-base globals from 0x90E8F0 to 0x90EA60 byte for byte (convoy tallies,
+support counts, tile flags, the used-tiles mask). `base_support` runs every base as loaded, in
+the AI upkeep pass, at SUPPORT -4/police -3, SUPPORT +3/police -5, SUPPORT -2/police -3 with a
+brood pit, with every convoy of the base working (some parked in it, plus another base's convoy)
+and at SUPPORT +3 with size 7. `farm_compute` runs every base as loaded, in the AI upkeep pass
+with the radius pods restored (so it adds goals), with half the radius unseen, with the map
+revealed and no treaties, and with every nearby base working its whole radius.
+
+| function | inputs | compared | mismatches |
+|---|---|---|---|
+| base_support | 281 bases x 7 variants (7,560 units supported, 1,106 pacifism drones) | 1,967 | 0 |
+| farm_compute | 281 bases x 5 variants (every tile flag set at least 900 times) | 1,405 | 0 |
+
+Log: `regression-runs/2026-10-16-council-batch13.log`. Notes: 0x90E99C is `BaseTileFlags`
+([25]), 0x90EA00 `BaseCurrentUsedTiles`, 0x90EA08 `BaseCurrentForcesMaintCount`; PlayerData
+`unk_38` renamed `support_cost_by_level` (support minerals at each SUPPORT level, summed in the
+AI upkeep pass with a penalty that grows as costs approach the base's mineral intake) and
+`unk_48` renamed `armed_unit_weight`. Original behaviour kept: `farm_compute` tests the tile's
+territory after the stack walk has run the unit index to -1, so any foreign territory is
+flagged whatever the treaty; convoy tallies index by the unit's resource type unchecked.
+Boot test: the 622-redirect exe loaded Council.SAV and advanced the turn 289 -> 290 (38 s) with
+the game alive.

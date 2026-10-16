@@ -4284,6 +4284,198 @@ static int test_base_check_support() {
     return mismatches;
 }
 
+// ---------------------------------------------------------------- batch 13
+
+// base_support() and farm_compute() write the current-base globals between 0x90E8F0 and 0x90EA60
+static uint8_t *const BaseGlobals = (uint8_t *)0x0090E8F0;
+static const size_t BaseGlobalsSize = 0x90EA60 - 0x90E8F0;
+
+static BOOL base_globals_differ(const uint8_t *a, const uint8_t *b, const char *label) {
+    size_t d = first_diff(a, b, BaseGlobalsSize);
+    if (d == (size_t)-1) {
+        return false;
+    }
+    if (label) {
+        logf("  %s: base global at %08X differs (orig %02X new %02X)", label,
+            (unsigned)(0x90E8F0 + d), a[d], b[d]);
+    }
+    return true;
+}
+
+static int test_base_support() {
+    GameSnapshot base, after_orig, after_new;
+    snap_alloc(&base); snap_alloc(&after_orig); snap_alloc(&after_new);
+    snap_take(&base);
+    uint8_t globals_saved[BaseGlobalsSize], globals_o[BaseGlobalsSize], globals_n[BaseGlobalsSize];
+    memcpy(globals_saved, BaseGlobals, BaseGlobalsSize);
+    int selected_saved = *BaseIDCurrentSelected;
+    int compared = 0, mismatches = 0, supported = 0, drones = 0, convoys = 0;
+    char label[80];
+    for (int base_id = 0; base_id < base.base_count; base_id++) {
+        uint32_t f = base.bases[base_id].faction_id_current;
+        for (int variant = 0; variant < 7; variant++) {
+            // as loaded; the AI upkeep pass; SUPPORT -4 under police -3; SUPPORT +3 under police
+            // -5; SUPPORT -2, police -3 and a brood pit; every convoy of the base working (some
+            // parked here, one other base's convoy too); SUPPORT +3 at size 7 under police -3
+            auto prepare = [&]() {
+                snap_restore(&base);
+                memcpy(BaseGlobals, globals_saved, BaseGlobalsSize);
+                set_base(base_id);
+                Base *b = &Bases[base_id];
+                PlayerData *p = &PlayersData[f];
+                *BaseUpkeepStage = (variant >= 1 && variant <= 3) ? 1 : 0;
+                if (variant == 2) {
+                    p->soc_effect_pending.support = -4;
+                    p->soc_effect_pending.police = -3;
+                } else if (variant == 3) {
+                    p->soc_effect_pending.support = 3;
+                    p->soc_effect_pending.police = -5;
+                } else if (variant == 4) {
+                    p->soc_effect_pending.support = -2;
+                    p->soc_effect_pending.police = -3;
+                    uint32_t offset, mask;
+                    bitmask(FAC_BROOD_PIT, &offset, &mask);
+                    b->facilities_built[offset] |= mask;
+                } else if (variant == 5) {
+                    int n = 0;
+                    for (int v = 0; v < *VehCurrentCount; v++) {
+                        if (Vehs[v].faction_id != f
+                            || VehPrototypes[Vehs[v].proto_id].plan != PLAN_SUPPLY_CONVOY) {
+                            continue;
+                        }
+                        if (Vehs[v].home_base_id == base_id) {
+                            Vehs[v].order = ORDER_CONVOY;
+                            Vehs[v].order_auto_type = (uint8_t)(n % 4);
+                            if (n % 3 == 2) {
+                                Vehs[v].x = b->x;
+                                Vehs[v].y = b->y;
+                            }
+                            n++;
+                        } else if (n < 100 && Vehs[v].home_base_id >= 0) {
+                            Vehs[v].order = ORDER_CONVOY;
+                            Vehs[v].order_auto_type = RSC_ENERGY;
+                            Vehs[v].x = b->x;
+                            Vehs[v].y = b->y;
+                            n += 100;
+                        }
+                    }
+                } else if (variant == 6) {
+                    p->soc_effect_pending.support = 3;
+                    p->soc_effect_pending.police = -3;
+                    b->population_size = 7;
+                }
+            };
+            prepare();
+            base_support_OG();
+            snap_take(&after_orig);
+            memcpy(globals_o, BaseGlobals, BaseGlobalsSize);
+            supported += *BaseCurrentForcesSupported;
+            drones += *BaseCurrentVehPacifismCount;
+            convoys += BaseCurrentConvoyTo[0] + BaseCurrentConvoyTo[1] + BaseCurrentConvoyTo[2]
+                + BaseCurrentConvoyFrom[0] + BaseCurrentConvoyFrom[1] + BaseCurrentConvoyFrom[2];
+            prepare();
+            base_support();
+            snap_take(&after_new);
+            memcpy(globals_n, BaseGlobals, BaseGlobalsSize);
+            compared++;
+            sprintf_s(label, "base_support(%d) variant %d", base_id, variant);
+            BOOL detail = mismatches < MAX_DETAIL;
+            if (base_globals_differ(globals_o, globals_n, detail ? label : NULL)
+                || snap_differs(&after_orig, &after_new, detail ? label : NULL)) {
+                mismatches++;
+            }
+        }
+    }
+    snap_restore(&base);
+    memcpy(BaseGlobals, globals_saved, BaseGlobalsSize);
+    *BaseIDCurrentSelected = selected_saved;
+    snap_free(&base); snap_free(&after_orig); snap_free(&after_new);
+    logf("base_support: %d compared (%d units supported, %d pacifism drones, %d convoy yield by the original), %d mismatches",
+        compared, supported, drones, convoys, mismatches);
+    return mismatches;
+}
+
+static int test_farm_compute() {
+    GameSnapshot base, after_orig, after_new;
+    snap_alloc(&base); snap_alloc(&after_orig); snap_alloc(&after_new);
+    snap_take(&base);
+    uint8_t globals_saved[BaseGlobalsSize], globals_o[BaseGlobalsSize], globals_n[BaseGlobalsSize];
+    memcpy(globals_saved, BaseGlobals, BaseGlobalsSize);
+    int selected_saved = *BaseIDCurrentSelected;
+    int compared = 0, mismatches = 0, flags_seen[6] = {};
+    char label[80];
+    for (int base_id = 0; base_id < base.base_count; base_id++) {
+        uint32_t f = base.bases[base_id].faction_id_current;
+        for (int variant = 0; variant < 5; variant++) {
+            // as loaded; the AI upkeep pass with pods back on the radius; half the radius unseen;
+            // the map revealed and no treaties; every nearby base working its whole radius
+            auto prepare = [&]() {
+                snap_restore(&base);
+                memcpy(BaseGlobals, globals_saved, BaseGlobalsSize);
+                set_base(base_id);
+                Base *b = &Bases[base_id];
+                *BaseUpkeepStage = variant == 1 ? 1 : 0;
+                for (int i = 0; i < 21; i++) {
+                    int x = b->x + RadiusOffsetX[i], y = b->y + RadiusOffsetY[i];
+                    if (!*MapIsFlat) {
+                        x = x < 0 ? x + *MapLongitudeBounds
+                            : (x >= (int)*MapLongitudeBounds ? x - *MapLongitudeBounds : x);
+                    }
+                    if (y < 0 || y >= (int)*MapLatitudeBounds || x < 0 || x >= (int)*MapLongitudeBounds) {
+                        continue;
+                    }
+                    Map *tile = map_loc(x, y);
+                    if (variant == 1) {
+                        tile->bit &= ~BIT_SUPPLY_REMOVE;
+                    } else if (variant == 2 && i % 2) {
+                        tile->visibility &= ~(1 << f);
+                    }
+                }
+                if (variant == 2) {
+                    PlayersData[f].flags &= ~PFLAG_MAP_REVEALED;
+                } else if (variant == 3) {
+                    PlayersData[f].flags |= PFLAG_MAP_REVEALED;
+                    for (int g = 0; g < MaxPlayerNum; g++) {
+                        PlayersData[f].diplo_treaties[g] &= ~(DTREATY_PACT | DTREATY_TREATY);
+                    }
+                } else if (variant == 4) {
+                    for (int i = 0; i < *BaseCurrentCount; i++) {
+                        Bases[i].resource_sqr_radius = 0x1FFFFF;
+                    }
+                }
+            };
+            prepare();
+            farm_compute_OG();
+            snap_take(&after_orig);
+            memcpy(globals_o, BaseGlobals, BaseGlobalsSize);
+            for (int i = 0; i < 21; i++) {
+                for (int k = 0; k < 6; k++) {
+                    flags_seen[k] += (BaseTileFlags[i] >> k) & 1;
+                }
+            }
+            prepare();
+            farm_compute();
+            snap_take(&after_new);
+            memcpy(globals_n, BaseGlobals, BaseGlobalsSize);
+            compared++;
+            sprintf_s(label, "farm_compute(%d) variant %d", base_id, variant);
+            BOOL detail = mismatches < MAX_DETAIL;
+            if (base_globals_differ(globals_o, globals_n, detail ? label : NULL)
+                || snap_differs(&after_orig, &after_new, detail ? label : NULL)) {
+                mismatches++;
+            }
+        }
+    }
+    snap_restore(&base);
+    memcpy(BaseGlobals, globals_saved, BaseGlobalsSize);
+    *BaseIDCurrentSelected = selected_saved;
+    snap_free(&base); snap_free(&after_orig); snap_free(&after_new);
+    logf("farm_compute: %d compared (tile flags 1/2/4/8/10/20 set %d/%d/%d/%d/%d/%d times by the original), %d mismatches",
+        compared, flags_seen[0], flags_seen[1], flags_seen[2], flags_seen[3], flags_seen[4],
+        flags_seen[5], mismatches);
+    return mismatches;
+}
+
 static DWORD WINAPI regress_watcher(LPVOID) {
     for (;;) {
         Sleep(1000);
@@ -4393,6 +4585,8 @@ void regress_run() {
     if (test_enabled("batch12", "reset_territory")) total += run_guarded("reset_territory", test_reset_territory);
     if (test_enabled("batch12", "base_research")) total += run_guarded("base_research", test_base_research);
     if (test_enabled("batch12", "base_check_support")) total += run_guarded("base_check_support", test_base_check_support);
+    if (test_enabled("batch13", "base_support")) total += run_guarded("base_support", test_base_support);
+    if (test_enabled("batch13", "farm_compute")) total += run_guarded("farm_compute", test_farm_compute);
     if (test_enabled("enemy_capabilities")) total += run_guarded("enemy_capabilities", test_enemy_capabilities);
     if (test_enabled("social_ai")) total += run_guarded("social_ai", test_social_ai);
     if (test_enabled("Path::sensors") || test_enabled("path_sensors")) total += run_guarded("path_sensors", test_path_sensors);

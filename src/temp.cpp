@@ -149,6 +149,8 @@ func_stack_veh *stack_veh_OG = (func_stack_veh *)0x005B8EE0;
 func_void *reset_territory_OG = (func_void *)0x00523DD0;
 func_void *base_check_support_OG = (func_void *)0x004F4830;
 func_void *base_research_OG = (func_void *)0x004F4E80;
+func_void *farm_compute_OG = (func_void *)0x004E68B0;
+func_void *base_support_OG = (func_void *)0x004E9550;
 func_void *base_psych_OG = (func_void *)0x004EA540;
 func_social_ai *social_ai_OG = (func_social_ai *)0x005B4790;
 func_path_sensors *Path_sensors_OG = (func_path_sensors *)0x0059CCA0;
@@ -629,9 +631,9 @@ int __cdecl tester() {
                     //log_say(Players[i].search_key, "unk_71", PlayersData[i].unk_72, 0, 0);
                     log_say(Players[i].search_key, " ? unk_26 | earned_techs_saved | tech_ranking ? ", PlayersData[i].unk_26, PlayersData[i].earned_techs_saved, PlayersData[i].tech_ranking);
 
-                    //log_say(Players[i].search_key, "unk_48 - base support sum", PlayersData[i].unk_48, 0, 0);
+                    //log_say(Players[i].search_key, "armed_unit_weight - base support sum", PlayersData[i].armed_unit_weight, 0, 0);
                     //log_say(Players[i].search_key, "? unk_49 - 4xecon dmg sum ? ", PlayersData[i].unk_49, 0, 0);
-                    //log_say(Players[i].search_key, "unk_48 - support", PlayersData[i].unk_48, 0, 0);
+                    //log_say(Players[i].search_key, "armed_unit_weight - support", PlayersData[i].armed_unit_weight, 0, 0);
                 }
                 */
                 /*

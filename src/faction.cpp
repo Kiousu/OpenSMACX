@@ -1900,7 +1900,7 @@ void __cdecl social_ai(uint32_t faction_id, int growth_val, int tech_val, int we
             unk_val6 += econ_weight / unk_val3;
             // support
             int support_val = range(soc_eff.support + 4, 0, 7);
-            int support_weight = PlayersData[faction_id].unk_38[support_val];
+            int support_weight = PlayersData[faction_id].support_cost_by_level[support_val];
             if (soc_eff.support <= -4) {
                 support_weight *= 3;
             }
@@ -1956,7 +1956,7 @@ void __cdecl social_ai(uint32_t faction_id, int growth_val, int tech_val, int we
                 morale_val--;
             }
             int morale_weight = (unk_val3 * morale_val * (fight_val + 2) * (unk_sum1 + 1)
-                * ((int)PlayersData[faction_id].current_num_bases + PlayersData[faction_id].unk_48)) / 8;
+                * ((int)PlayersData[faction_id].current_num_bases + PlayersData[faction_id].armed_unit_weight)) / 8;
             if (output) {
                 if (power_val) {
                     morale_weight *= 3;

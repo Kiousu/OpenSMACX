@@ -418,11 +418,11 @@ struct PlayerData {
     char saved_queue_name[8][24]; // queue template
     int saved_queue_size[8]; // queue template
     int saved_queue_items[8][10]; // queue template
-    int unk_38[8];
+    int support_cost_by_level[8]; // minerals units would cost at SUPPORT -4 to +3, summed by base_support()
     int unk_39[8][9];
     int unk_46[9];
     int unk_47;
-    int unk_48;
+    int armed_unit_weight; // armed units (2 per offensive/combat unit), summed by base_support()
     int unk_49;
     uint32_t nutrient_surplus_total;
     int labs_total;

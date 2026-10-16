@@ -492,6 +492,7 @@ constexpr int MaxCitizenNum = 10;
 constexpr int MaxSpecialistNum = 7;
 constexpr int SP_Unbuilt = -1;
 constexpr int SP_Destroyed = -2;
+constexpr int BaseRadiusTiles = 21; // the base tile and the 20 tiles a base can work
 
 extern RulesFacility *Facility;
 extern RulesCitizen *Citizen;
@@ -508,6 +509,9 @@ extern int *BaseGovPickID; // [4]
 extern int *BaseGovPickValue; // [4]
 extern int *BaseTerraformEnergy;
 extern int *BaseTerraformReduce;
+extern int *BaseTileFlags;
+extern uint32_t *BaseCurrentUsedTiles;
+extern uint32_t *BaseCurrentForcesMaintCount;
 extern uint32_t *BaseCurrentConvoyFrom; // resources convoyed from base
 extern uint32_t *BaseCurrentConvoyTo; // resources convoyed/extracted to base
 extern int *BaseCurrentGrowthRate;
@@ -550,6 +554,8 @@ DLLEXPORT BOOL __cdecl base_queue(uint32_t base_id);
 DLLEXPORT void __cdecl base_energy_costs();
 DLLEXPORT void __cdecl base_check_support();
 DLLEXPORT void __cdecl base_research();
+DLLEXPORT void __cdecl farm_compute();
+DLLEXPORT void __cdecl base_support();
 DLLEXPORT uint32_t __cdecl fac_maint(uint32_t facility_id, uint32_t faction_id);
 DLLEXPORT void __cdecl base_maint();
 DLLEXPORT void __cdecl make_base_unique(uint32_t base_id);

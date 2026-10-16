@@ -641,3 +641,6 @@
 0x00123DD0	?reset_territory@@YAXXZ
 0x000F4830	?base_check_support@@YAXXZ
 0x000F4E80	?base_research@@YAXXZ
+# --- batch 13: unit support tally, radius tile availability
+0x000E68B0	?farm_compute@@YAXXZ
+0x000E9550	?base_support@@YAXXZ
