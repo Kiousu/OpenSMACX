@@ -120,6 +120,8 @@ enum DiploAgenda {
 };
 
 enum PlayerFlagsBitfield {
+    PFLAG_UNK_4 = 0x4, // set by study_artifact() once PFLAG_UNK_10 is already set
+    PFLAG_UNK_10 = 0x10, // set by study_artifact() for the first artifact studied
     PFLAG_SELF_AWARE_COLONY_LOST_MAINT = 0x20, // used to even out lossy integer division
     PFLAG_MAP_REVEALED = 0x200,
     PFLAG_GENETIC_PLAGUE_INTRO = 0x400, // +1 to defense against after 1st time faction experiences
@@ -484,7 +486,7 @@ struct PlayerData {
     int corner_market_active;
     int unk_101;
     int unk_102;
-    int unk_103;
+    int bunglist_index; // next BungList slot to overwrite; see bung_proto()
     uint32_t flags_ext;
     int unk_105;
     int unk_106;

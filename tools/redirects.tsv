@@ -573,3 +573,11 @@
 # --- BASE: difficulty rating, scenario objective leader ---
 0x001ABFF0	?get_rating@@YAHIH@Z
 0x001AC5A0	?most_objectives@@YAHPAH0@Z
+# --- VEH/TECH batch 2: ability conditions, bunglist writer, prototype retirement, spotting, artifacts ---
+0x00184B50	?abil_cond@@YAHHHHH@Z
+0x0017DF30	?bung_proto@@YAXIH@Z
+0x0017F1D0	?retire_proto@@YAXHH@Z
+0x001B57D0	?spot_base@@YAXHH@Z
+0x001B58E0	?spot_stack@@YAXHH@Z
+0x0017CFA0	?study_artifact@@YAHH@Z
+0x001BADC0	?tech_secret@@YAXHH@Z

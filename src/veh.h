@@ -552,6 +552,9 @@ DLLEXPORT void __cdecl add_abil(uint32_t *ability_flags, uint32_t ability, uint3
 DLLEXPORT BOOL __cdecl is_bunged(uint32_t faction_id, uint32_t chassis_id, uint32_t weapon_id,
                                  uint32_t armor_id, int ability_flags, uint32_t reactor_id);
 DLLEXPORT void __cdecl clear_bunglist(uint32_t faction_id);
+DLLEXPORT void __cdecl bung_proto(uint32_t faction_id, int proto_id);
+DLLEXPORT void __cdecl retire_proto(int proto_id, int faction_id);
+DLLEXPORT BOOL __cdecl abil_cond(int ability_id, int chassis_id, int weapon_id, int armor_id);
 DLLEXPORT int __cdecl hex_cost(int proto_id, int faction_id, uint32_t x_src, uint32_t y_src, 
                                uint32_t x_dst, uint32_t y_dst, BOOL toggle);
 DLLEXPORT void __cdecl veh_put(uint32_t veh_id, int x, int y);
@@ -571,6 +574,7 @@ DLLEXPORT int __cdecl stack_fix(int veh_id);
 DLLEXPORT int __cdecl stack_check(int veh_id, uint32_t type, int cond1, int cond2, int cond3);
 DLLEXPORT void __cdecl stack_kill(int veh_id);
 DLLEXPORT void __cdecl unspot_stack(int veh_id);
+DLLEXPORT void __cdecl spot_stack(int veh_id, int faction_id);
 DLLEXPORT BOOL __cdecl veh_avail(uint32_t proto_id, uint32_t faction_id, int base_id);
 DLLEXPORT BOOL __cdecl wants_prototype(uint32_t proto_id, uint32_t faction_id);
 DLLEXPORT int __cdecl veh_at(int x, int y);

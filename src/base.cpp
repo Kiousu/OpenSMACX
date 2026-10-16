@@ -1671,6 +1671,33 @@ BOOL __cdecl ascending(int UNUSED(faction_id)) {
 }
 
 /*
+Purpose: Mark the base and its tile as spotted by the faction and record the population size the
+         faction now knows about. The first time the faction at the controls sees the tile
+         (outside omniscient view and without a revealed map) the tile is flagged for the redraw.
+Original Offset: 005B57D0
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch2.log)
+*/
+void __cdecl spot_base(int base_id, int faction_id) {
+    Base *base = &Bases[base_id];
+    base->visibility |= (1 << faction_id);
+    base->faction_pop_size_intel[faction_id] = base->population_size;
+    int x = base->x;
+    int y = base->y;
+    if (on_map(x, y)) {
+        Map *tile = map_loc(x, y);
+        if (faction_id == *FactionIDCurrent && !(tile->visibility & (1 << faction_id))
+            && !(*GameState & STATE_OMNISCIENT_VIEW)
+            && !(PlayersData[faction_id].flags & PFLAG_MAP_REVEALED)) {
+            tile->bit2 |= BIT2_UNK_400000;
+            *UnkBitfield1 |= 1;
+        }
+        tile->visibility |= (1 << faction_id);
+        synch_bit(x, y, faction_id);
+    }
+}
+
+/*
 Purpose: Determine if the facility is redundant due to a Secret Project counting as that facility.
 Original Offset: 005BA030
 Return Value: Is facility redundant? true/false

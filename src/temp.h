@@ -62,6 +62,7 @@ extern func5 *wave_it;
 extern func5 *veh_kill;
 typedef int func_num_obj(int, int);
 extern func_num_obj *num_objectives;
+extern func5 *kill; // kill(veh_id): veh_kill() plus stack and interface cleanup
 typedef void *func6(char const *, int(*)(void));
 extern func6 *X_pop;
 typedef int func7(LPCSTR, LPCSTR, int, LPCSTR, int(__cdecl *)());
@@ -149,6 +150,15 @@ typedef int func_rating(uint32_t, int);
 extern func_rating *get_rating_OG;
 typedef int func_most_obj(int *, int *);
 extern func_most_obj *most_objectives_OG;
+// batch 2
+typedef BOOL func_abil_cond(int, int, int, int);
+extern func_abil_cond *abil_cond_OG;
+typedef void func_bung_proto(uint32_t, int);
+extern func_bung_proto *bung_proto_OG;
+extern func_diplo2 *spot_base_OG;
+extern func_diplo2 *spot_stack_OG;
+extern func_diplo2 *retire_proto_OG;
+extern func_veh_pred *study_artifact_OG;
 extern func_void *base_psych_OG;
 extern func_social_ai *social_ai_OG;
 extern func_path_sensors *Path_sensors_OG; // Path::sensors()
@@ -240,11 +250,20 @@ extern uint32_t *AmbienceFlags; // bit 0: war ambience playing
 typedef void func_diplo2(int, int);
 extern func_diplo2 *pact_ends;
 extern func_diplo2 *give_a_base;
-extern func_diplo2 *spot_base; // spot_base(base_id, faction_id)
 typedef void func_draw3(int, int, int);
 extern func_draw3 *draw_tiles; // draw_tiles(x, y, mode)
 typedef void func_draw4(int, int, int, int);
 extern func_draw4 *draw_tile_fixup; // draw_tile_fixup(x, y, unk, mode)
+extern func_draw3 *draw_tile; // draw_tile(x, y, mode)
+typedef void __fastcall func_fx_play(void *This, void *edx_unused, int fx_id);
+extern func_fx_play *FX_play; // FX::play()
+extern void *FXVar; // global FX instance
+typedef int __fastcall func_netmsg_pop(void *This, void *edx_unused, LPCSTR label, int delay,
+    int flags, LPCSTR pcx_file);
+extern func_netmsg_pop *NetMsg_pop; // NetMsg::pop()
+extern void *NetMsgVar; // global NetMsg instance
+extern int *BaseIDUnk; // never written by the exe; compared against base ids in study_artifact(),
+                       // order_veh(), capture_base(), enemy_move() and Console::go_to()
 extern void *WorldWinVar; // global WorldWin instance (lower right world map view)
 extern BOOL *TradeMapsRevealedNew; // set by trade_maps() and friends when new tiles were revealed
 typedef void func_tech_ach(int, int, int, int);

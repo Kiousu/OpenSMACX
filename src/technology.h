@@ -162,6 +162,8 @@ DLLEXPORT BOOL __cdecl has_tech(int tech_id, int faction_id);
 DLLEXPORT int __cdecl tech_recurse(int tech_id, int base_lvl);
 DLLEXPORT int __cdecl tech_category(uint32_t tech_id);
 DLLEXPORT BOOL __cdecl tech_avail(uint32_t tech_id, int faction_id);
+DLLEXPORT void __cdecl tech_secret(int tech_id, int faction_id);
+DLLEXPORT BOOL __cdecl study_artifact(int veh_id);
 DLLEXPORT void __cdecl tech_effects(uint32_t faction_id);
 DLLEXPORT BOOL __cdecl tech_is_preq(int preq_tech_id, int parent_tech_id, uint32_t range);
 DLLEXPORT int __cdecl tech_val(uint32_t tech_id, int faction_id, BOOL simple_calc);

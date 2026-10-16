@@ -82,6 +82,75 @@ BOOL __cdecl valid_tech_leap(uint32_t tech_id, uint32_t faction_id) {
 }
 
 /*
+Purpose: Cash in an Alien Artifact unit for a technology. If the artifact sits in a base that has
+         already linked one to its Network Node nothing happens (the owner at the controls is told
+         once). Otherwise the unit is removed, the base remembers the link, and the faction
+         receives a random technology it can research: one with both prerequisites known, or a
+         tech leap weighted by the faction's ranking.
+Original Offset: 0057CFA0
+Return Value: Was the artifact consumed? true/false
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch2.log)
+*/
+BOOL __cdecl study_artifact(int veh_id) {
+    char label[80];
+    strcpy_s(label, 80, "ARTIFACTTECH");
+    int x = Vehs[veh_id].x;
+    int y = Vehs[veh_id].y;
+    uint32_t faction_id = Vehs[veh_id].faction_id;
+    int base_id = base_at(x, y);
+    if (*BaseIDUnk != base_id && base_id >= 0 && Bases[base_id].state & BSTATE_ARTIFACT_LINKED) {
+        if (!(Bases[base_id].state & BSTATE_ARTIFACT_ALREADY_LINKED)
+            && faction_id == *FactionIDCurrent) {
+            parse_says(0, Bases[base_id].name_string, -1, -1);
+            NetMsg_pop(NetMsgVar, 0, "ALREADYARTIFACT", -5000, 0, "art_dis_sm.pcx");
+            Bases[base_id].state |= BSTATE_ARTIFACT_ALREADY_LINKED;
+        }
+        return false;
+    }
+    veh_kill(veh_id);
+    draw_tile(x, y, 2);
+    if (faction_id == *FactionIDCurrent) {
+        FX_play(FXVar, 0, 0x23);
+        popp(ScriptTxtID, label, 0, "art_dis_sm.pcx", 0);
+    }
+    if (PlayersData[faction_id].flags & PFLAG_UNK_10) {
+        PlayersData[faction_id].flags |= PFLAG_UNK_4;
+    } else {
+        PlayersData[faction_id].flags |= PFLAG_UNK_10;
+    }
+    if (base_id >= 0) {
+        Bases[base_id].state |= BSTATE_ARTIFACT_LINKED;
+    }
+    int roll_best = -1;
+    int tech_id_best = -1;
+    for (int tech_id = 0; tech_id < MaxTechnologyNum; tech_id++) {
+        if (!has_tech(tech_id, faction_id) && tech_avail(tech_id, faction_id)) {
+            BOOL has_preq_1 = has_tech(Technology[tech_id].preq_tech_1, faction_id);
+            BOOL has_preq_2 = has_tech(Technology[tech_id].preq_tech_2, faction_id);
+            if (has_preq_1 || has_preq_2) {
+                int range = 8;
+                if (!has_preq_1 || !has_preq_2) {
+                    if (!valid_tech_leap(tech_id, faction_id)) {
+                        continue;
+                    }
+                    range = (11 - (int)PlayersData[faction_id].ranking) * 2;
+                }
+                // the exe's CRT generator, like the rest of the game's rolls
+                int roll = (range - 1 > 0) ? _rand() % range : 0;
+                if (roll > roll_best) {
+                    roll_best = roll;
+                    tech_id_best = tech_id;
+                }
+            }
+        }
+    }
+    if (tech_id_best >= 0) {
+        tech_achieved(faction_id, tech_id_best, 0, 0);
+    }
+    return true;
+}
+
+/*
 Purpose: Craft an output string related to a specific technology. For techIDs outside the standard
          range, craft a string related to world map, comm links or prototypes.
 Original Offset: 005B9C40
@@ -207,6 +276,24 @@ BOOL __cdecl tech_avail(uint32_t tech_id, int faction_id) {
         return false; // if either prerequisite tech is set to disabled (-2)
     }
     return (has_tech(preq_tech_1, faction_id) && has_tech(preq_tech_2, faction_id));
+}
+
+/*
+Purpose: Announce that a faction has learned the secret of a technology (#THESECRET0 when it is
+         the faction at the controls, #THESECRET1 for another faction).
+Original Offset: 005BADC0
+Return Value: n/a
+Status: Complete (reviewed against the assembly; pops a dialog so it has no harness test)
+*/
+void __cdecl tech_secret(int tech_id, int faction_id) {
+    parse_say(0, (int)Technology[tech_id].name, -1, -1);
+    parse_says(1, Players[faction_id].adj_name_faction, -1, -1);
+    stringTemp->str[0] = 0;
+    strcat_s(stringTemp->str, 1032, "THESECRET");
+    char suffix[80];
+    _itoa_s(faction_id != *FactionIDCurrent, suffix, 80, 10);
+    strcat_s(stringTemp->str, 1032, suffix);
+    X_pop(stringTemp->str, NULL);
 }
 
 /*

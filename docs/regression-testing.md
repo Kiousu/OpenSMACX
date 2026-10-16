@@ -346,3 +346,30 @@ Log: `regression-runs/2026-10-16-council-veh-helpers.log`. Notes: the bunglist (
 entries of `{ability_flags, chassis, weapon, armor, reactor}`) is only consulted for human players
 (`FactionsStatus[0]`); the odd `< 1000` test Ghidra shows in `veh_unmoved`/`veh_ready` is the
 compiler's rendering of `speed() - moves_expended > 0`.
+
+## Batch 2, 2026-10-16 (Council.SAV, 563-redirect exe)
+
+Seven more functions: `abil_cond`, `bung_proto` (the previously unnamed 0x57DF30 that writes the
+bunglist), `retire_proto`, `spot_base`, `spot_stack`, `study_artifact` and `tech_secret`. Trigger
+group `batch2` runs the six tests; `tech_secret` only builds a `#THESECRET0/1` popup and has none.
+`retire_proto` goes through the exe's `kill()` on both sides with `VehBattleUnkTgl[0]` set so the
+map redraw is skipped, and compares the bunglist and the prototype table on top of the snapshot.
+`study_artifact` ends in the exe's `tech_achieved()`, which runs the whole AI tech/design chain
+over state the snapshot does not hold (prototypes, bunglist, research choice), so the first run
+showed divergence after the call; the test now replaces the entry point of `tech_achieved()` with
+a ten byte stub that records the tech id and returns, for both sides, and compares that id.
+
+| function | inputs | compared | mismatches |
+|---|---|---|---|
+| abil_cond | 29 abilities x 9 chassis x 26 weapons x 14 armors x SMACX on/off | 190,008 | 0 |
+| bung_proto | 8 factions x every 3rd prototype, ring index varied | 1,368 | 0 |
+| spot_base | every 3rd base x 8 factions | 752 | 0 |
+| spot_stack | every 7th unit (and -1) x 8 factions | 2,000 | 0 |
+| retire_proto | factions 1-7 x 64 basic prototypes + their active custom prototypes | 777 (3,111 units killed) | 0 |
+| study_artifact | every 9th unit turned into an AI faction's artifact, with/without a linked base | 388 (301 techs awarded) | 0 |
+
+Log: `regression-runs/2026-10-16-council-batch2.log`. Notes: `PlayerData+0x208C` is the
+bunglist ring index (`bunglist_index`); `study_artifact` toggles the unnamed player flags 0x10
+then 0x4; the tile flag `bit2 & 0x400000` plus `UnkBitfield1 |= 1` mark a tile the current
+player sees for the first time; 0x9A6564 (`BaseIDUnk`) is compared against base ids in five
+functions but never written by the exe. Boot test: the 570-redirect exe loaded Council.SAV and advanced the turn 289 -> 290 (38 s) with the game alive.

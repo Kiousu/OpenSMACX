@@ -24,6 +24,7 @@
 #include "game.h"
 #include "path.h"
 #include "random.h"
+#include "technology.h"
 #include "regress.h"
 
 #ifdef OPENSMACX_REGRESS
@@ -1668,6 +1669,355 @@ static int test_most_objectives() {
     return mismatches;
 }
 
+// ------------------------------------------------------------------------------------------
+// Batch 2 (2026-10-16): abil_cond, bung_proto, spot_base, spot_stack, retire_proto,
+// study_artifact. tech_secret only pops a dialog and has no test. The spot/retire/study tests
+// compare whole game snapshots taken after the original and after the decompiled version ran
+// from the same baseline; retire_proto also compares the bunglist and the prototype table.
+// ------------------------------------------------------------------------------------------
+
+static int test_abil_cond() {
+    BOOL expansion_saved = *ExpansionEnabled;
+    int compared = 0, mismatches = 0, allowed = 0;
+    for (int expansion = 0; expansion < 2; expansion++) {
+        *ExpansionEnabled = expansion;
+        for (int abil_id = 0; abil_id < MaxAbilityNum; abil_id++) {
+            for (int chas_id = 0; chas_id < MaxChassisNum; chas_id++) {
+                for (int wpn_id = 0; wpn_id < MaxWeaponNum; wpn_id++) {
+                    for (int arm_id = 0; arm_id < MaxArmorNum; arm_id++) {
+                        BOOL orig = abil_cond_OG(abil_id, chas_id, wpn_id, arm_id);
+                        BOOL mine = abil_cond(abil_id, chas_id, wpn_id, arm_id);
+                        compared++;
+                        allowed += (orig != 0);
+                        if (orig != mine) {
+                            if (mismatches < MAX_DETAIL) {
+                                logf("  abil_cond(%d, %d, %d, %d) expansion=%d: orig %d new %d",
+                                    abil_id, chas_id, wpn_id, arm_id, expansion, orig, mine);
+                            }
+                            mismatches++;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    *ExpansionEnabled = expansion_saved;
+    logf("abil_cond: %d compared (%d allowed), %d mismatches", compared, allowed, mismatches);
+    return mismatches;
+}
+
+static int test_bung_proto() {
+    const size_t bung_size = sizeof(BungedDesign) * MaxPlayerNum * MaxBungedDesignNum;
+    uint8_t *saved = (uint8_t *)malloc(bung_size);
+    uint8_t *after_orig = (uint8_t *)malloc(bung_size);
+    uint8_t *after_new = (uint8_t *)malloc(bung_size);
+    memcpy(saved, BungList, bung_size);
+    int index_saved[MaxPlayerNum];
+    for (int f = 0; f < MaxPlayerNum; f++) {
+        index_saved[f] = PlayersData[f].bunglist_index;
+    }
+    int compared = 0, mismatches = 0;
+    for (int faction_id = 0; faction_id < MaxPlayerNum; faction_id++) {
+        for (int proto_id = 0; proto_id < MaxVehProtoNum; proto_id += 3) {
+            int start = (proto_id * 7 + faction_id) % MaxBungedDesignNum;
+            memcpy(BungList, saved, bung_size);
+            PlayersData[faction_id].bunglist_index = start;
+            bung_proto_OG(faction_id, proto_id);
+            memcpy(after_orig, BungList, bung_size);
+            int index_orig = PlayersData[faction_id].bunglist_index;
+            memcpy(BungList, saved, bung_size);
+            PlayersData[faction_id].bunglist_index = start;
+            bung_proto(faction_id, proto_id);
+            memcpy(after_new, BungList, bung_size);
+            int index_new = PlayersData[faction_id].bunglist_index;
+            compared++;
+            size_t d = first_diff(after_orig, after_new, bung_size);
+            if (d != (size_t)-1 || index_orig != index_new) {
+                if (mismatches < MAX_DETAIL) {
+                    logf("  bung_proto(%d, %d) start %d: BungList byte %d differs, index %d/%d",
+                        faction_id, proto_id, start, (int)d, index_orig, index_new);
+                }
+                mismatches++;
+            }
+        }
+    }
+    memcpy(BungList, saved, bung_size);
+    for (int f = 0; f < MaxPlayerNum; f++) {
+        PlayersData[f].bunglist_index = index_saved[f];
+    }
+    free(saved); free(after_orig); free(after_new);
+    logf("bung_proto: %d compared, %d mismatches", compared, mismatches);
+    return mismatches;
+}
+
+static int test_spot_base() {
+    GameSnapshot base, after_orig, after_new;
+    snap_alloc(&base); snap_alloc(&after_orig); snap_alloc(&after_new);
+    snap_take(&base);
+    int compared = 0, mismatches = 0;
+    char label[64];
+    for (int base_id = 0; base_id < base.base_count; base_id += 3) {
+        for (int faction_id = 0; faction_id < MaxPlayerNum; faction_id++) {
+            snap_restore(&base);
+            spot_base_OG(base_id, faction_id);
+            snap_take(&after_orig);
+            snap_restore(&base);
+            spot_base(base_id, faction_id);
+            snap_take(&after_new);
+            compared++;
+            sprintf_s(label, "spot_base(%d, %d)", base_id, faction_id);
+            BOOL diff = snap_differs(&after_orig, &after_new, mismatches < MAX_DETAIL ? label : NULL);
+            if (!diff && after_orig.draw_state != after_new.draw_state) {
+                if (mismatches < MAX_DETAIL) {
+                    logf("  %s: draw state differs (orig %X new %X)", label, after_orig.draw_state,
+                        after_new.draw_state);
+                }
+                diff = true;
+            }
+            if (diff) {
+                mismatches++;
+            }
+        }
+    }
+    snap_restore(&base);
+    snap_free(&base); snap_free(&after_orig); snap_free(&after_new);
+    logf("spot_base: %d compared, %d mismatches", compared, mismatches);
+    return mismatches;
+}
+
+static int test_spot_stack() {
+    GameSnapshot base, after_orig, after_new;
+    snap_alloc(&base); snap_alloc(&after_orig); snap_alloc(&after_new);
+    snap_take(&base);
+    int compared = 0, mismatches = 0;
+    char label[64];
+    for (int veh_id = -1; veh_id < base.veh_count; veh_id += (veh_id < 0) ? 1 : 7) {
+        for (int faction_id = 0; faction_id < MaxPlayerNum; faction_id++) {
+            snap_restore(&base);
+            spot_stack_OG(veh_id, faction_id);
+            snap_take(&after_orig);
+            snap_restore(&base);
+            spot_stack(veh_id, faction_id);
+            snap_take(&after_new);
+            compared++;
+            sprintf_s(label, "spot_stack(%d, %d)", veh_id, faction_id);
+            BOOL diff = snap_differs(&after_orig, &after_new, mismatches < MAX_DETAIL ? label : NULL);
+            if (!diff && after_orig.draw_state != after_new.draw_state) {
+                if (mismatches < MAX_DETAIL) {
+                    logf("  %s: draw state differs (orig %X new %X)", label, after_orig.draw_state,
+                        after_new.draw_state);
+                }
+                diff = true;
+            }
+            if (diff) {
+                mismatches++;
+            }
+        }
+    }
+    snap_restore(&base);
+    snap_free(&base); snap_free(&after_orig); snap_free(&after_new);
+    logf("spot_stack: %d compared, %d mismatches", compared, mismatches);
+    return mismatches;
+}
+
+static int test_retire_proto() {
+    // selection globals touched by kill()/veh_kill(), same set as the stack_kill test
+    static int *const extra_globals[] = { (int *)0x0093928C, (int *)0x00939290, (int *)0x008C6B2C,
+        (int *)0x008C6B34, (int *)0x009A64DC };
+    const int extra_count = (int)(sizeof(extra_globals) / sizeof(extra_globals[0]));
+    int extra_saved[5];
+    for (int i = 0; i < extra_count; i++) {
+        extra_saved[i] = *extra_globals[i];
+    }
+    const size_t bung_size = sizeof(BungedDesign) * MaxPlayerNum * MaxBungedDesignNum;
+    const size_t proto_size = sizeof(VehPrototype) * MaxVehProtoNum;
+    uint8_t *bung_saved = (uint8_t *)malloc(bung_size);
+    uint8_t *bung_orig = (uint8_t *)malloc(bung_size);
+    uint8_t *bung_new = (uint8_t *)malloc(bung_size);
+    uint8_t *proto_saved = (uint8_t *)malloc(proto_size);
+    uint8_t *proto_orig = (uint8_t *)malloc(proto_size);
+    uint8_t *proto_new = (uint8_t *)malloc(proto_size);
+    memcpy(bung_saved, BungList, bung_size);
+    memcpy(proto_saved, VehPrototypes, proto_size);
+    BOOL draw_saved = VehBattleUnkTgl[0];
+    VehBattleUnkTgl[0] = true; // kill() skips its map redraw while this is set
+    GameSnapshot base, after_orig, after_new;
+    snap_alloc(&base); snap_alloc(&after_orig); snap_alloc(&after_new);
+    snap_take(&base);
+    auto prepare = [&]() {
+        snap_restore(&base);
+        memcpy(BungList, bung_saved, bung_size);
+        memcpy(VehPrototypes, proto_saved, proto_size);
+        for (int i = 0; i < extra_count; i++) {
+            *extra_globals[i] = extra_saved[i];
+        }
+    };
+    int compared = 0, mismatches = 0, killed = 0, changed = 0;
+    char label[64];
+    for (int faction_id = 1; faction_id < MaxPlayerNum; faction_id++) {
+        for (int slot = 0; slot < 2 * MaxVehProtoFactionNum; slot++) {
+            int proto_id = slot < MaxVehProtoFactionNum ? slot
+                : faction_id * MaxVehProtoFactionNum + (slot - MaxVehProtoFactionNum);
+            if (proto_id >= MaxVehProtoFactionNum
+                && !(((VehPrototype *)proto_saved)[proto_id].flags & PROTO_ACTIVE)) {
+                continue;
+            }
+            prepare();
+            retire_proto_OG(proto_id, faction_id);
+            snap_take(&after_orig);
+            memcpy(bung_orig, BungList, bung_size);
+            memcpy(proto_orig, VehPrototypes, proto_size);
+            killed += base.veh_count_global - after_orig.veh_count_global;
+            prepare();
+            retire_proto(proto_id, faction_id);
+            snap_take(&after_new);
+            memcpy(bung_new, BungList, bung_size);
+            memcpy(proto_new, VehPrototypes, proto_size);
+            compared++;
+            if (first_diff(after_orig.vehs, base.vehs, sizeof(Veh) * base.veh_count) != (size_t)-1
+                || after_orig.veh_count_global != base.veh_count_global) {
+                changed++;
+            }
+            sprintf_s(label, "retire_proto(%d, %d)", proto_id, faction_id);
+            BOOL diff = snap_differs(&after_orig, &after_new, mismatches < MAX_DETAIL ? label : NULL);
+            size_t d;
+            if (!diff && (d = first_diff(bung_orig, bung_new, bung_size)) != (size_t)-1) {
+                if (mismatches < MAX_DETAIL) {
+                    logf("  %s: BungList byte %u differs (orig %02X new %02X)", label, (unsigned)d,
+                        bung_orig[d], bung_new[d]);
+                }
+                diff = true;
+            }
+            if (!diff && (d = first_diff(proto_orig, proto_new, proto_size)) != (size_t)-1) {
+                if (mismatches < MAX_DETAIL) {
+                    logf("  %s: VehPrototype[%u] +0x%X differs (orig %02X new %02X)", label,
+                        (unsigned)(d / sizeof(VehPrototype)), (unsigned)(d % sizeof(VehPrototype)),
+                        proto_orig[d], proto_new[d]);
+                }
+                diff = true;
+            }
+            if (diff) {
+                mismatches++;
+            }
+        }
+    }
+    prepare();
+    VehBattleUnkTgl[0] = draw_saved;
+    snap_free(&base); snap_free(&after_orig); snap_free(&after_new);
+    free(bung_saved); free(bung_orig); free(bung_new);
+    free(proto_saved); free(proto_orig); free(proto_new);
+    logf("retire_proto: %d compared (%d changed units, %d units killed by the original), %d mismatches",
+        compared, changed, killed, mismatches);
+    return mismatches;
+}
+
+// tech_achieved() is exe code outside the test and runs the whole AI tech/design chain (nondeterministic
+// state outside the snapshot), so while the test runs the exe's entry point is replaced with a stub
+// that records the tech id and returns. Both sides call the same address.
+static int StudyArtifactTechRecorded = -2;
+
+static int test_study_artifact() {
+    static int *const extra_globals[] = { (int *)0x0093928C, (int *)0x00939290, (int *)0x008C6B2C,
+        (int *)0x008C6B34, (int *)0x009A64DC };
+    const int extra_count = (int)(sizeof(extra_globals) / sizeof(extra_globals[0]));
+    int extra_saved[5];
+    for (int i = 0; i < extra_count; i++) {
+        extra_saved[i] = *extra_globals[i];
+    }
+    // stub: mov eax,[esp+8] ; mov [StudyArtifactTechRecorded],eax ; ret
+    uint8_t *entry = (uint8_t *)tech_achieved;
+    uint8_t stub[10] = { 0x8B, 0x44, 0x24, 0x08, 0xA3, 0, 0, 0, 0, 0xC3 };
+    int *recorder = &StudyArtifactTechRecorded;
+    memcpy(stub + 5, &recorder, 4);
+    uint8_t saved_code[10];
+    DWORD old_protect = 0;
+    if (!VirtualProtect(entry, sizeof(stub), PAGE_EXECUTE_READWRITE, &old_protect)) {
+        logf("study_artifact: cannot unprotect tech_achieved (%u)", GetLastError());
+        return 1;
+    }
+    memcpy(saved_code, entry, sizeof(stub));
+    memcpy(entry, stub, sizeof(stub));
+    FlushInstructionCache(GetCurrentProcess(), entry, sizeof(stub));
+
+    GameSnapshot base, after_orig, after_new;
+    snap_alloc(&base); snap_alloc(&after_orig); snap_alloc(&after_new);
+    snap_take(&base);
+    int compared = 0, mismatches = 0, consumed = 0, techs = 0;
+    char label[80];
+    int current = *FactionIDCurrent;
+    for (int veh_id = 0; veh_id < base.veh_count; veh_id += 9) {
+        for (int variant = 0; variant < 2; variant++) {
+            // an AI faction other than the one at the controls, so no dialog pops up
+            int faction_id = 1 + (veh_id + variant) % (MaxPlayerNum - 1);
+            if (faction_id == current) {
+                faction_id = 1 + faction_id % (MaxPlayerNum - 1);
+            }
+            // identical baseline patch on both sides: turn the unit into this faction's artifact,
+            // and for the second variant mark a base on its tile as already linked
+            auto prepare = [&]() {
+                snap_restore(&base);
+                for (int i = 0; i < extra_count; i++) {
+                    *extra_globals[i] = extra_saved[i];
+                }
+                Vehs[veh_id].proto_id = BSC_ALIEN_ARTIFACT;
+                Vehs[veh_id].faction_id = (uint8_t)faction_id;
+                if (variant) {
+                    int base_id = base_at(Vehs[veh_id].x, Vehs[veh_id].y);
+                    if (base_id >= 0) {
+                        Bases[base_id].state |= BSTATE_ARTIFACT_LINKED;
+                    }
+                }
+                StudyArtifactTechRecorded = -2;
+                reseed(veh_id * 131 + variant);
+            };
+            prepare();
+            BOOL orig = study_artifact_OG(veh_id);
+            int tech_orig = StudyArtifactTechRecorded;
+            snap_take(&after_orig);
+            prepare();
+            BOOL mine = study_artifact(veh_id);
+            int tech_new = StudyArtifactTechRecorded;
+            snap_take(&after_new);
+            compared++;
+            consumed += (orig != 0);
+            techs += (tech_orig >= 0);
+            sprintf_s(label, "study_artifact(%d) faction %d variant %d", veh_id, faction_id, variant);
+            BOOL diff = false;
+            if (orig != mine || tech_orig != tech_new) {
+                if (mismatches < MAX_DETAIL) {
+                    logf("  %s: return orig %d new %d, tech orig %d new %d", label, orig, mine, tech_orig,
+                        tech_new);
+                }
+                diff = true;
+            }
+            if (!diff) {
+                diff = snap_differs(&after_orig, &after_new, mismatches < MAX_DETAIL ? label : NULL);
+            }
+            if (!diff && after_orig.draw_state != after_new.draw_state) {
+                if (mismatches < MAX_DETAIL) {
+                    logf("  %s: draw state differs (orig %X new %X)", label, after_orig.draw_state,
+                        after_new.draw_state);
+                }
+                diff = true;
+            }
+            if (diff) {
+                mismatches++;
+            }
+        }
+    }
+    snap_restore(&base);
+    for (int i = 0; i < extra_count; i++) {
+        *extra_globals[i] = extra_saved[i];
+    }
+    snap_free(&base); snap_free(&after_orig); snap_free(&after_new);
+    memcpy(entry, saved_code, sizeof(stub));
+    FlushInstructionCache(GetCurrentProcess(), entry, sizeof(stub));
+    VirtualProtect(entry, sizeof(stub), old_protect, &old_protect);
+    logf("study_artifact: %d compared (%d consumed, %d techs awarded by the original), %d mismatches",
+        compared, consumed, techs, mismatches);
+    return mismatches;
+}
+
 static DWORD WINAPI regress_watcher(LPVOID) {
     for (;;) {
         Sleep(1000);
@@ -1728,6 +2078,12 @@ void regress_run() {
     if (test_enabled("veh", "stack_kill")) total += run_guarded("stack_kill", test_stack_kill);
     if (test_enabled("veh", "get_rating")) total += run_guarded("get_rating", test_get_rating);
     if (test_enabled("veh", "most_objectives")) total += run_guarded("most_objectives", test_most_objectives);
+    if (test_enabled("batch2", "abil_cond")) total += run_guarded("abil_cond", test_abil_cond);
+    if (test_enabled("batch2", "bung_proto")) total += run_guarded("bung_proto", test_bung_proto);
+    if (test_enabled("batch2", "spot_base")) total += run_guarded("spot_base", test_spot_base);
+    if (test_enabled("batch2", "spot_stack")) total += run_guarded("spot_stack", test_spot_stack);
+    if (test_enabled("batch2", "retire_proto")) total += run_guarded("retire_proto", test_retire_proto);
+    if (test_enabled("batch2", "study_artifact")) total += run_guarded("study_artifact", test_study_artifact);
     if (test_enabled("enemy_capabilities")) total += run_guarded("enemy_capabilities", test_enemy_capabilities);
     if (test_enabled("social_ai")) total += run_guarded("social_ai", test_social_ai);
     if (test_enabled("Path::sensors") || test_enabled("path_sensors")) total += run_guarded("path_sensors", test_path_sensors);

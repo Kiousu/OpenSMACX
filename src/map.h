@@ -109,6 +109,8 @@ enum TerrainLandmarkBit2 {
     BIT2_NEXUS = 0x2000,
     BIT2_UNITY = 0x4000,
     BIT2_FOSSIL = 0x8000,
+    BIT2_UNK_400000 = 0x400000, // set by spot_base()/spot_stack() when the faction at the
+                                // controls first sees the tile; see UnkBitfield1
     //
     BIT2_UNK_80000000 = 0x80000000,
 };

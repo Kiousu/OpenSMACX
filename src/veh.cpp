@@ -1595,6 +1595,108 @@ int __cdecl armor_budget(int faction_id, int max_cost) {
 }
 
 /*
+Purpose: Record a prototype's design in the faction's bunglist so the design workshop won't offer
+         the same combination again. The list is a 64 entry ring per faction; see is_bunged().
+Original Offset: 0057DF30
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch2.log)
+*/
+void __cdecl bung_proto(uint32_t faction_id, int proto_id) {
+    int index = PlayersData[faction_id].bunglist_index;
+    PlayersData[faction_id].bunglist_index = (index + 1) % MaxBungedDesignNum;
+    BungedDesign *design = &BungList[faction_id * MaxBungedDesignNum + index];
+    design->ability_flags = VehPrototypes[proto_id].ability_flags;
+    design->chassis_id = VehPrototypes[proto_id].chassis_id;
+    design->weapon_id = VehPrototypes[proto_id].weapon_id;
+    design->armor_id = VehPrototypes[proto_id].armor_id;
+    design->reactor_id = VehPrototypes[proto_id].reactor_id;
+}
+
+/*
+Purpose: Retire a prototype for the faction. The design is added to the bunglist, then every unit
+         of the prototype is dealt with: an AI faction's unit is upgraded to the best remaining
+         active prototype of the same category (when no human can see it, or it sits in a base),
+         otherwise a unit inside a base is turned into a Scout Patrol if the base would be left
+         undefended or disbanded into the base's production for half its cost; anything else is
+         killed. A custom prototype is also removed from every production queue and deactivated.
+Original Offset: 0057F1D0
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch2.log)
+*/
+void __cdecl retire_proto(int proto_id, int faction_id) {
+    bung_proto(faction_id, proto_id);
+    int8_t category = VehPrototypes[proto_id].unk_1;
+    int rank_best = -1;
+    int proto_id_best = -1;
+    for (int i = 0; i < MaxVehProtoFactionNum; i++) {
+        int id = faction_id * MaxVehProtoFactionNum + i;
+        if (id != proto_id && (VehPrototypes[id].flags & PROTO_ACTIVE)
+            && VehPrototypes[id].unk_1 == category) {
+            int rank = (VehPrototypes[id].obsolete_factions & (1 << faction_id)) ? 1 : 2;
+            if (rank > rank_best) {
+                rank_best = rank;
+                proto_id_best = id;
+            }
+        }
+    }
+    for (int veh_id = *VehCurrentCount - 1; veh_id >= 0; veh_id--) {
+        if (veh_id < *VehCurrentCount && Vehs[veh_id].proto_id == proto_id) {
+            if (!is_human(faction_id)) {
+                int x = Vehs[veh_id].x;
+                int y = Vehs[veh_id].y;
+                if (proto_id_best >= 0) {
+                    BOOL upgrade = !(Vehs[veh_id].visibility & FactionsStatus[0]); // unseen by humans
+                    if (!upgrade) {
+                        Map *tile = map_loc(x, y);
+                        int owner = tile->val2 & 0xF;
+                        upgrade = (tile->bit & BIT_BASE_IN_TILE) && owner > 0 && owner < MaxPlayerNum;
+                    }
+                    if (upgrade && Vehs[veh_id].faction_id == faction_id) {
+                        Vehs[veh_id].proto_id = (int16_t)proto_id_best;
+                        PlayersData[faction_id].proto_id_active[proto_id]--;
+                        PlayersData[faction_id].proto_id_active[proto_id_best]++;
+                        continue;
+                    }
+                }
+                int base_id = base_at(x, y);
+                if (base_id >= 0) {
+                    if (stack_check(veh_id, 1, -1, -1, -1) == 1) {
+                        Vehs[veh_id].proto_id = BSC_SCOUT_PATROL;
+                        PlayersData[faction_id].proto_id_active[proto_id]--;
+                        PlayersData[faction_id].proto_id_active[BSC_SCOUT_PATROL]++;
+                        continue;
+                    }
+                    int minerals = Bases[base_id].minerals_accumulated
+                        + VehPrototypes[Vehs[veh_id].proto_id].cost / 2;
+                    Bases[base_id].minerals_accumulated = minerals;
+                    Bases[base_id].minerals_accumulated_2 = minerals;
+                    Bases[base_id].production_id_last = Bases[base_id].queue_production_id[0];
+                }
+            }
+            kill(veh_id);
+        }
+    }
+    if (proto_id >= MaxVehProtoFactionNum) {
+        for (int base_id = 0; base_id < *BaseCurrentCount; base_id++) {
+            Base *base = &Bases[base_id];
+            for (int i = 0; i <= (int)base->queue_size; i++) {
+                if (base->queue_production_id[i] == proto_id) {
+                    if (!i) {
+                        base->queue_production_id[0] = -FAC_STOCKPILE_ENERGY;
+                    } else {
+                        for (int j = i; j < (int)base->queue_size; j++) {
+                            base->queue_production_id[j] = base->queue_production_id[j + 1];
+                        }
+                        base->queue_size--;
+                    }
+                }
+            }
+        }
+        VehPrototypes[proto_id].flags &= ~PROTO_ACTIVE;
+    }
+}
+
+/*
 Purpose: Get the index value of a particular ability's bitfield.
 Original Offset: 00581170
 Return Value: Ability index
@@ -1632,6 +1734,79 @@ void __cdecl add_abil(uint32_t *ability_flags, uint32_t ability, uint32_t factio
         }
     }
     *ability_flags |= (1 << abil_id);
+}
+
+/*
+Purpose: Check whether an ability may be fitted to a design with the given chassis, weapon and
+         armor: the ability's allowed unit flags against the chassis triad, the weapon's combat/
+         terraform/noncombat role, probe team restrictions, the SMACX-only abilities, psi
+         restrictions, transport-only and slow-unit restrictions. Missile chassis take no abilities.
+Original Offset: 00584B50
+Return Value: Is the ability allowed on this design? true/false
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch2.log)
+*/
+BOOL __cdecl abil_cond(int ability_id, int chassis_id, int weapon_id, int armor_id) {
+    if (Chassis[chassis_id].missile) {
+        return false;
+    }
+    uint32_t flags = Ability[ability_id].flags;
+    switch (Chassis[chassis_id].triad) {
+    case TRIAD_LAND:
+        if (!(flags & AFLAG_ALLOWED_LAND_UNIT)) {
+            return false;
+        }
+        break;
+    case TRIAD_SEA:
+        if (!(flags & AFLAG_ALLOWED_SEA_UNIT)) {
+            return false;
+        }
+        break;
+    case TRIAD_AIR:
+        if (!(flags & AFLAG_ALLOWED_AIR_UNIT)) {
+            return false;
+        }
+        break;
+    default:
+        break;
+    }
+    int8_t offense = Weapon[weapon_id].offense_rating;
+    uint8_t mode = Weapon[weapon_id].mode;
+    if (offense) {
+        if (!(flags & AFLAG_ALLOWED_COMBAT_UNIT)) {
+            return false;
+        }
+    } else if (mode == WPN_MODE_TERRAFORMER) {
+        if (!(flags & AFLAG_ALLOWED_TERRAFORM_UNIT)) {
+            return false;
+        }
+    } else if (!(flags & AFLAG_ALLOWED_NONCOMBAT_UNIT)) {
+        return false;
+    }
+    if (mode == WPN_MODE_INFOWAR) {
+        if (flags & AFLAG_NOT_ALLOWED_PROBE_TEAM) {
+            return false;
+        }
+    } else if (flags & AFLAG_ONLY_PROBE_TEAM) {
+        return false;
+    }
+    if (!*ExpansionEnabled) {
+        uint32_t ability = 1 << ability_id;
+        if (ability == ABL_SOPORIFIC_GAS || ability == ABL_DISSOCIATIVE_WAVE
+            || ability == ABL_MARINE_DETACHMENT || ability == ABL_FUEL_NANOCELLS
+            || ability == ABL_ALGO_ENHANCEMENT) {
+            return false;
+        }
+    }
+    if ((offense < 0 || Armor[armor_id].defense_rating < 0) && (flags & AFLAG_NOT_ALLOWED_PSI_UNIT)) {
+        return false;
+    }
+    if ((flags & AFLAG_TRANSPORT_ONLY_UNIT) && mode != WPN_MODE_TRANSPORT) {
+        return false;
+    }
+    if ((flags & AFLAG_NOT_ALLOWED_FAST_UNIT) && Chassis[chassis_id].speed > 1) {
+        return false;
+    }
+    return true;
 }
 
 /*
@@ -2023,6 +2198,38 @@ int __cdecl get_plan(uint32_t faction_id, uint32_t plan) {
         }
     }
     return -1;
+}
+
+/*
+Purpose: Mark the unit's tile and its whole stack as spotted by the faction. The first time the
+         faction at the controls sees the tile (outside omniscient view and without a revealed
+         map) the tile is flagged for the map redraw.
+Original Offset: 005B58E0
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch2.log)
+*/
+void __cdecl spot_stack(int veh_id, int faction_id) {
+    if (veh_id >= 0) {
+        int x = Vehs[veh_id].x;
+        int y = Vehs[veh_id].y;
+        if (on_map(x, y)) {
+            Map *tile = map_loc(x, y);
+            if (faction_id == *FactionIDCurrent && !(tile->visibility & (1 << faction_id))
+                && !(*GameState & STATE_OMNISCIENT_VIEW)
+                && !(PlayersData[faction_id].flags & PFLAG_MAP_REVEALED)) {
+                tile->bit2 |= BIT2_UNK_400000;
+                *UnkBitfield1 |= 1;
+            }
+            tile->visibility |= (1 << faction_id);
+            synch_bit(x, y, faction_id);
+        }
+    }
+    for (int i = veh_top(veh_id); i >= 0; i = Vehs[i].next_veh_id_stack) {
+        Vehs[i].visibility |= (1 << faction_id);
+        if (faction_id) {
+            Vehs[i].flags &= ~(VFLAG_LURKER | VFLAG_INVISIBLE);
+        }
+    }
 }
 
 /*
