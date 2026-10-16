@@ -627,3 +627,6 @@
 0x00164EB0	?good_sensor@@YAHIHH@Z
 0x001B5AD0	?spot_loc@@YAXHHI@Z
 0x0015EB80	?territory@@YAHIIEPAH0@Z
+# --- batch 9: joint attack target, design scan
+0x0014ACC0	?suggest_plan@@YAHII@Z
+0x0013A4A0	?scan_prototypes@@YAXII@Z

@@ -3575,6 +3575,99 @@ static int test_territory() {
     return mismatches;
 }
 
+// ---------------------------------------------------------------- batch 9: diplomacy helpers
+
+static int test_suggest_plan() {
+    int second_saved = *DiploSecondFaction, dist_saved = *BaseFindDist;
+    int compared = 0, mismatches = 0, found = 0;
+    for (uint32_t f = 1; f < MaxPlayerNum; f++) {
+        int x_saved = PlayersData[f].x_target, y_saved = PlayersData[f].y_target;
+        int atk_saved = PlayersData[f].base_id_atk_target;
+        for (uint32_t f2 = 1; f2 < MaxPlayerNum; f2++) {
+            if (f == f2) {
+                continue;
+            }
+            for (int variant = 0; variant < 4; variant++) {
+                // as loaded; no target; target on the last base; standing attack target on base 3
+                PlayersData[f].x_target = x_saved;
+                PlayersData[f].y_target = y_saved;
+                PlayersData[f].base_id_atk_target = atk_saved;
+                if (variant == 1) {
+                    PlayersData[f].x_target = -1;
+                } else if (variant == 2) {
+                    PlayersData[f].x_target = Bases[*BaseCurrentCount - 1].x;
+                    PlayersData[f].y_target = Bases[*BaseCurrentCount - 1].y;
+                } else if (variant == 3) {
+                    PlayersData[f].base_id_atk_target = 3;
+                }
+                *DiploSecondFaction = -9; *BaseFindDist = -9;
+                int b = suggest_plan_OG(f, f2);
+                int s_o = *DiploSecondFaction, d_o = *BaseFindDist;
+                *DiploSecondFaction = -9; *BaseFindDist = -9;
+                int a = suggest_plan(f, f2);
+                int s_n = *DiploSecondFaction, d_n = *BaseFindDist;
+                compared++;
+                found += (b >= 0);
+                if (a != b || s_o != s_n || d_o != d_n) {
+                    if (mismatches < MAX_DETAIL) {
+                        logf("  suggest_plan(%u, %u) variant %d: orig %d (second %d dist %d) new %d (second %d dist %d)",
+                            f, f2, variant, b, s_o, d_o, a, s_n, d_n);
+                    }
+                    mismatches++;
+                }
+            }
+        }
+        PlayersData[f].x_target = x_saved;
+        PlayersData[f].y_target = y_saved;
+        PlayersData[f].base_id_atk_target = atk_saved;
+    }
+    *DiploSecondFaction = second_saved;
+    *BaseFindDist = dist_saved;
+    logf("suggest_plan: %d compared (%d targets found), %d mismatches", compared, found, mismatches);
+    return mismatches;
+}
+
+static int test_scan_prototypes() {
+    int best_saved = *DiploProtoIDBest, trade_saved = *DiploProtoIDTradeable;
+    int compared = 0, mismatches = 0, found = 0;
+    for (uint32_t f = 1; f < MaxPlayerNum; f++) {
+        for (uint32_t other = 1; other < MaxPlayerNum; other++) {
+            if (f == other) {
+                continue;
+            }
+            uint32_t treaties_saved = PlayersData[f].diplo_treaties[other];
+            for (int variant = 0; variant < 3; variant++) {
+                // as loaded; pact; vendetta
+                PlayersData[f].diplo_treaties[other] = variant == 1
+                    ? ((treaties_saved | DTREATY_PACT) & ~DTREATY_VENDETTA)
+                    : variant == 2 ? ((treaties_saved | DTREATY_VENDETTA) & ~DTREATY_PACT)
+                    : treaties_saved;
+                *DiploProtoIDBest = -9; *DiploProtoIDTradeable = -9;
+                scan_prototypes_OG(f, other);
+                int b_o = *DiploProtoIDBest, t_o = *DiploProtoIDTradeable;
+                *DiploProtoIDBest = -9; *DiploProtoIDTradeable = -9;
+                scan_prototypes(f, other);
+                int b_n = *DiploProtoIDBest, t_n = *DiploProtoIDTradeable;
+                compared++;
+                found += (b_o >= 0);
+                if (b_o != b_n || t_o != t_n) {
+                    if (mismatches < MAX_DETAIL) {
+                        logf("  scan_prototypes(%u, %u) variant %d: orig best %d trade %d, new best %d trade %d",
+                            f, other, variant, b_o, t_o, b_n, t_n);
+                    }
+                    mismatches++;
+                }
+            }
+            PlayersData[f].diplo_treaties[other] = treaties_saved;
+        }
+    }
+    *DiploProtoIDBest = best_saved;
+    *DiploProtoIDTradeable = trade_saved;
+    logf("scan_prototypes: %d compared (%d with a wanted design), %d mismatches", compared, found,
+        mismatches);
+    return mismatches;
+}
+
 static DWORD WINAPI regress_watcher(LPVOID) {
     for (;;) {
         Sleep(1000);
@@ -3674,6 +3767,8 @@ void regress_run() {
     if (test_enabled("batch8", "good_sensor")) total += run_guarded("good_sensor", test_good_sensor);
     if (test_enabled("batch8", "spot_loc")) total += run_guarded("spot_loc", test_spot_loc);
     if (test_enabled("batch8", "territory")) total += run_guarded("territory", test_territory);
+    if (test_enabled("batch9", "suggest_plan")) total += run_guarded("suggest_plan", test_suggest_plan);
+    if (test_enabled("batch9", "scan_prototypes")) total += run_guarded("scan_prototypes", test_scan_prototypes);
     if (test_enabled("enemy_capabilities")) total += run_guarded("enemy_capabilities", test_enemy_capabilities);
     if (test_enabled("social_ai")) total += run_guarded("social_ai", test_social_ai);
     if (test_enabled("Path::sensors") || test_enabled("path_sensors")) total += run_guarded("path_sensors", test_path_sensors);

@@ -42,6 +42,9 @@ uint32_t *RankingFactionIDUnk1 = (uint32_t *)0x009A650C;
 uint32_t *RankingFactionIDUnk2 = (uint32_t *)0x009A6510;
 uint32_t *FactionRankingsUnk = (uint32_t *)0x00945DD8; // [8]
 int *DiploFriction = (int *)0x0093FA74; // not always bounded, should it be 0-20?
+int *DiploSecondFaction = (int *)0x0093F7CC; // second faction of a joint plan; see suggest_plan()
+int *DiploProtoIDBest = (int *)0x0093F804; // another faction's design wanted most; see scan_prototypes()
+int *DiploProtoIDTradeable = (int *)0x0093FA40; // the one obtainable in diplomacy
 uint32_t *DiploFrictionFactionIDWith = (uint32_t *)0x0093FABC;
 uint32_t *DiploFrictionFactionID = (uint32_t *)0x0093FAC0;
 
@@ -379,6 +382,77 @@ uint32_t __cdecl energy_value(uint32_t loan_principal) {
         goodwill += ((weight >= 0) ? ((energy > weight) ? weight : energy) : 0) / divisor++;
     }
     return (goodwill + 4) / 5;
+}
+
+/*
+Purpose: Scan another faction's active, built, non-obsolete designs for the one this faction would
+         most like (DiploProtoIDBest) and the one it could obtain in diplomacy
+         (DiploProtoIDTradeable: not flagged against trading, a combat or recon plan). A design
+         is rated by weapon, armor, plan, chassis speed and reactor; it is only worth full value
+         when none of this faction's own designs of the same plan and triad matches or beats it
+         (the original compares armor with arm_strat() on the weapon ids, which is kept).
+Original Offset: 0053A4A0
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch9.log)
+*/
+void __cdecl scan_prototypes(uint32_t faction_id, uint32_t faction_id_other) {
+    *DiploProtoIDBest = -1;
+    *DiploProtoIDTradeable = -1;
+    int score_best = 0;
+    int score_trade = 0;
+    uint32_t treaties = PlayersData[faction_id].diplo_treaties[faction_id_other];
+    for (int i = 0; i < MaxVehProtoFactionNum; i++) {
+        int proto_id = faction_id_other * MaxVehProtoFactionNum + i;
+        VehPrototype *proto = &VehPrototypes[proto_id];
+        if (!(proto->flags & PROTO_ACTIVE) || !(proto->flags & PROTO_TYPED_COMPLETE)
+            || (proto->obsolete_factions & (1 << faction_id_other))) {
+            continue;
+        }
+        BOOL better = true;
+        int score = Weapon[proto->weapon_id].offense_rating * 3
+            + ((7 - proto->plan) * 0x4000 + Armor[proto->armor_id].defense_rating) * 4
+            + Chassis[proto->chassis_id].speed;
+        for (int j = 0; j < MaxVehProtoFactionNum && better; j++) {
+            VehPrototype *own = &VehPrototypes[faction_id * MaxVehProtoFactionNum + j];
+            if (!(own->flags & PROTO_ACTIVE) || !(own->flags & PROTO_TYPED_COMPLETE)
+                || (own->obsolete_factions & (1 << faction_id)) || own->plan != proto->plan
+                || Chassis[own->chassis_id].triad != Chassis[proto->chassis_id].triad) {
+                continue;
+            }
+            if (proto->reactor_id < own->reactor_id) {
+                better = false;
+            }
+            if (Chassis[proto->chassis_id].speed < Chassis[own->chassis_id].speed) {
+                better = false;
+            }
+            int weapon_own = weap_strat(own->weapon_id, faction_id);
+            int weapon_other = weap_strat(proto->weapon_id, faction_id);
+            int armor_own = arm_strat(own->weapon_id, faction_id);
+            int armor_other = arm_strat(proto->weapon_id, faction_id);
+            if (Chassis[proto->chassis_id].speed <= Chassis[own->chassis_id].speed
+                && weapon_other <= weapon_own && armor_other <= armor_own
+                && (weapon_other < weapon_own || armor_other < armor_own)) {
+                better = false;
+            }
+        }
+        int value = better ? score : score >> 4;
+        if (value > score_best) {
+            *DiploProtoIDBest = proto_id;
+            score_best = value;
+        }
+        uint32_t no_trade = (treaties & DTREATY_PACT) ? PROTO_UNK_20 : (PROTO_UNK_10 | PROTO_UNK_20);
+        uint32_t plan = proto->plan;
+        if (!(proto->flags & no_trade) && plan < 7 && plan != 3) {
+            int trade = score;
+            if (!better) {
+                trade = ((treaties & DTREATY_VENDETTA) && plan == 2) ? score >> 4 : 0;
+            }
+            if (trade > score_trade) {
+                *DiploProtoIDTradeable = proto_id;
+                score_trade = trade;
+            }
+        }
+    }
 }
 
 /*

@@ -2084,6 +2084,63 @@ int __cdecl base_project(uint32_t project_id) {
 }
 
 /*
+Purpose: Pick the enemy base two allied factions should plan an attack on: a base both are at war
+         with that the first faction can see, closest (with a preference for the first faction's
+         current target region) to the first faction's target and to both factions' nearest
+         bases. The first faction's standing attack target wins outright.
+Original Offset: 0054ACC0
+Return Value: Base id to attack, or -1 if there is none
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch9.log)
+*/
+int __cdecl suggest_plan(uint32_t faction_id, uint32_t faction_id_2) {
+    *DiploSecondFaction = faction_id_2;
+    int dist_best = 9999;
+    int base_id_best = -1;
+    for (int i = 0; i < *BaseCurrentCount; i++) {
+        uint32_t owner = Bases[i].faction_id_current;
+        if (owner == faction_id || owner == faction_id_2
+            || !(PlayersData[faction_id].diplo_treaties[owner] & DTREATY_VENDETTA)
+            || !(PlayersData[faction_id_2].diplo_treaties[owner] & DTREATY_VENDETTA)
+            || (owner != faction_id && !(Bases[i].visibility & (1 << faction_id)))) {
+            continue;
+        }
+        int x = Bases[i].x, y = Bases[i].y;
+        uint8_t region = map_loc(x, y)->region;
+        int dist = 0;
+        int x_target = PlayersData[faction_id].x_target;
+        if (x_target >= 0) {
+            int y_target = PlayersData[faction_id].y_target;
+            int x_dist = abs(x_target - x);
+            if (!*MapIsFlat && x_dist > (int)*MapLongitude) {
+                x_dist = *MapLongitudeBounds - x_dist;
+            }
+            dist = vector_dist(x_dist, y_target - y) * 2;
+            if (map_loc(x, y)->region != map_loc(x_target, y_target)->region) {
+                dist += 0x200;
+            }
+        }
+        if (base_find(x, y, faction_id, region, -1, -1) < 0) {
+            base_find(x, y, faction_id);
+            *BaseFindDist += 0x400;
+        }
+        int dist_own = ((x_target >= 0) + 1) * *BaseFindDist;
+        if (base_find(x, y, faction_id_2, region, -1, -1) < 0) {
+            base_find(x, y, faction_id_2);
+            *BaseFindDist += 0x100;
+        }
+        int total = dist + dist_own + *BaseFindDist;
+        if (PlayersData[faction_id].base_id_atk_target == i) {
+            return i;
+        }
+        if (total < dist_best) {
+            base_id_best = i;
+            dist_best = total;
+        }
+    }
+    return base_id_best;
+}
+
+/*
 Purpose: Determine the faction's best base to attack the specified base from.
 Original Offset: 0054AFA0
 Return Value: Base id to attack from or 0 

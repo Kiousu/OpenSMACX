@@ -547,6 +547,9 @@ extern uint32_t *RankingFactionIDUnk1;
 extern uint32_t *RankingFactionIDUnk2;
 extern uint32_t *FactionRankingsUnk;
 extern int *DiploFriction;
+extern int *DiploSecondFaction;
+extern int *DiploProtoIDBest;
+extern int *DiploProtoIDTradeable;
 extern uint32_t *DiploFrictionFactionIDWith;
 extern uint32_t *DiploFrictionFactionID;
 
@@ -555,6 +558,7 @@ DLLEXPORT BOOL __cdecl is_human(uint32_t faction_id);
 DLLEXPORT BOOL __cdecl is_alive(uint32_t faction_id);
 DLLEXPORT BOOL __cdecl spying(int faction_id);
 DLLEXPORT void __cdecl social_set(uint32_t faction_id);
+DLLEXPORT void __cdecl scan_prototypes(uint32_t faction_id, uint32_t faction_id_other);
 DLLEXPORT int __cdecl territory(uint32_t faction_id, uint32_t faction_id_tgt, uint8_t flags,
                                 int *base_id_out, int *count_out);
 DLLEXPORT void __cdecl psych_check(uint32_t faction_id, int *drones, int *talents);

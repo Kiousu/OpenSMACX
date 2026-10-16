@@ -545,3 +545,23 @@ faction whose territory was entered; the shared-region test uses `region_total_b
 factions both sides are at war with.
 Boot test: the 610-redirect exe loaded Council.SAV and advanced the turn 289 -> 290 (38 s) with
 the game alive.
+
+## Batch 9, 2026-10-16 (Council.SAV, 610-redirect exe)
+
+`suggest_plan` (base.cpp) and `scan_prototypes` (faction.cpp). Trigger group `batch9`, two pure
+tests over every faction pair: `suggest_plan` as loaded, without a target, with the target on
+the last base and with a standing attack target (return value, `DiploSecondFaction` and
+`BaseFindDist` compared); `scan_prototypes` as loaded, under a pact and under vendetta (both
+result globals compared).
+
+| function | inputs | compared | mismatches |
+|---|---|---|---|
+| suggest_plan | 42 pairs x 4 variants | 168 (120 targets) | 0 |
+| scan_prototypes | 42 pairs x 3 variants | 126 | 0 |
+
+Log: `regression-runs/2026-10-16-council-batch9.log`. Notes: 0x93F7CC is `DiploSecondFaction`
+(Thinker's diplo_second_faction), 0x93F804/0x93FA40 are `DiploProtoIDBest`/`DiploProtoIDTradeable`;
+`scan_prototypes` rates armor with `arm_strat()` on the weapon ids (an original quirk, kept);
+prototype flags 0x10/0x20 keep a design out of diplomacy offers.
+Boot test: the 612-redirect exe loaded Council.SAV and advanced the turn 289 -> 290 (38 s) with
+the game alive.

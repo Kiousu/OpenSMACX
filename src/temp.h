@@ -211,6 +211,11 @@ extern func_uii *good_sensor_OG;
 extern func_xyi *spot_loc_OG;
 typedef int func_territory(uint32_t, uint32_t, uint8_t, int *, int *);
 extern func_territory *territory_OG;
+// batch 9
+typedef int func_uu(uint32_t, uint32_t);
+extern func_uu *suggest_plan_OG;
+typedef void func_uu_v(uint32_t, uint32_t);
+extern func_uu_v *scan_prototypes_OG;
 extern func_void *base_psych_OG;
 extern func_social_ai *social_ai_OG;
 extern func_path_sensors *Path_sensors_OG; // Path::sensors()

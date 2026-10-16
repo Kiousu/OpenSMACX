@@ -113,6 +113,8 @@ enum VehPrototypeFlagBitfield {
     PROTO_ACTIVE = 0x1, // if this bit is zero, prototype has been retired
     PROTO_CUSTOM_NAME_SET = 0x2,
     PROTO_TYPED_COMPLETE = 0x4,
+    PROTO_UNK_10 = 0x10, // keeps the design out of diplomacy offers; see scan_prototypes()
+    PROTO_UNK_20 = 0x20, // keeps the design out of diplomacy offers, even for pact partners
     PROTO_UNK_100 = 0x100, // upgrade pending: set on a new design, cleared by upgrade_prototypes()
 };
 
