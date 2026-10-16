@@ -1,0 +1,57 @@
+OpenSMACX regression run: turn 48, 59 bases, 173 vehs, filter=''
+survey: map 160x160, SP owners: SAC -1 LV -1 HGP -1 CI -1 VW -1 PTS -1
+survey: faction 1 Consciousness AI diff 3 bases 7 units 14 away 3 | SE talent 0 police 0 econ 0 eff 2 | rules talent 0 drone 0 | staple 0 punish 0 brood 0 rec 0 holo 0 paradise 0 assim 0
+survey: faction 2 Peacekeepers AI diff 3 bases 8 units 24 away 1 | SE talent 0 police 0 econ 2 eff -3 | rules talent 4 drone 0 | staple 0 punish 0 brood 0 rec 0 holo 0 paradise 0 assim 0
+survey: faction 3 Drones       AI diff 3 bases 9 units 21 away 0 | SE talent 0 police 0 econ 0 eff 0 | rules talent 0 drone 0 | staple 0 punish 0 brood 0 rec 0 holo 0 paradise 0 assim 0
+survey: faction 4 Angels       AI diff 3 bases 8 units 19 away 0 | SE talent 0 police -1 econ 2 eff -2 | rules talent 0 drone 0 | staple 0 punish 0 brood 0 rec 0 holo 0 paradise 0 assim 0
+survey: faction 5 Planet Cult  AI diff 3 bases 9 units 18 away 2 | SE talent 0 police 0 econ 0 eff 0 | rules talent 0 drone 0 WORMPOLICE | staple 0 punish 0 brood 0 rec 0 holo 0 paradise 0 assim 0
+survey: faction 6 Morganites   human diff 3 bases 9 units 18 away 1 | SE talent 0 police 0 econ 0 eff 0 | rules talent 0 drone 0 | staple 0 punish 0 brood 0 rec 0 holo 0 paradise 0 assim 0
+survey: faction 7 Gaians       AI diff 3 bases 9 units 20 away 0 | SE talent 0 police -1 econ 0 eff 4 | rules talent 0 drone 0 | staple 0 punish 0 brood 0 rec 0 holo 0 paradise 0 assim 0
+value_of_base: 17346 compared, 0 mismatches, unstable orig=0 new=0
+best_defender: 29928 compared, 0 mismatches, unstable orig=0 new=0
+battle_compute: 9918 compared, 0 mismatches (orig-unstable pairs excluded), unstable orig=0 new=0; by type: 0/0/0
+wants_to_attack: 378 compared, 0 mismatches, unstable orig=0 new=0
+world_validate: 1 compared, 0 mismatches (new=0 orig=0)
+treaty_on: 1680 compared (1638 changed state), 0 mismatches
+treaty_off: 1680 compared (92 changed state), 0 mismatches
+agenda_on: 1680 compared (1674 changed state), 0 mismatches
+agenda_off: 1680 compared (12 changed state), 0 mismatches
+trade_maps: 42 compared (42 changed state), 0 mismatches
+do_withdrawal: 42 compared (1 moved units, 1 moves total), 0 mismatches
+base_mark: 59 compared (58 changed state), 0 mismatches
+base_psych: 118 compared (59 changed state), 0 mismatches
+do_wrappers: 62 compared, 0 mismatches, 0 attempts retried (stray messages)
+enemy_capabilities: 8 compared (0 changed state), 0 mismatches
+social_ai: 188 compared (0 changed state), 0 mismatches
+Path::sensors: 18 of 18 calls found a site
+Path::sensors: 18 compared (18 changed state), 0 mismatches
+world_raise_alt: 27 compared (24 changed state), 0 mismatches
+world_lower_alt: 27 compared (24 changed state), 0 mismatches
+world_crater: 27 compared (27 changed state), 0 mismatches
+world_monsoon: 27 compared (27 changed state), 0 mismatches
+world_sargasso: 27 compared (27 changed state), 0 mismatches
+world_ruin: 27 compared (27 changed state), 0 mismatches
+world_dune: 27 compared (27 changed state), 0 mismatches
+world_diamond: 27 compared (27 changed state), 0 mismatches
+world_fresh: 27 compared (14 changed state), 0 mismatches
+world_borehole: 27 compared (27 changed state), 0 mismatches
+world_temple: 27 compared (27 changed state), 0 mismatches
+world_unity: 27 compared (27 changed state), 0 mismatches
+world_fossil: 27 compared (27 changed state), 0 mismatches
+world_canyon: 27 compared (27 changed state), 0 mismatches
+world_mesa: 27 compared (27 changed state), 0 mismatches
+world_ridge: 27 compared (27 changed state), 0 mismatches
+world_geothermal: 27 compared (27 changed state), 0 mismatches
+world_volcano: 54 compared (54 changed state), 0 mismatches
+world_alt_set: 224 compared (224 changed state), 0 mismatches
+brush: 80 compared (72 changed state), 0 mismatches
+paint_land: 32 compared (32 changed state), 0 mismatches
+build_continent: 8 compared (8 changed state), 0 mismatches
+build_hills: 6 compared (5 changed state), 0 mismatches
+world_riverbeds: 3 compared (3 changed state), 0 mismatches
+world_temperature: 3 compared (0 changed state), 0 mismatches
+world_analysis: 3 compared (3 changed state), 0 mismatches
+world_polar_caps: 3 compared (3 changed state), 0 mismatches
+world_linearize_contours: 3 compared (3 changed state), 0 mismatches
+world_landmarks: 3 compared (3 changed state), 0 mismatches
+TOTAL mismatches: 0 (5110 ms)

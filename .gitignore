@@ -272,4 +272,4 @@ __pycache__/
 /tools/terranx_original.exe
 
 # regression harness logs that Status lines refer to
-!docs/regression-runs/*.log
+!docs/regression-runs/**/*.log

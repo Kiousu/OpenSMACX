@@ -1,0 +1,11 @@
+OpenSMACX regression run: turn 75, 146 bases, 391 vehs, filter='base_psych'
+survey: map 160x160, SP owners: SAC -1 LV -1 HGP 54 CI -1 VW 12 PTS -1
+survey: faction 1 Consciousness AI diff 3 bases 17 units 43 away 0 | SE talent 0 police 0 econ 2 eff 0 | rules talent 0 drone 0 | staple 0 punish 0 brood 0 rec 0 holo 0 paradise 0 assim 0
+survey: faction 2 Peacekeepers AI diff 3 bases 18 units 63 away 0 | SE talent 0 police 0 econ 2 eff -3 | rules talent 4 drone 0 | staple 0 punish 0 brood 0 rec 0 holo 0 paradise 0 assim 0
+survey: faction 3 Drones       AI diff 3 bases 24 units 48 away 0 | SE talent 0 police 0 econ 0 eff 2 | rules talent 0 drone 0 | staple 0 punish 0 brood 0 rec 0 holo 0 paradise 0 assim 0
+survey: faction 4 Angels       AI diff 3 bases 22 units 47 away 0 | SE talent 0 police -1 econ 2 eff 0 | rules talent 0 drone 0 | staple 0 punish 0 brood 0 rec 0 holo 0 paradise 0 assim 0
+survey: faction 5 Planet Cult  AI diff 3 bases 19 units 50 away 2 | SE talent 0 police 0 econ 0 eff 0 | rules talent 0 drone 0 WORMPOLICE | staple 0 punish 0 brood 0 rec 0 holo 0 paradise 0 assim 0
+survey: faction 6 Morganites   human diff 3 bases 25 units 48 away 0 | SE talent 0 police 0 econ 0 eff 0 | rules talent 0 drone 0 | staple 0 punish 0 brood 0 rec 0 holo 0 paradise 0 assim 0
+survey: faction 7 Gaians       AI diff 3 bases 21 units 51 away 0 | SE talent 0 police -1 econ 0 eff 4 | rules talent 0 drone 0 | staple 0 punish 0 brood 0 rec 0 holo 0 paradise 0 assim 0
+base_psych: 440 compared (300 changed state), 0 mismatches
+TOTAL mismatches: 0 (125 ms)
