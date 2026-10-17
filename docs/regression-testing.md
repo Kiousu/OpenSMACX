@@ -760,3 +760,25 @@ words. The getters store the leader's raw female flag as the parse gender, so a 
 0 or 1 passes through.
 Boot test: the 649-redirect exe loaded Council.SAV and advanced the turn 289 -> 290 (34 s) with
 the game alive.
+
+## Batch 17, 2026-10-16 (Council.SAV, 649-redirect exe)
+
+`assemble_passengers` and `alien_base` (base.cpp). Trigger group `batch17`, two tests.
+`assemble_passengers` runs every third base with five plans (offensive, defensive,
+reconnaissance, naval transport, colonization) as loaded, with vendetta against everyone, a
+colonization region flag and turn 40, and the same with a colony pod moved into the base and a
+cautious faction, comparing the snapshot (the AI goals live in PlayerData). `alien_base` runs
+every native unit and every 25th other unit from where it stands, from a tile across the map,
+and as a sea lurk on an ocean tile, comparing the base picked and `BaseFindDist`.
+
+| function | inputs | compared | mismatches |
+|---|---|---|---|
+| assemble_passengers | 94 bases x 5 plans x 3 variants | 1,410 | 0 |
+| alien_base | 76 units x 3 positions (223 bases found) | 228 | 0 |
+
+Log: `regression-runs/2026-10-16-council-batch17.log`. Notes: `contiguous` (0x53A780) is now an
+exe pointer in temp.cpp. Original behaviour kept: `assemble_passengers` counts vendetta enemies
+that have no bases in the region, or no contiguous link to it, against the growth limit;
+`alien_base` reports its winning score (not a distance) in `BaseFindDist`.
+Boot test: the 651-redirect exe loaded Council.SAV and advanced the turn 289 -> 290 (38 s) with
+the game alive.

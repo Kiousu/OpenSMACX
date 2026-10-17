@@ -3743,6 +3743,99 @@ uint32_t __cdecl defensive_check(uint32_t base_id) {
 }
 
 /*
+Purpose: Set the AI goals for gathering passengers at a base about to build a transport or a
+         colony pod. Bases are flagged as assembling; colonization is wanted while fewer vendetta
+         enemies lack a foothold in the region than the faction's growth drive allows, and other
+         plans (or a colony pod in a region marked for it) also call for defense, attack and
+         staging goals; an exploration plan adds a scouting goal.
+Original Offset: 00564B90
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch17.log)
+*/
+void __cdecl assemble_passengers(int base_id, int plan, int priority) {
+    int threats = 0;
+    uint32_t faction_id = Bases[base_id].faction_id_current;
+    int x = Bases[base_id].x;
+    int y = Bases[base_id].y;
+    uint32_t region = map_loc(x, y)->region;
+    for (uint32_t faction_id_2 = 1; faction_id_2 < MaxPlayerNum; faction_id_2++) {
+        if (faction_id_2 != faction_id
+            && (PlayersData[faction_id].diplo_treaties[faction_id_2] & DTREATY_VENDETTA)
+            && (!PlayersData[faction_id_2].region_total_bases[region]
+                || !contiguous(faction_id_2, faction_id, region, 1))) {
+            threats++;
+        }
+    }
+    Bases[base_id].state |= BSTATE_UNK_1;
+    Bases[base_id].unk_1 = 2;
+    BOOL skip_military = false;
+    if (plan != PLAN_COLONIZATION || (PlayersData[faction_id].unk_77[region] & 0x800)) {
+        int limit = PlayersData[faction_id].ai_growth - PlayersData[faction_id].ai_fight
+            - *TurnCurrentNum / 100 + 2;
+        limit = limit < 0 ? 0 : (limit > 99 ? 99 : limit);
+        if (threats < limit) {
+            int goal_priority = stack_check(veh_at(x, y), 2, PLAN_COLONIZATION, faction_id, -1)
+                ? 1 : priority;
+            add_goal(faction_id, AI_GOAL_COLONIZE, goal_priority, x, y, -1);
+        }
+        skip_military = plan < PLAN_RECONNAISANCE;
+    }
+    if (!skip_military) {
+        add_goal(faction_id, AI_GOAL_DEFEND, priority, x, y, -1);
+        add_goal(faction_id, AI_GOAL_ATTACK, priority, x, y, -1);
+        add_goal(faction_id, AI_GOAL_UNK_3, priority, x, y, -1);
+    }
+    if (plan == PLAN_NAVAL_TRANSPORT) {
+        add_goal(faction_id, AI_GOAL_SCOUT, 1, x, y, -1);
+    }
+}
+
+/*
+Purpose: Pick the base a native unit should head for: the nearest reachable base relative to its
+         size (energy and mineral intake), with half the distance for bases holding an alien
+         artifact or that are the unit's home, and double for a base of another faction whose
+         Planet rating is positive and whose land is unspoiled. Sea lurks also reach bases on
+         the sea they swim in.
+Original Offset: 005665D0
+Return Value: Base id or -1; BaseFindDist holds the winning score
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch17.log)
+*/
+int __cdecl alien_base(int veh_id, int x, int y) {
+    int best_value = 9999;
+    *BaseFindDist = 9999;
+    int best_id = -1;
+    uint8_t region = map_loc(x, y)->region;
+    for (int base_id = 0; base_id < *BaseCurrentCount; base_id++) {
+        Base *base = &Bases[base_id];
+        if (region <= RegionBounds && region != map_loc(base->x, base->y)->region
+            && (Vehs[veh_id].proto_id != BSC_SEALURK || !base_on_sea(base_id, region))) {
+            continue;
+        }
+        int value = (vector_dist(x, y, base->x, base->y) * 32)
+            / (base->energy_intake_2 + 32 + base->mineral_intake_2);
+        if (stack_check(veh_at(base->x, base->y), 2, PLAN_ALIEN_ARTIFACT, -1, -1)) {
+            value /= 2;
+        }
+        if (base_id == Vehs[veh_id].home_base_id) {
+            value /= 2;
+        }
+        if (Vehs[veh_id].order_auto_type != base->faction_id_current
+            && PlayersData[base->faction_id_current].soc_effect_active.planet > 0
+            && !base->eco_damage) {
+            value *= 2;
+        }
+        if (value <= best_value) {
+            best_id = base_id;
+            best_value = value;
+        }
+    }
+    if (best_id >= 0) {
+        *BaseFindDist = best_value;
+    }
+    return best_id;
+}
+
+/*
 Purpose: Determine if base is a port.
 Original Offset: 00579A00
 Return Value: Is base a port? true/false

@@ -271,6 +271,12 @@ extern func_void *space_OG;
 extern func_b *base_compute_OG;
 typedef int func_generators(uint32_t, int *);
 extern func_generators *generators_OG;
+// batch 17
+typedef int func_contiguous(int, int, int, int);
+extern func_contiguous *contiguous; // contiguous(faction_id, faction_id_2, region, unk)
+extern func_iii *alien_base_OG;
+typedef void func_assemble(int, int, int);
+extern func_assemble *assemble_passengers_OG;
 extern func_void *base_psych_OG;
 extern func_social_ai *social_ai_OG;
 extern func_path_sensors *Path_sensors_OG; // Path::sensors()

@@ -5189,6 +5189,127 @@ static int test_base_compute() {
     return mismatches;
 }
 
+// ---------------------------------------------------------------- batch 17
+
+static int test_assemble_passengers() {
+    GameSnapshot base, after_orig, after_new;
+    snap_alloc(&base); snap_alloc(&after_orig); snap_alloc(&after_new);
+    snap_take(&base);
+    int turn_saved = *TurnCurrentNum;
+    int compared = 0, mismatches = 0;
+    char label[80];
+    int plans[] = { PLAN_OFFENSIVE, PLAN_DEFENSIVE, PLAN_RECONNAISANCE, PLAN_NAVAL_TRANSPORT,
+        PLAN_COLONIZATION };
+    for (int base_id = 0; base_id < base.base_count; base_id += 3) {
+        uint32_t f = base.bases[base_id].faction_id_current;
+        for (int p = 0; p < 5; p++) {
+            for (int variant = 0; variant < 3; variant++) {
+                // as loaded; vendetta with everyone, a colonization region and an early turn;
+                // the same with a colony pod in the base and a cautious faction
+                auto prepare = [&]() {
+                    snap_restore(&base);
+                    *TurnCurrentNum = variant ? 40 : turn_saved;
+                    if (variant) {
+                        uint32_t region = map_loc(Bases[base_id].x, Bases[base_id].y)->region;
+                        PlayersData[f].unk_77[region] |= 0x800;
+                        for (int g = 1; g < MaxPlayerNum; g++) {
+                            if (g != (int)f) {
+                                PlayersData[f].diplo_treaties[g] |= DTREATY_VENDETTA;
+                            }
+                        }
+                        PlayersData[f].ai_growth = 1;
+                        PlayersData[f].ai_fight = variant == 2 ? 1 : -1;
+                    }
+                    if (variant == 2) {
+                        for (int v = 0; v < *VehCurrentCount; v++) {
+                            if (Vehs[v].faction_id == f
+                                && VehPrototypes[Vehs[v].proto_id].plan == PLAN_COLONIZATION) {
+                                Vehs[v].x = Bases[base_id].x;
+                                Vehs[v].y = Bases[base_id].y;
+                                break;
+                            }
+                        }
+                    }
+                };
+                int priority = 2 + variant;
+                prepare();
+                assemble_passengers_OG(base_id, plans[p], priority);
+                snap_take(&after_orig);
+                prepare();
+                assemble_passengers(base_id, plans[p], priority);
+                snap_take(&after_new);
+                compared++;
+                sprintf_s(label, "assemble_passengers(%d, %d) variant %d", base_id, plans[p], variant);
+                if (snap_differs(&after_orig, &after_new, mismatches < MAX_DETAIL ? label : NULL)) {
+                    mismatches++;
+                }
+            }
+        }
+    }
+    snap_restore(&base);
+    *TurnCurrentNum = turn_saved;
+    snap_free(&base); snap_free(&after_orig); snap_free(&after_new);
+    logf("assemble_passengers: %d compared, %d mismatches", compared, mismatches);
+    return mismatches;
+}
+
+static int test_alien_base() {
+    GameSnapshot base;
+    snap_alloc(&base);
+    snap_take(&base);
+    int dist_saved = *BaseFindDist;
+    int compared = 0, mismatches = 0, found = 0, natives = 0;
+    char label[80];
+    for (int veh_id = 0; veh_id < base.veh_count; veh_id++) {
+        BOOL native = base.vehs[veh_id].faction_id == 0;
+        // every native unit, and every 25th other unit
+        if (!native && veh_id % 25) {
+            continue;
+        }
+        natives += native;
+        for (int variant = 0; variant < 3; variant++) {
+            // where it stands, at a tile across the map, and as a sea lurk at sea
+            snap_restore(&base);
+            int x = base.vehs[veh_id].x, y = base.vehs[veh_id].y;
+            if (variant == 1) {
+                x = (x + *MapLongitudeBounds / 2) % *MapLongitudeBounds;
+                y = (y + 7) % *MapLatitudeBounds;
+                x = (x & ~1) | (y & 1);
+            } else if (variant == 2) {
+                Vehs[veh_id].proto_id = BSC_SEALURK;
+                for (uint32_t i = (veh_id * 37) % *MapArea; i < *MapArea; i++) {
+                    if ((*MapTiles)[i].climate < ALT_BIT_SHORE_LINE) {
+                        y = i / *MapLongitude;
+                        x = (i % *MapLongitude) * 2 + (y & 1);
+                        break;
+                    }
+                }
+            }
+            *BaseFindDist = -7;
+            int a = alien_base_OG(veh_id, x, y);
+            int dist_o = *BaseFindDist;
+            *BaseFindDist = -7;
+            int b = alien_base(veh_id, x, y);
+            int dist_n = *BaseFindDist;
+            compared++;
+            found += a >= 0;
+            if (a != b || dist_o != dist_n) {
+                if (mismatches < MAX_DETAIL) {
+                    sprintf_s(label, "alien_base(%d, %d, %d) variant %d", veh_id, x, y, variant);
+                    logf("  %s: orig %d (%d) new %d (%d)", label, a, dist_o, b, dist_n);
+                }
+                mismatches++;
+            }
+        }
+    }
+    snap_restore(&base);
+    *BaseFindDist = dist_saved;
+    snap_free(&base);
+    logf("alien_base: %d compared (%d native units, %d bases found by the original), %d mismatches",
+        compared, natives, found, mismatches);
+    return mismatches;
+}
+
 static DWORD WINAPI regress_watcher(LPVOID) {
     for (;;) {
         Sleep(1000);
@@ -5308,6 +5429,8 @@ void regress_run() {
     if (test_enabled("batch16", "small_helpers")) total += run_guarded("small_helpers", test_small_helpers);
     if (test_enabled("batch16", "generators")) total += run_guarded("generators", test_generators);
     if (test_enabled("batch16", "base_compute")) total += run_guarded("base_compute", test_base_compute);
+    if (test_enabled("batch17", "assemble_passengers")) total += run_guarded("assemble_passengers", test_assemble_passengers);
+    if (test_enabled("batch17", "alien_base")) total += run_guarded("alien_base", test_alien_base);
     if (test_enabled("enemy_capabilities")) total += run_guarded("enemy_capabilities", test_enemy_capabilities);
     if (test_enabled("social_ai")) total += run_guarded("social_ai", test_social_ai);
     if (test_enabled("Path::sensors") || test_enabled("path_sensors")) total += run_guarded("path_sensors", test_path_sensors);

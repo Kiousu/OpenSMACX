@@ -567,6 +567,8 @@ DLLEXPORT int __cdecl base_growth();
 DLLEXPORT void __cdecl base_doctors();
 DLLEXPORT void __cdecl base_compute(BOOL update_prev);
 DLLEXPORT int __cdecl generators(uint32_t faction_id, int *inactive);
+DLLEXPORT void __cdecl assemble_passengers(int base_id, int plan, int priority);
+DLLEXPORT int __cdecl alien_base(int veh_id, int x, int y);
 DLLEXPORT uint32_t __cdecl fac_maint(uint32_t facility_id, uint32_t faction_id);
 DLLEXPORT void __cdecl base_maint();
 DLLEXPORT void __cdecl make_base_unique(uint32_t base_id);

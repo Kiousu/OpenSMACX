@@ -674,3 +674,6 @@
 0x001A58B0	?space@@YAXXZ
 0x000EC3B0	?base_compute@@YAXH@Z
 0x001247B0	?generators@@YAHIPAH@Z
+# --- batch 17: passenger assembly goals, native unit targets
+0x00164B90	?assemble_passengers@@YAXHHH@Z
+0x001665D0	?alien_base@@YAHHHH@Z
