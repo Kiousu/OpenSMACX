@@ -288,6 +288,9 @@ extern func_void *set_dirty_OG;
 extern func_void *clear_dirty_OG;
 extern func_xy *world_UNK1_OG;
 extern func_void *do_fungal_towers_OG;
+// batch 20
+extern func_void *drone_riot; // drone_riot(): riot effects for the current base
+extern func_void *base_drones_OG;
 extern func_void *base_psych_OG;
 extern func_social_ai *social_ai_OG;
 extern func_path_sensors *Path_sensors_OG; // Path::sensors()

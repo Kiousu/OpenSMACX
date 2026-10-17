@@ -828,3 +828,24 @@ wetter (rainy stays rainy); `clear_dirty` sets the same per-tile redraw flag as 
 only without the whole-map refresh bit. `spot_all` (0x5B6260) is now an exe pointer.
 Boot test: the 657-redirect exe loaded Council.SAV and advanced the turn 289 -> 290 (38 s) with
 the game alive.
+
+## Batch 20, 2026-10-16 (Council.SAV, 657-redirect exe)
+
+`base_drones` (base.cpp), transcribed from the disassembly because Ghidra could not settle its
+types. Trigger group `batch20` (the filter also matches `batch2`, whose six tests re-ran with 0
+mismatches). One snapshot test over every AI base (popups for human players) with the
+current-base globals compared too, under a pinned `timeGetTime` and a seeded generator because
+the riot path calls `drone_riot`: as loaded, a golden age starting, a golden age ending, riots
+ending, riots breaking out, riots held down by a nerve staple, and riots under the Telepathic
+Matrix.
+
+| function | inputs | compared | mismatches |
+|---|---|---|---|
+| base_drones | 246 AI bases x 7 variants (255 riots, 246 golden ages after the original) | 1,722 | 0 |
+
+Log: `regression-runs/2026-10-16-council-batch20.log`. Notes: `drone_riot` (0x4F4FB0) stays in
+the exe as a pointer; its revolt branch only applies to human factions and reads the clock and
+floating point, so it was not promoted. `base_drones` tail-calls it, so the DLL version returns
+nothing either way.
+Boot test: the 658-redirect exe loaded Council.SAV and advanced the turn 289 -> 290 (38 s) with
+the game alive.

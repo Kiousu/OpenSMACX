@@ -5620,6 +5620,93 @@ static int test_do_fungal_towers() {
     return mismatches;
 }
 
+// ---------------------------------------------------------------- batch 20
+
+static int test_base_drones() {
+    TimeGetTimePin pin; // drone_riot's revolt check reads the clock
+    if (!pin.ok()) {
+        logf("base_drones: cannot pin timeGetTime");
+        return 1;
+    }
+    GameSnapshot base, after_orig, after_new;
+    snap_alloc(&base); snap_alloc(&after_orig); snap_alloc(&after_new);
+    snap_take(&base);
+    uint8_t globals_saved[BaseGlobalsSize], globals_o[BaseGlobalsSize], globals_n[BaseGlobalsSize];
+    memcpy(globals_saved, BaseGlobals, BaseGlobalsSize);
+    int sp_saved[MaxSecretProjectNum];
+    memcpy(sp_saved, SecretProjectTable, sizeof(sp_saved));
+    int selected_saved = *BaseIDCurrentSelected;
+    int compared = 0, mismatches = 0, riots = 0, golden = 0;
+    char label[80];
+    for (int base_id = 0; base_id < base.base_count; base_id++) {
+        uint32_t f = base.bases[base_id].faction_id_current;
+        if (!quiet_faction(f)) {
+            continue; // popups for human players
+        }
+        for (int variant = 0; variant < 7; variant++) {
+            // as loaded; a golden age starting; a golden age ending; riots ending; riots
+            // breaking out; riots held down by a nerve staple; riots under the Telepathic Matrix
+            auto prepare = [&]() {
+                snap_restore(&base);
+                memcpy(BaseGlobals, globals_saved, BaseGlobalsSize);
+                memcpy(SecretProjectTable, sp_saved, sizeof(sp_saved));
+                reseed(base_id * 13 + variant);
+                set_base(base_id);
+                Base *b = &Bases[base_id];
+                if (variant == 1) {
+                    if (b->population_size < 3) {
+                        b->population_size = 3;
+                    }
+                    b->drone_total = 0;
+                    b->talent_total = b->population_size;
+                    b->state &= ~BSTATE_GOLDEN_AGE_ACTIVE;
+                } else if (variant == 2) {
+                    b->state |= BSTATE_GOLDEN_AGE_ACTIVE | BSTATE_DRONE_RIOTS_ACTIVE;
+                    b->drone_total = 0;
+                    b->talent_total = 0;
+                } else if (variant == 3) {
+                    b->state |= BSTATE_DRONE_RIOTS_ACTIVE;
+                    b->state &= ~BSTATE_GOLDEN_AGE_ACTIVE;
+                    b->drone_total = 1;
+                    b->talent_total = 1;
+                } else if (variant >= 4) {
+                    b->drone_total = b->talent_total + 2;
+                    b->nerve_staple_turns_left = variant == 5 ? 3 : 0;
+                    b->state |= BSTATE_DRONE_RIOTS_ACTIVE;
+                    if (variant == 6) {
+                        SecretProject->telepathic_matrix = base_id;
+                    }
+                }
+            };
+            prepare();
+            base_drones_OG();
+            snap_take(&after_orig);
+            memcpy(globals_o, BaseGlobals, BaseGlobalsSize);
+            riots += (after_orig.bases[base_id].state & BSTATE_DRONE_RIOTS_ACTIVE) != 0;
+            golden += (after_orig.bases[base_id].state & BSTATE_GOLDEN_AGE_ACTIVE) != 0;
+            prepare();
+            base_drones();
+            snap_take(&after_new);
+            memcpy(globals_n, BaseGlobals, BaseGlobalsSize);
+            compared++;
+            sprintf_s(label, "base_drones(%d) variant %d", base_id, variant);
+            BOOL detail = mismatches < MAX_DETAIL;
+            if (base_globals_differ(globals_o, globals_n, detail ? label : NULL)
+                || snap_differs(&after_orig, &after_new, detail ? label : NULL)) {
+                mismatches++;
+            }
+        }
+    }
+    snap_restore(&base);
+    memcpy(BaseGlobals, globals_saved, BaseGlobalsSize);
+    memcpy(SecretProjectTable, sp_saved, sizeof(sp_saved));
+    *BaseIDCurrentSelected = selected_saved;
+    snap_free(&base); snap_free(&after_orig); snap_free(&after_new);
+    logf("base_drones: %d compared (%d rioting, %d golden ages after the original), %d mismatches",
+        compared, riots, golden, mismatches);
+    return mismatches;
+}
+
 static DWORD WINAPI regress_watcher(LPVOID) {
     for (;;) {
         Sleep(1000);
@@ -5746,6 +5833,7 @@ void regress_run() {
     if (test_enabled("batch19", "map_dirty")) total += run_guarded("map_dirty", test_map_dirty);
     if (test_enabled("batch19", "world_UNK1")) total += run_guarded("world_UNK1", test_world_UNK1);
     if (test_enabled("batch19", "do_fungal_towers")) total += run_guarded("do_fungal_towers", test_do_fungal_towers);
+    if (test_enabled("batch20", "base_drones")) total += run_guarded("base_drones", test_base_drones);
     if (test_enabled("enemy_capabilities")) total += run_guarded("enemy_capabilities", test_enemy_capabilities);
     if (test_enabled("social_ai")) total += run_guarded("social_ai", test_social_ai);
     if (test_enabled("Path::sensors") || test_enabled("path_sensors")) total += run_guarded("path_sensors", test_path_sensors);

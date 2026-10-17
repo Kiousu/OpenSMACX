@@ -685,3 +685,5 @@
 0x00192AF0	?clear_dirty@@YAXXZ
 0x001C4410	?world_UNK1@@YAXII@Z
 0x00122F00	?do_fungal_towers@@YAXXZ
+# --- batch 20: golden ages and riot bookkeeping
+0x000F5CE0	?base_drones@@YAXXZ

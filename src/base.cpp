@@ -3180,6 +3180,64 @@ static int base_doctor_type() {
 }
 
 /*
+Purpose: Update the current base's mood at the end of its turn. With no drones, at least three
+         citizens and talents making up half of them, the base enters (or stays in) a golden
+         age; otherwise a golden age ends. If drones outnumber talents and neither the Telepathic
+         Matrix nor a nerve staple holds them down, the riot is handled by drone_riot(); else a
+         riot that was going on ends, an AI base resets its production and the tile is redrawn.
+Original Offset: 004F5CE0
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch20.log)
+*/
+void __cdecl base_drones() {
+    Base *base = *BaseCurrent;
+    BOOL alien = (Players[base->faction_id_current].rule_flags & RFLAG_ALIEN) != 0;
+    if (!base->drone_total && base->population_size > 2
+        && base->talent_total >= (base->population_size + 1) / 2) {
+        if (!(base->state & BSTATE_GOLDEN_AGE_ACTIVE)) {
+            popb("GOLDENAGE", 0x20, -1, alien ? "Alopdir.pcx" : "talent_sm.pcx", 0);
+            base = *BaseCurrent;
+        }
+        base->state |= BSTATE_GOLDEN_AGE_ACTIVE;
+    } else if (base->state & BSTATE_GOLDEN_AGE_ACTIVE) {
+        base->state &= ~BSTATE_GOLDEN_AGE_ACTIVE;
+        base = *BaseCurrent;
+        if (base->drone_total <= base->talent_total) {
+            popb("GOLDENAGEOVER", 0x40, -1, alien ? "Alopdir.pcx" : "talent_sm.pcx", 0);
+        }
+    }
+    base = *BaseCurrent;
+    if (base->drone_total > base->talent_total
+        && !(SecretProject->telepathic_matrix >= 0
+            && Bases[SecretProject->telepathic_matrix].faction_id_current == base->faction_id_current)
+        && !base->nerve_staple_turns_left) {
+        drone_riot();
+        return;
+    }
+    if (!(base->state & BSTATE_DRONE_RIOTS_ACTIVE)) {
+        return;
+    }
+    base->state &= ~BSTATE_DRONE_RIOTS_ACTIVE;
+    base = *BaseCurrent;
+    if (!(base->state & BSTATE_GOLDEN_AGE_ACTIVE)) {
+        uint32_t faction_id = base->faction_id_current;
+        BOOL governed = (base->governor & GOV_MANAGES_CITIZENS_SPECS) && (base->governor & GOV_ACTIVE);
+        LPCSTR pcx = (Players[faction_id].rule_flags & RFLAG_ALIEN) ? "Alopdir.pcx" : "talent_sm.pcx";
+        if (governed) {
+            popb("DRONERIOTSOVER2", 0, 0x33, pcx, 0);
+        } else {
+            popb("DRONERIOTSOVER", 0x10, 0x33, pcx, 0);
+        }
+        base = *BaseCurrent;
+    }
+    if (!is_human(base->faction_id_current)) {
+        base_reset(*BaseIDCurrentSelected, false);
+        base = *BaseCurrent;
+    }
+    draw_tile(base->x, base->y, 2);
+}
+
+/*
 Purpose: Settle the current base's drones by moving citizens between work and doctoring, for AI
          bases and human bases whose governor manages citizens. While drones outnumber talents
          (counting one more if a rioting base under weak police is about to grow) and the base
