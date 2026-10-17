@@ -1010,7 +1010,7 @@ void __cdecl balance() {
             }
         }
         if (*DiffLevelCurrent > 1
-            && (extra > 2 || 5 - (is_human(f) ? 1 : 0) <= *DiffLevelCurrent)) {
+            && (extra > 2 || 5 - is_human(f) <= *DiffLevelCurrent)) {
             extra -= 3;
             if (!(player->rule_flags & RFLAG_AQUATIC)) {
                 veh_id = veh_init(BSC_COLONY_POD, f, x, y);

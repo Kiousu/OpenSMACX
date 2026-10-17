@@ -383,7 +383,7 @@ Purpose: Determine how valuable the specified techID is to a faction. This id ei
          determines whether a simplistic or extended calculation is required for a technology id.
 Original Offset: 005BCBE0
 Return Value: Value of techID to the specified faction
-Status: Complete
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-ishuman.log)
 */
 int __cdecl tech_val(uint32_t tech_id, int faction_id, BOOL simple_calc) {
     if (tech_id == 9999) {

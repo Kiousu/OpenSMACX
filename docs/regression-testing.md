@@ -1046,3 +1046,24 @@ advanced the turn 289 -> 290 (38 s) with the game alive, and a Quick Start (Sven
 reached turn 1 with 29 units, the player's pods on the map and the start pod independent.
 `tools/mp/mpsolo.ps1` (host-only network game) is no check here: the vanilla exe also ends with
 no units and a garbage mission year.
+
+## is_human() normalization, 2026-10-16 (Council.SAV, 677-redirect exe)
+
+The DLL helper `is_human()` returned the faction's raw status bit (2 for faction 1, 4 for faction
+2, ...) although its contract says true/false. Every use is boolean except arithmetic in
+`tech_val` (an upstream redirect): it divides by `base_count * (is_human + 1)` where the original
+normalizes the flag (0x5BD0B6: `neg; sbb; neg; inc`), so a human faction's tech values for its
+defensive, offensive and contested regions came out too small. `is_human()` now returns 0 or 1.
+Trigger group `ishuman`: `tech_val` against the exe's own code for every faction, every tech,
+the factions' commlink values and active prototypes, both calculation modes, as loaded and with
+every faction human (hotseat). Before: 353 mismatches of 4,676, all for human factions; after:
+0 (sw_aki2152 also 0 of 3,464). `balance` keeps matching (it had the same slip, caught in batch
+25). The full harness on Council.SAV with the 507-redirect sweep exe
+(`regression-runs/2026-10-16-council-full-ishuman.log`) has 15 mismatches, none from this
+change: `social_ai`'s known one (bunglist index, also in the earlier full logs) and 14 in
+`tech_val`'s faction values (ids 89-96). Those call `wants_to_attack`, which in that exe is
+still the original and reads a 64-entry stack buffer it never initializes; the DLL version
+starts it zeroed (see the combat trio notes), so the two differ with whatever the stack
+holds. With the 677-redirect exe both sides call the DLL's `wants_to_attack` and match. Logs:
+`regression-runs/2026-10-16-council-ishuman.log` and
+`regression-runs/2026-10-16-council-ishuman-before.log`.

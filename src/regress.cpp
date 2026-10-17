@@ -6598,6 +6598,57 @@ static int test_balance() {
     return mismatches;
 }
 
+// ---------------------------------------------------------------- is_human() normalization
+
+static int test_tech_val() {
+    // tech_val is an upstream redirect: run the exe's own code for comparison
+    static const uint8_t tech_val_entry[6] = { 0x55, 0x8B, 0xEC, 0x83, 0xEC, 0x20 };
+    OriginalEntry vanilla(0x005BCBE0, tech_val_entry);
+    if (!vanilla.ok) {
+        return 1;
+    }
+    typedef int func_tech_val(uint32_t, int, BOOL);
+    func_tech_val *tech_val_exe = (func_tech_val *)0x005BCBE0;
+    uint8_t status_saved = *FactionsStatus;
+    int compared = 0, mismatches = 0, human_runs = 0;
+    // as loaded, and every faction played by a human (hotseat)
+    for (int hotseat = 0; hotseat < 2; hotseat++) {
+        *FactionsStatus = hotseat ? (uint8_t)(status_saved | 0xFE) : status_saved;
+        for (int f = 1; f < MaxPlayerNum; f++) {
+            for (uint32_t id = 0; id < 97 + 2 * MaxVehProtoFactionNum; id++) {
+                if (id >= 97) {
+                    int proto_id = id - 97 < MaxVehProtoFactionNum ? id - 97
+                        : f * MaxVehProtoFactionNum + (id - 97 - MaxVehProtoFactionNum);
+                    if (!(VehPrototypes[proto_id].flags & PROTO_ACTIVE)) {
+                        continue;
+                    }
+                }
+                uint32_t tech_id = id;
+                if (id >= 97 + MaxVehProtoFactionNum) {
+                    tech_id = 97 + f * MaxVehProtoFactionNum + (id - 97 - MaxVehProtoFactionNum);
+                }
+                for (int simple = 0; simple < 2; simple++) {
+                    int a = tech_val_exe(tech_id, f, simple);
+                    int b = tech_val(tech_id, f, simple);
+                    compared++;
+                    human_runs += is_human(f) != 0;
+                    if (a != b) {
+                        if (mismatches < MAX_DETAIL) {
+                            logf("  tech_val(%u, %d, %d) hotseat %d: orig %d new %d", tech_id, f,
+                                simple, hotseat, a, b);
+                        }
+                        mismatches++;
+                    }
+                }
+            }
+        }
+    }
+    *FactionsStatus = status_saved;
+    logf("tech_val: %d compared (%d for human factions), %d mismatches", compared, human_runs,
+        mismatches);
+    return mismatches;
+}
+
 static DWORD WINAPI regress_watcher(LPVOID) {
     for (;;) {
         Sleep(1000);
@@ -6734,6 +6785,7 @@ void regress_run() {
     if (test_enabled("ptrfix", "goody_at")) total += run_guarded("goody_at", test_goody_at);
     if (test_enabled("batch24", "can_terraform")) total += run_guarded("can_terraform", test_can_terraform);
     if (test_enabled("batch25", "balance")) total += run_guarded("balance", test_balance);
+    if (test_enabled("ishuman", "tech_val")) total += run_guarded("tech_val", test_tech_val);
     if (test_enabled("enemy_capabilities")) total += run_guarded("enemy_capabilities", test_enemy_capabilities);
     if (test_enabled("social_ai")) total += run_guarded("social_ai", test_social_ai);
     if (test_enabled("Path::sensors") || test_enabled("path_sensors")) total += run_guarded("path_sensors", test_path_sensors);

@@ -87,7 +87,8 @@ Return Value: Is faction a human? true/false
 Status: Complete
 */
 BOOL __cdecl is_human(uint32_t faction_id) {
-    return FactionsStatus[0] & (1 << faction_id);
+    // 0 or 1: the original normalizes the flag wherever it does arithmetic with it (tech_val)
+    return (FactionsStatus[0] & (1 << faction_id)) != 0;
 }
 
 /*
