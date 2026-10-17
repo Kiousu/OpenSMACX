@@ -782,3 +782,29 @@ that have no bases in the region, or no contiguous link to it, against the growt
 `alien_base` reports its winning score (not a distance) in `BaseFindDist`.
 Boot test: the 651-redirect exe loaded Council.SAV and advanced the turn 289 -> 290 (38 s) with
 the game alive.
+
+## Batch 18, 2026-10-16 (Council.SAV, 651-redirect exe)
+
+`repair_phase` and `allocate_energy` (game.cpp), two of the per-faction turn phases. Trigger
+group `batch18`, two snapshot tests. `repair_phase` runs every faction as loaded and, with every
+unit of the faction hurt, mostly rested, some sentried or on timed hold and some flagged for
+cover, on the next four turns, with the Nano Factory, the Xenoempathy Dome and the three repair
+projects owned. `allocate_energy` runs every faction but the one at the controls (whose branch
+pops up advice) as loaded, with the current base rioting at police -3 and -2, calm with spare
+specialists, researching Transcendent Thought with big reserves early on, with a defensive
+region, with a wealth/power drive and offensive regions, and with the Telepathic Matrix;
+it also compares the current-base globals, the selected base and `BaseComputeID`.
+
+| function | inputs | compared | mismatches |
+|---|---|---|---|
+| repair_phase | 8 factions x 5 variants (6,201 units repaired) | 40 | 0 |
+| allocate_energy | 6 factions x 8 variants (37 allocations changed) | 48 | 0 |
+
+Log: `regression-runs/2026-10-16-council-batch18.log`. Notes: 0x93A958 is `EnergyCredits` (the
+credits of the player at the controls as last shown); `energy_limit` (0x445440, always 10) and
+`social_select` (0x5B5620) are exe pointers; Veh flag 0x1000 is `VFLAG_UNK_1000`. Original
+behaviour kept: `allocate_energy` tests the current base, not each of the faction's bases, for
+riots and spare specialists (Thinker's notes call this out too); `repair_phase` only lets a
+repair unit help land units that can themselves carry cargo.
+Boot test: the 653-redirect exe loaded Council.SAV and advanced the turn 289 -> 290 (38 s) with
+the game alive.

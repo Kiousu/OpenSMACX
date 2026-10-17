@@ -677,3 +677,6 @@
 # --- batch 17: passenger assembly goals, native unit targets
 0x00164B90	?assemble_passengers@@YAXHHH@Z
 0x001665D0	?alien_base@@YAHHHH@Z
+# --- batch 18: unit repair and AI energy allocation
+0x00126030	?repair_phase@@YAXI@Z
+0x001267B0	?allocate_energy@@YAXI@Z

@@ -21,8 +21,13 @@
 #include "alpha.h"
 #include "base.h"
 #include "general.h"
+#include "technology.h"
+#include "faction.h"
+#include "map.h"
+#include "veh.h"
 
 BOOL *ExpansionEnabled = (BOOL *)0x009A6488;
+int *EnergyCredits = (int *)0x0093A958; // credits of the player at the controls as last shown (Thinker's name)
 uint32_t *GamePreferences = (uint32_t *)0x009A6490;
 uint32_t *GameMorePreferences = (uint32_t *)0x009A6494;
 uint32_t *GameWarnings = (uint32_t *)0x009A6498;
@@ -105,6 +110,315 @@ void __cdecl mon_tech_discovered(int faction_id, int tech_id) {
     Monuments[faction_id].unk_1 = 1;
     if (faction_id == *FactionIDCurrent) {
         monument(1);
+    }
+}
+
+/*
+Purpose: Start-of-turn upkeep for a faction's units: reset their per-turn counters and flags, count
+         down timed sentry/hold orders, lift the "needs cover" flag at a base, bunker or airbase,
+         hand fungal towers to the natives, and repair damage. Units that didn't move repair one
+         point per reactor level, more on friendly territory, at a bunker or airbase, on fungus
+         (natives) and in a base; a base with the matching facility or project, a breeding base
+         for natives, or the Nano Factory repairs fully, and a repair unit in the stack doubles
+         it. Out in the field units only heal down to two points per reactor level, unless they
+         are natives on fungus or the faction owns the Xenoempathy Dome there. A human unit
+         sentried until healed wakes up. Finally redraws the visible units.
+Original Offset: 00526030
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch18.log)
+*/
+void __cdecl repair_phase(uint32_t faction_id) {
+    PlayersData[faction_id].sat_odp_deployed = 0;
+    for (int veh_id = 0; veh_id < *VehCurrentCount; veh_id++) {
+        Veh *veh = &Vehs[veh_id];
+        if (veh->faction_id != faction_id) {
+            continue;
+        }
+        int x = veh->x;
+        int y = veh->y;
+        uint8_t damage_before = veh->dmg_incurred;
+        veh->unk_6 = 0;
+        veh->moves_expended = 0;
+        veh->state &= ~(VSTATE_UNK_2 | VSTATE_UNK_2000 | VSTATE_CRAWLING);
+        veh->flags &= ~VFLAG_UNK_1000;
+        if (!((*TurnCurrentNum + veh_id) & 3)) {
+            veh->state &= ~VSTATE_UNK_800;
+            veh->flags &= (veh->flags & VFLAG_UNK_2) ? ~VFLAG_UNK_2 : ~VFLAG_UNK_1;
+        }
+        if ((veh->order == ORDER_SENTRY_BOARD || veh->order == ORDER_HOLD) && veh->waypoint_y[0]
+            && !--veh->waypoint_y[0]) {
+            veh->order = ORDER_NONE;
+        }
+        Map *tile = map_loc(x, y);
+        uint8_t triad = Chassis[VehPrototypes[veh->proto_id].chassis_id].triad;
+        if ((veh->state & VSTATE_UNK_8)
+            && (((tile->bit & BIT_BASE_IN_TILE) && (tile->val2 & 0xF) < 8)
+                || (triad == TRIAD_LAND && (tile->bit & BIT_BUNKER))
+                || (triad == TRIAD_AIR && (tile->bit & BIT_AIRBASE)))) {
+            veh->state &= ~VSTATE_UNK_8;
+        }
+        if (veh->proto_id == BSC_FUNGAL_TOWER) {
+            veh->faction_id = 0;
+        }
+        int proto_id = veh->proto_id;
+        if (proto_id == BSC_BATTLE_OGRE_MK1 || proto_id == BSC_BATTLE_OGRE_MK2
+            || proto_id == BSC_BATTLE_OGRE_MK3
+            || (proto_id != BSC_FUNGAL_TOWER && (veh->state & VSTATE_UNK_4)) || !veh->dmg_incurred) {
+            continue;
+        }
+        BOOL native = Weapon[VehPrototypes[proto_id].weapon_id].offense_rating < 0
+            && proto_id < MaxVehProtoFactionNum;
+        int value = 1;
+        if (proto_id != BSC_FUNGAL_TOWER) {
+            if (native && (tile->bit & BIT_FUNGUS) && (tile->climate & 0xE0) > 0x3F) {
+                value = 2;
+            }
+            if (whose_territory(faction_id, x, y, NULL, false) == (int)faction_id) {
+                value++;
+            }
+            if (triad == TRIAD_AIR && (tile->bit & BIT_AIRBASE)) {
+                value++;
+            }
+            if (triad == TRIAD_LAND && (tile->bit & BIT_BUNKER)) {
+                value++;
+            }
+        }
+        int base_id = base_at(x, y);
+        if (base_id >= 0 && !(Bases[base_id].state & BSTATE_DRONE_RIOTS_ACTIVE)) {
+            value++;
+            if (native) {
+                if (breed_mod(base_id, Bases[base_id].faction_id_current)) {
+                    value = veh->dmg_incurred;
+                }
+            } else {
+                int facility_id, sp_base;
+                if (triad == TRIAD_SEA) {
+                    facility_id = FAC_NAVAL_YARD;
+                    sp_base = SecretProject->maritime_control_center;
+                } else if (triad == TRIAD_AIR) {
+                    facility_id = FAC_AEROSPACE_COMPLEX;
+                    sp_base = SecretProject->cloudbase_academy;
+                } else {
+                    facility_id = FAC_COMMAND_CENTER;
+                    sp_base = SecretProject->command_nexus;
+                }
+                if (has_fac_built(facility_id, base_id)
+                    || (sp_base >= 0 && Bases[sp_base].faction_id_current == faction_id)) {
+                    value = veh->dmg_incurred;
+                }
+            }
+        }
+        BOOL repair_unit = false;
+        if (triad == TRIAD_LAND && veh_cargo(veh_id)
+            && (veh->order == ORDER_SENTRY_BOARD || (tile->climate & 0xE0) < ALT_BIT_SHORE_LINE)) {
+            for (int i = veh_top(veh_id); i >= 0; i = Vehs[i].next_veh_id_stack) {
+                if (i != veh_id && has_abil(Vehs[i].proto_id, ABL_REPAIR)) {
+                    repair_unit = true;
+                }
+            }
+            if (repair_unit) {
+                value *= 2;
+            }
+        }
+        BOOL nano_factory = SecretProject->nano_factory >= 0
+            && Bases[SecretProject->nano_factory].faction_id_current == faction_id;
+        if (nano_factory) {
+            value = veh->dmg_incurred;
+        }
+        int reactor = VehPrototypes[veh->proto_id].reactor_id;
+        int repair = reactor * value;
+        int limit = 0;
+        if (faction_id && !repair_unit && base_id < 0 && !nano_factory) {
+            limit = reactor * 2;
+            if (reactor && (tile->bit & BIT_FUNGUS) && (tile->climate & 0xE0) > 0x3F) {
+                if (native) {
+                    limit = 0;
+                }
+                if (SecretProject->xenoempathy_dome >= 0
+                    && Bases[SecretProject->xenoempathy_dome].faction_id_current == faction_id) {
+                    limit = 0;
+                    repair += reactor;
+                }
+            }
+        }
+        int damage = veh->dmg_incurred;
+        int damage_new = damage - repair;
+        if (damage_new < limit) {
+            damage_new = limit;
+        } else if (damage_new > 999) {
+            damage_new = 999;
+        }
+        if (damage_new >= damage) {
+            damage_new = damage;
+        }
+        veh->dmg_incurred = (uint8_t)damage_new;
+        if ((damage_new & 0xFF) <= limit && is_human(faction_id) && veh->order == ORDER_SENTRY_BOARD
+            && (damage_new & 0xFF) != damage_before
+            && (triad != TRIAD_LAND || (tile->climate & 0xE0) >= ALT_BIT_SHORE_LINE)) {
+            veh->order = ORDER_NONE;
+        }
+    }
+    for (int veh_id = 0; veh_id < *VehCurrentCount; veh_id++) {
+        Veh *veh = &Vehs[veh_id];
+        if (veh->faction_id != faction_id || base_who(veh->x, veh->y) >= 0) {
+            continue;
+        }
+        if (veh->faction_id == (uint32_t)*MapWinFactionID
+            || (veh->visibility & (1 << *MapWinFactionID))) {
+            draw_tile(veh->x, veh->y, -1);
+        }
+    }
+    do_all_draws();
+}
+
+/*
+Purpose: Set a faction's energy allocation for the turn. A human player at the controls with few
+         credits is reminded to adjust the sliders or build infrastructure. An AI faction raises
+         psych spending while bases riot (up to a cap set by its police rating) and lowers it
+         when calm, then sets labs from its research drive, the turn, its credits and its regional
+         plans, shifts between economy and labs by how its bases' energy compares with
+         facility upkeep, and finally balances labs against economy by its efficiency.
+Original Offset: 005267B0
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch18.log).
+        The original checks the current base, not each of the faction's bases, for riots and
+        spare specialists; that is kept.
+*/
+void __cdecl allocate_energy(uint32_t faction_id) {
+    PlayerData *p = &PlayersData[faction_id];
+    if (is_human(faction_id)) {
+        if (p->diff_level < DLVL_TALENT || faction_id != (uint32_t)*MapWinFactionID
+            || (int)p->current_num_bases < 2 || p->energy_reserves > 99
+            || p->energy_reserves * 11 - *EnergyCredits * 10 >= 0) {
+            return;
+        }
+        if (10 - p->se_alloc_labs - p->se_alloc_psych < 5) {
+            if (popp(ScriptTxtID, "INFRASTRUCTURE", 0, "genwarning_sm.pcx", 0)) {
+                social_select(faction_id);
+            }
+            return;
+        }
+        if (!has_tech(VehPrototypes[BSC_FORMERS].preq_tech, faction_id) || *TurnCurrentNum % 5) {
+            return;
+        }
+        popp(ScriptTxtID, "INFRASTRUCTURE2", 0, "genwarning_sm.pcx", 0);
+        return;
+    }
+    int economy_before = 10 - p->se_alloc_psych - p->se_alloc_labs;
+    int police = p->soc_effect_pending.police;
+    int psych_cap = police < -2 ? 4 : (police == -2 ? 2 : (police < 2 ? 1 : 0));
+    BOOL settled = true;
+    int stage = 0; // 0: maybe ease psych, 1: settle the sliders, 2: quell riots base by base
+    for (int base_id = 0; base_id < *BaseCurrentCount; base_id++) {
+        if (Bases[base_id].faction_id_current != faction_id) {
+            continue;
+        }
+        if ((*BaseCurrent)->state & BSTATE_DRONE_RIOTS_ACTIVE) {
+            stage = (psych_cap > p->se_alloc_psych && ++p->se_alloc_psych < psych_cap) ? 2 : 1;
+            break;
+        }
+        if ((*BaseCurrent)->specialist_unk_1 < (*BaseCurrent)->specialist_total) {
+            settled = false;
+        }
+    }
+    if (!stage && settled && psych_cap / 2 < p->se_alloc_psych) {
+        p->se_alloc_psych--;
+    }
+    while (stage == 2) {
+        stage = 1;
+        if (p->soc_effect_pending.police >= -2) {
+            break;
+        }
+        for (int base_id = 0; base_id < *BaseCurrentCount; base_id++) {
+            if (Bases[base_id].faction_id_current != faction_id) {
+                continue;
+            }
+            set_base(base_id);
+            base_compute(true);
+            Base *base = *BaseCurrent;
+            if (base->talent_total < base->drone_total && (base->state & BSTATE_DRONE_RIOTS_ACTIVE)) {
+                if (++p->se_alloc_psych < psych_cap) {
+                    stage = 2;
+                }
+                break;
+            }
+        }
+    }
+    int psych = p->se_alloc_psych;
+    int psych_min = p->soc_effect_pending.police > -2 ? 0 : 2;
+    p->se_alloc_psych = psych < psych_min ? psych_min : (psych < 5 ? psych : 4);
+    if (SecretProject->telepathic_matrix >= 0
+        && Bases[SecretProject->telepathic_matrix].faction_id_current == faction_id) {
+        p->se_alloc_psych = 0;
+    }
+    int labs = (p->ai_tech - p->ai_power - p->se_alloc_psych + 11) / 2 - p->ai_wealth;
+    p->se_alloc_labs = labs;
+    if (*TurnCurrentNum < (p->ai_tech - p->ai_power - p->ai_wealth + 3) * 25) {
+        p->se_alloc_labs = labs + 1;
+    }
+    p->se_alloc_labs += p->energy_reserves / ((Players[faction_id].rule_techcost
+        * (p->ai_power + 1 + p->ai_wealth) + *TurnCurrentNum) * 2);
+    int region;
+    for (region = 1; region < MaxContinentNum; region++) {
+        if (!p->region_total_bases[region]) {
+            continue;
+        }
+        if (p->region_base_plan[region] == 2) {
+            p->se_alloc_labs--;
+            break;
+        }
+        if (!p->region_base_plan[region] && (p->ai_wealth || p->ai_power)) {
+            p->se_alloc_labs--;
+        }
+    }
+    if (p->ai_tech && !p->ai_wealth && !p->ai_power && region >= MaxContinentNum) {
+        p->se_alloc_labs++;
+    }
+    if (economy_before && economy_before <= 10 - p->se_alloc_labs - p->se_alloc_psych) {
+        int income = 0;
+        for (int base_id = 0; base_id < *BaseCurrentCount; base_id++) {
+            if (Bases[base_id].faction_id_current != faction_id) {
+                continue;
+            }
+            income += Bases[base_id].unk_10;
+            for (int facility_id = 0; facility_id < FacilityRepStart; facility_id++) {
+                if (has_fac_built(facility_id, base_id)) {
+                    income -= fac_maint(facility_id, faction_id);
+                }
+            }
+        }
+        int quarter = ((p->ai_wealth * 2 + 4) - p->ai_tech) * (int)p->current_num_bases / 4;
+        if (quarter < income) {
+            while (economy_before <= 10 - p->se_alloc_labs - p->se_alloc_psych) {
+                p->se_alloc_labs++;
+            }
+        } else if (income < quarter / 2) {
+            p->se_alloc_labs--;
+        }
+    }
+    if (p->tech_id_researching == TECH_TRANT) {
+        p->se_alloc_labs--;
+    }
+    int cap = 10 - p->se_alloc_psych;
+    if (energy_limit(faction_id) <= cap) {
+        cap = energy_limit(faction_id);
+    }
+    labs = p->se_alloc_labs;
+    p->se_alloc_labs = (labs < 0 || cap < 0) ? 0 : (labs <= cap ? labs : cap);
+    while (energy_limit(faction_id) < 10 - p->se_alloc_labs - p->se_alloc_psych) {
+        p->se_alloc_labs++;
+    }
+    int efficiency = p->soc_effect_temp.efficiency;
+    int bases_few = 3 - (int)p->current_num_bases;
+    int balance = (efficiency < 0 ? 0 : (efficiency > 99 ? 99 : efficiency))
+        + (bases_few < 0 ? 0 : (bases_few > 3 ? 3 : bases_few)) + 1;
+    labs = p->se_alloc_labs;
+    p->se_alloc_labs = labs < 0 ? 0 : (labs > 10 ? 10 : labs);
+    while (balance - p->se_alloc_labs - p->se_alloc_psych + 10 < p->se_alloc_labs) {
+        p->se_alloc_labs--;
+    }
+    while (p->se_alloc_labs + balance < 10 - p->se_alloc_labs - p->se_alloc_psych) {
+        p->se_alloc_labs++;
     }
 }
 

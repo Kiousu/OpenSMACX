@@ -178,6 +178,7 @@ enum VehFlagsBitfield {
     VFLAG_START_RAND_MONOLITH = 0x100,
     VFLAG_START_RAND_FUNGUS = 0x200,
     VFLAG_INVISIBLE = 0x400,
+    VFLAG_UNK_1000 = 0x1000, // cleared for every unit by repair_phase()
 };
 
 enum VehStateBitfield {

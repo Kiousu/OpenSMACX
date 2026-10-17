@@ -277,6 +277,11 @@ extern func_contiguous *contiguous; // contiguous(faction_id, faction_id_2, regi
 extern func_iii *alien_base_OG;
 typedef void func_assemble(int, int, int);
 extern func_assemble *assemble_passengers_OG;
+// batch 18
+extern func5 *repair_phase_OG;
+extern func5 *allocate_energy_OG;
+extern func_i *energy_limit; // energy_limit(faction_id): always 10 in this build
+extern func5 *social_select; // social_select(faction_id): the social engineering screen
 extern func_void *base_psych_OG;
 extern func_social_ai *social_ai_OG;
 extern func_path_sensors *Path_sensors_OG; // Path::sensors()

@@ -5310,6 +5310,211 @@ static int test_alien_base() {
     return mismatches;
 }
 
+// ---------------------------------------------------------------- batch 18
+
+static int test_repair_phase() {
+    GameSnapshot base, after_orig, after_new;
+    snap_alloc(&base); snap_alloc(&after_orig); snap_alloc(&after_new);
+    snap_take(&base);
+    int sp_saved[MaxSecretProjectNum];
+    memcpy(sp_saved, SecretProjectTable, sizeof(sp_saved));
+    int turn_saved = *TurnCurrentNum;
+    int compared = 0, mismatches = 0, repaired = 0;
+    char label[64];
+    for (uint32_t f = 0; f < MaxPlayerNum; f++) {
+        int own_base = -1;
+        for (int i = 0; i < base.base_count; i++) {
+            if (base.bases[i].faction_id_current == f) {
+                own_base = i;
+                break;
+            }
+        }
+        for (int variant = 0; variant < 5; variant++) {
+            // as loaded; every unit hurt and rested, some sentried, on the next three turns;
+            // the same with the Nano Factory; with the Xenoempathy Dome; with every repair
+            // facility project of the faction's
+            auto prepare = [&]() {
+                snap_restore(&base);
+                memcpy(SecretProjectTable, sp_saved, sizeof(sp_saved));
+                *TurnCurrentNum = turn_saved + variant;
+                if (variant) {
+                    for (int v = 0; v < *VehCurrentCount; v++) {
+                        if (Vehs[v].faction_id != f) {
+                            continue;
+                        }
+                        Vehs[v].dmg_incurred = (uint8_t)(3 + v % 9);
+                        if (v % 3) {
+                            Vehs[v].state &= ~VSTATE_UNK_4;
+                        }
+                        if (v % 4 == 0) {
+                            Vehs[v].order = ORDER_SENTRY_BOARD;
+                        } else if (v % 4 == 1) {
+                            Vehs[v].order = ORDER_HOLD;
+                            Vehs[v].waypoint_y[0] = (int16_t)(v % 3);
+                        }
+                        if (v % 5 == 0) {
+                            Vehs[v].state |= VSTATE_UNK_8;
+                        }
+                    }
+                }
+                if (own_base >= 0) {
+                    if (variant == 2) {
+                        SecretProject->nano_factory = own_base;
+                    } else if (variant == 3) {
+                        SecretProject->xenoempathy_dome = own_base;
+                    } else if (variant == 4) {
+                        SecretProject->command_nexus = own_base;
+                        SecretProject->maritime_control_center = own_base;
+                        SecretProject->cloudbase_academy = own_base;
+                    }
+                }
+            };
+            prepare();
+            repair_phase_OG(f);
+            snap_take(&after_orig);
+            prepare();
+            for (int v = 0; v < *VehCurrentCount; v++) {
+                repaired += Vehs[v].faction_id == f && after_orig.vehs[v].dmg_incurred < Vehs[v].dmg_incurred;
+            }
+            repair_phase(f);
+            snap_take(&after_new);
+            compared++;
+            sprintf_s(label, "repair_phase(%u) variant %d", f, variant);
+            if (snap_differs(&after_orig, &after_new, mismatches < MAX_DETAIL ? label : NULL)) {
+                mismatches++;
+            }
+        }
+    }
+    snap_restore(&base);
+    memcpy(SecretProjectTable, sp_saved, sizeof(sp_saved));
+    *TurnCurrentNum = turn_saved;
+    snap_free(&base); snap_free(&after_orig); snap_free(&after_new);
+    logf("repair_phase: %d compared (%d units repaired by the original), %d mismatches", compared,
+        repaired, mismatches);
+    return mismatches;
+}
+
+static int test_allocate_energy() {
+    GameSnapshot base, after_orig, after_new;
+    snap_alloc(&base); snap_alloc(&after_orig); snap_alloc(&after_new);
+    snap_take(&base);
+    uint8_t globals_saved[BaseGlobalsSize], globals_o[BaseGlobalsSize], globals_n[BaseGlobalsSize];
+    memcpy(globals_saved, BaseGlobals, BaseGlobalsSize);
+    int sp_saved[MaxSecretProjectNum];
+    memcpy(sp_saved, SecretProjectTable, sizeof(sp_saved));
+    int selected_saved = *BaseIDCurrentSelected;
+    int compute_saved = *BaseComputeID;
+    int turn_saved = *TurnCurrentNum;
+    int compared = 0, mismatches = 0, changed = 0;
+    char label[64];
+    for (uint32_t f = 1; f < MaxPlayerNum; f++) {
+        if (f == (uint32_t)*MapWinFactionID) {
+            continue; // the player at the controls may get the infrastructure popups
+        }
+        int own_base = -1;
+        for (int i = 0; i < base.base_count; i++) {
+            if (base.bases[i].faction_id_current == f) {
+                own_base = i;
+                break;
+            }
+        }
+        for (int variant = 0; variant < 8; variant++) {
+            // as loaded; the current base rioting under police -3 (quelled base by base); the
+            // same at police -2; calm with spare specialists; researching Transcendent Thought
+            // with big reserves early on; a defensive region; a wealth/power drive with every
+            // region offensive; the Telepathic Matrix with all the energy in economy
+            auto prepare = [&]() {
+                snap_restore(&base);
+                memcpy(BaseGlobals, globals_saved, BaseGlobalsSize);
+                memcpy(SecretProjectTable, sp_saved, sizeof(sp_saved));
+                *BaseComputeID = compute_saved;
+                *TurnCurrentNum = turn_saved;
+                PlayerData *p = &PlayersData[f];
+                set_base(own_base >= 0 ? own_base : 0);
+                Base *b = *BaseCurrent;
+                if (variant == 1 || variant == 2) {
+                    b->state |= BSTATE_DRONE_RIOTS_ACTIVE;
+                    b->drone_total = b->talent_total + 2;
+                    p->soc_effect_pending.police = variant == 1 ? -3 : -2;
+                    p->se_alloc_psych = 0;
+                    if (own_base >= 0) {
+                        Bases[own_base].state |= BSTATE_DRONE_RIOTS_ACTIVE;
+                    }
+                } else if (variant == 3) {
+                    b->state &= ~BSTATE_DRONE_RIOTS_ACTIVE;
+                    b->specialist_unk_1 = 0;
+                    b->specialist_total = 2;
+                    p->se_alloc_psych = 3;
+                } else if (variant == 4) {
+                    p->tech_id_researching = TECH_TRANT;
+                    p->energy_reserves = 5000;
+                    *TurnCurrentNum = 20;
+                } else if (variant == 5) {
+                    for (int r = 1; r < MaxContinentNum; r++) {
+                        if (p->region_total_bases[r]) {
+                            p->region_base_plan[r] = 2;
+                            break;
+                        }
+                    }
+                } else if (variant == 6) {
+                    p->ai_wealth = 1;
+                    p->ai_power = 1;
+                    p->ai_tech = 0;
+                    for (int r = 1; r < MaxContinentNum; r++) {
+                        p->region_base_plan[r] = 0;
+                    }
+                } else if (variant == 7) {
+                    if (own_base >= 0) {
+                        SecretProject->telepathic_matrix = own_base;
+                    }
+                    p->se_alloc_psych = 0;
+                    p->se_alloc_labs = 0;
+                    p->ai_tech = 1;
+                    p->ai_wealth = 0;
+                    p->ai_power = 0;
+                }
+            };
+            prepare();
+            int labs_before = PlayersData[f].se_alloc_labs, psych_before = PlayersData[f].se_alloc_psych;
+            allocate_energy_OG(f);
+            snap_take(&after_orig);
+            memcpy(globals_o, BaseGlobals, BaseGlobalsSize);
+            int sel_o = *BaseIDCurrentSelected, compute_o = *BaseComputeID;
+            changed += PlayersData[f].se_alloc_labs != labs_before || PlayersData[f].se_alloc_psych != psych_before;
+            prepare();
+            allocate_energy(f);
+            snap_take(&after_new);
+            memcpy(globals_n, BaseGlobals, BaseGlobalsSize);
+            int sel_n = *BaseIDCurrentSelected, compute_n = *BaseComputeID;
+            compared++;
+            sprintf_s(label, "allocate_energy(%u) variant %d", f, variant);
+            BOOL detail = mismatches < MAX_DETAIL;
+            BOOL diff = sel_o != sel_n || compute_o != compute_n;
+            if (diff && detail) {
+                logf("  %s: selected base orig %d new %d, computed orig %d new %d", label, sel_o,
+                    sel_n, compute_o, compute_n);
+            }
+            if (!diff) {
+                diff = base_globals_differ(globals_o, globals_n, detail ? label : NULL)
+                    || snap_differs(&after_orig, &after_new, detail ? label : NULL);
+            }
+            if (diff) {
+                mismatches++;
+            }
+        }
+    }
+    snap_restore(&base);
+    memcpy(BaseGlobals, globals_saved, BaseGlobalsSize);
+    memcpy(SecretProjectTable, sp_saved, sizeof(sp_saved));
+    *BaseIDCurrentSelected = selected_saved;
+    *BaseComputeID = compute_saved;
+    *TurnCurrentNum = turn_saved;
+    snap_free(&base); snap_free(&after_orig); snap_free(&after_new);
+    logf("allocate_energy: %d compared (%d allocations changed by the original), %d mismatches",
+        compared, changed, mismatches);
+    return mismatches;
+}
+
 static DWORD WINAPI regress_watcher(LPVOID) {
     for (;;) {
         Sleep(1000);
@@ -5431,6 +5636,8 @@ void regress_run() {
     if (test_enabled("batch16", "base_compute")) total += run_guarded("base_compute", test_base_compute);
     if (test_enabled("batch17", "assemble_passengers")) total += run_guarded("assemble_passengers", test_assemble_passengers);
     if (test_enabled("batch17", "alien_base")) total += run_guarded("alien_base", test_alien_base);
+    if (test_enabled("batch18", "repair_phase")) total += run_guarded("repair_phase", test_repair_phase);
+    if (test_enabled("batch18", "allocate_energy")) total += run_guarded("allocate_energy", test_allocate_energy);
     if (test_enabled("enemy_capabilities")) total += run_guarded("enemy_capabilities", test_enemy_capabilities);
     if (test_enabled("social_ai")) total += run_guarded("social_ai", test_social_ai);
     if (test_enabled("Path::sensors") || test_enabled("path_sensors")) total += run_guarded("path_sensors", test_path_sensors);
