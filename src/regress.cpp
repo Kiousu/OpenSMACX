@@ -5819,6 +5819,145 @@ static int test_mon_records() {
     return mismatches;
 }
 
+// ---------------------------------------------------------------- batch 22
+
+static int test_valid_patrol() {
+    int compared = 0, mismatches = 0, valid = 0;
+    for (int veh_id = 0; veh_id < *VehCurrentCount; veh_id++) {
+        uint8_t triad = Chassis[VehPrototypes[Vehs[veh_id].proto_id].chassis_id].triad;
+        if (triad != TRIAD_AIR && veh_id % 4) {
+            continue; // every aircraft, every 4th other unit
+        }
+        int x0 = Vehs[veh_id].x, y0 = Vehs[veh_id].y;
+        for (int k = 0; k < 40; k++) {
+            // the unit's own tile, then targets spiralling out to 16 tiles, then a few off the map
+            int x = x0 + ((k * 7) % 33) - 16;
+            int y = y0 + ((k * 11) % 33) - 16;
+            if (k == 0) {
+                x = x0;
+                y = y0;
+            } else if (k >= 37) {
+                x = k == 37 ? -2 : x;
+                y = k == 38 ? -1 : (k == 39 ? (int)*MapLatitudeBounds : y);
+            }
+            if (x >= 0 && y >= 0 && (x & 1) != (y & 1)) {
+                x ^= 1;
+            }
+            BOOL a = valid_patrol_OG(veh_id, x, y);
+            BOOL b = valid_patrol(veh_id, x, y);
+            compared++;
+            valid += a != 0;
+            if ((a != 0) != (b != 0)) {
+                if (mismatches < MAX_DETAIL) {
+                    logf("  valid_patrol(%d, %d, %d): orig %d new %d", veh_id, x, y, a, b);
+                }
+                mismatches++;
+            }
+        }
+    }
+    logf("valid_patrol: %d compared (%d valid by the original), %d mismatches", compared, valid,
+        mismatches);
+    return mismatches;
+}
+
+// energy_compute() fills the energy report between 0x7492DC and 0x749C10
+static uint8_t *const EnergyReport = (uint8_t *)0x007492DC;
+static const size_t EnergyReportSize = 0x749C10 - 0x7492DC;
+
+static int test_energy_compute() {
+    GameSnapshot base, after_orig, after_new;
+    snap_alloc(&base); snap_alloc(&after_orig); snap_alloc(&after_new);
+    snap_take(&base);
+    uint8_t globals_saved[BaseGlobalsSize], globals_o[BaseGlobalsSize], globals_n[BaseGlobalsSize];
+    memcpy(globals_saved, BaseGlobals, BaseGlobalsSize);
+    uint8_t *report_saved = (uint8_t *)malloc(EnergyReportSize);
+    uint8_t *report_o = (uint8_t *)malloc(EnergyReportSize);
+    memcpy(report_saved, EnergyReport, EnergyReportSize);
+    int sp_saved[MaxSecretProjectNum];
+    memcpy(sp_saved, SecretProjectTable, sizeof(sp_saved));
+    int selected_saved = *BaseIDCurrentSelected;
+    int compute_saved = *BaseComputeID;
+    int compared = 0, mismatches = 0;
+    char label[64];
+    for (uint32_t f = 0; f < MaxPlayerNum; f++) {
+        for (int variant = 0; variant < 6; variant++) {
+            // as loaded with and without the refresh; loans both ways with a sanction; the
+            // Self-Aware Colony; a research penalty; vendetta with everyone
+            BOOL recompute = variant == 1;
+            auto prepare = [&]() {
+                snap_restore(&base);
+                memcpy(BaseGlobals, globals_saved, BaseGlobalsSize);
+                memcpy(EnergyReport, report_saved, EnergyReportSize);
+                memcpy(SecretProjectTable, sp_saved, sizeof(sp_saved));
+                *BaseComputeID = compute_saved;
+                PlayerData *p = &PlayersData[f];
+                if (variant == 2) {
+                    for (int g = 1; g < MaxPlayerNum; g++) {
+                        p->loan_balance[g] = g % 2 ? 50 : 0;
+                        p->loan_payment[g] = 3 + g;
+                        PlayersData[g].loan_balance[f] = g % 3 ? 40 : 0;
+                        PlayersData[g].loan_payment[f] = 2 + g;
+                    }
+                    PlayersData[2].sanction_turns = 4;
+                } else if (variant == 3) {
+                    for (int i = 0; i < *BaseCurrentCount; i++) {
+                        if (Bases[i].faction_id_current == f) {
+                            SecretProject->self_aware_colony = i;
+                            break;
+                        }
+                    }
+                } else if (variant == 4) {
+                    p->soc_effect_pending.research = -7;
+                } else if (variant == 5) {
+                    for (int g = 0; g < MaxPlayerNum; g++) {
+                        p->diplo_treaties[g] |= DTREATY_VENDETTA;
+                    }
+                }
+            };
+            prepare();
+            energy_compute_OG(f, recompute);
+            snap_take(&after_orig);
+            memcpy(globals_o, BaseGlobals, BaseGlobalsSize);
+            memcpy(report_o, EnergyReport, EnergyReportSize);
+            int sel_o = *BaseIDCurrentSelected, compute_o = *BaseComputeID;
+            prepare();
+            energy_compute(f, recompute);
+            snap_take(&after_new);
+            memcpy(globals_n, BaseGlobals, BaseGlobalsSize);
+            compared++;
+            sprintf_s(label, "energy_compute(%u) variant %d", f, variant);
+            BOOL detail = mismatches < MAX_DETAIL;
+            BOOL diff = false;
+            size_t d = first_diff(report_o, EnergyReport, EnergyReportSize);
+            if (d != (size_t)-1 || sel_o != *BaseIDCurrentSelected || compute_o != *BaseComputeID) {
+                if (detail) {
+                    logf("  %s: report byte %d differs (selected %d/%d, computed %d/%d)", label,
+                        (int)d, sel_o, *BaseIDCurrentSelected, compute_o, *BaseComputeID);
+                }
+                diff = true;
+            }
+            if (!diff) {
+                diff = base_globals_differ(globals_o, globals_n, detail ? label : NULL)
+                    || snap_differs(&after_orig, &after_new, detail ? label : NULL);
+            }
+            if (diff) {
+                mismatches++;
+            }
+        }
+    }
+    snap_restore(&base);
+    memcpy(BaseGlobals, globals_saved, BaseGlobalsSize);
+    memcpy(EnergyReport, report_saved, EnergyReportSize);
+    memcpy(SecretProjectTable, sp_saved, sizeof(sp_saved));
+    *BaseIDCurrentSelected = selected_saved;
+    *BaseComputeID = compute_saved;
+    free(report_saved);
+    free(report_o);
+    snap_free(&base); snap_free(&after_orig); snap_free(&after_new);
+    logf("energy_compute: %d compared, %d mismatches", compared, mismatches);
+    return mismatches;
+}
+
 static DWORD WINAPI regress_watcher(LPVOID) {
     for (;;) {
         Sleep(1000);
@@ -5947,6 +6086,8 @@ void regress_run() {
     if (test_enabled("batch19", "do_fungal_towers")) total += run_guarded("do_fungal_towers", test_do_fungal_towers);
     if (test_enabled("batch20", "base_drones")) total += run_guarded("base_drones", test_base_drones);
     if (test_enabled("batch21", "mon_records")) total += run_guarded("mon_records", test_mon_records);
+    if (test_enabled("batch22", "valid_patrol")) total += run_guarded("valid_patrol", test_valid_patrol);
+    if (test_enabled("batch22", "energy_compute")) total += run_guarded("energy_compute", test_energy_compute);
     if (test_enabled("enemy_capabilities")) total += run_guarded("enemy_capabilities", test_enemy_capabilities);
     if (test_enabled("social_ai")) total += run_guarded("social_ai", test_social_ai);
     if (test_enabled("Path::sensors") || test_enabled("path_sensors")) total += run_guarded("path_sensors", test_path_sensors);

@@ -306,6 +306,9 @@ extern func5 *mon_native_life_bred_OG;
 extern func5 *mon_first_in_space_OG;
 extern func5 *mon_built_preserve_OG;
 extern func_diplo2 *mon_killed_faction_OG;
+// batch 22
+extern func_iii *valid_patrol_OG;
+extern func_diplo2 *energy_compute_OG;
 extern func_void *base_psych_OG;
 extern func_social_ai *social_ai_OG;
 extern func_path_sensors *Path_sensors_OG; // Path::sensors()

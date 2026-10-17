@@ -28,6 +28,14 @@
 
 BOOL *ExpansionEnabled = (BOOL *)0x009A6488;
 int *EnergyCredits = (int *)0x0093A958; // credits of the player at the controls as last shown (Thinker's name)
+int *EnergyReportMaint = (int *)0x007492DC; // energy report (energy_compute()): facility upkeep
+int *EnergyReportBaseMaint = (int *)0x007492E0; // [512] upkeep of each base
+int *EnergyReportLabs = (int *)0x00749AE0; // research per turn x100
+int *EnergyReportTechTurns = (int *)0x00749AE4; // turns to the next advance
+int *EnergyReportEconomy = (int *)0x00749AE8;
+int *EnergyReportFacilities = (int *)0x00749AEC; // [70] facility counts
+int *EnergyReportCommerce = (int *)0x00749C04; // loan payments in and out
+int *EnergyReportNet = (int *)0x00749C0C;
 uint32_t *GamePreferences = (uint32_t *)0x009A6490;
 uint32_t *GameMorePreferences = (uint32_t *)0x009A6494;
 uint32_t *GameWarnings = (uint32_t *)0x009A6498;
@@ -53,6 +61,80 @@ uint32_t *MountPlanetY = (uint32_t *)0x009A6808;
 int *DustCloudDuration = (int *)0x009A680C;
 BOOL *IsMultiplayerNet = (BOOL *)0x0093F660; // DirectPlay - Serial, Modem, Internet (TCP/IP)
 BOOL *IsMultiplayerPBEM = (BOOL *)0x0093A95C; // HotSeat / PBEM
+
+/*
+Purpose: Fill in the energy report for a faction: facility counts and upkeep per base (halved,
+         with the odd point carried, under the Self-Aware Colony), total labs, economy and net
+         income, the turns to the next advance, and loan payments to and from factions in
+         contact that aren't at war. With recompute set each base is refreshed first.
+Original Offset: 00445130
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch22.log)
+*/
+void __cdecl energy_compute(uint32_t faction_id, BOOL recompute) {
+    for (int i = 0; i < FAC_STOCKPILE_ENERGY + 1; i++) {
+        EnergyReportFacilities[i] = 0;
+    }
+    *EnergyReportLabs = 0;
+    *EnergyReportNet = 0;
+    *EnergyReportMaint = 0;
+    *EnergyReportEconomy = 0;
+    *EnergyReportCommerce = 0;
+    uint32_t carry = 0;
+    for (int base_id = 0; base_id < *BaseCurrentCount; base_id++) {
+        EnergyReportBaseMaint[base_id] = 0;
+        if (Bases[base_id].faction_id_current != faction_id) {
+            continue;
+        }
+        if (recompute) {
+            set_base(base_id);
+            base_compute(true);
+        }
+        int maint = 0;
+        for (int facility_id = 0; facility_id <= FAC_STOCKPILE_ENERGY; facility_id++) {
+            if (facility_id < FacilityRepStart && has_fac_built(facility_id, base_id)) {
+                EnergyReportFacilities[facility_id]++;
+                maint += fac_maint(facility_id, faction_id);
+            }
+        }
+        if (SecretProject->self_aware_colony >= 0
+            && Bases[SecretProject->self_aware_colony].faction_id_current == faction_id) {
+            if (carry) {
+                maint++;
+            }
+            carry = maint & 1;
+            maint /= 2;
+        }
+        EnergyReportBaseMaint[base_id] = maint;
+        *EnergyReportLabs += Bases[base_id].labs_total;
+        *EnergyReportEconomy += Bases[base_id].economy_total;
+        *EnergyReportNet += Bases[base_id].economy_total - maint;
+        *EnergyReportMaint += maint;
+    }
+    int cost = tech_rate(faction_id);
+    int research = PlayersData[faction_id].soc_effect_pending.research;
+    research = research < -5 ? -5 : (research > 5 ? 5 : research);
+    *EnergyReportLabs = (research + 10) * *EnergyReportLabs * 10;
+    *EnergyReportTechTurns = *EnergyReportLabs < 1 ? 9999
+        : (*EnergyReportLabs - 1 + cost * 100) / *EnergyReportLabs;
+    for (uint32_t faction_id_2 = 1; faction_id_2 < MaxPlayerNum; faction_id_2++) {
+        if (faction_id_2 == faction_id || !(FactionsStatus[1] & (1 << faction_id_2))
+            || !(FactionsStatus[1] & (1 << faction_id))
+            || (PlayersData[faction_id].diplo_treaties[faction_id_2] & DTREATY_VENDETTA)) {
+            continue;
+        }
+        if (PlayersData[faction_id].loan_balance[faction_id_2]
+            && !PlayersData[faction_id_2].sanction_turns) {
+            *EnergyReportNet -= PlayersData[faction_id].loan_payment[faction_id_2];
+            *EnergyReportCommerce -= PlayersData[faction_id].loan_payment[faction_id_2];
+        }
+        if (PlayersData[faction_id_2].loan_balance[faction_id]
+            && !PlayersData[faction_id].sanction_turns) {
+            *EnergyReportNet += PlayersData[faction_id_2].loan_payment[faction_id];
+            *EnergyReportCommerce += PlayersData[faction_id_2].loan_payment[faction_id];
+        }
+    }
+}
 
 /*
 Purpose: Clear every faction's monument records (the "achieved" flag of each record and the

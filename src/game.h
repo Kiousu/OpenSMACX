@@ -108,6 +108,14 @@ enum GameDifficultyLevel {
 
 extern BOOL *ExpansionEnabled; // SMACX mode (true); SMAC mode (false)
 extern int *EnergyCredits;
+extern int *EnergyReportMaint;
+extern int *EnergyReportBaseMaint;
+extern int *EnergyReportLabs;
+extern int *EnergyReportTechTurns;
+extern int *EnergyReportEconomy;
+extern int *EnergyReportFacilities;
+extern int *EnergyReportCommerce;
+extern int *EnergyReportNet;
 extern uint32_t *GamePreferences;
 extern uint32_t *GameMorePreferences;
 extern uint32_t *GameWarnings; // used for setting pop notifications
@@ -194,3 +202,4 @@ DLLEXPORT void __cdecl mon_native_life_bred(int faction_id);
 DLLEXPORT void __cdecl mon_first_in_space(int faction_id);
 DLLEXPORT void __cdecl mon_built_preserve(int faction_id);
 DLLEXPORT void __cdecl mon_killed_faction(int faction_id, int faction_id_killed);
+DLLEXPORT void __cdecl energy_compute(uint32_t faction_id, BOOL recompute);

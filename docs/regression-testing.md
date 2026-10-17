@@ -878,3 +878,27 @@ aliens too. The batch 15 name `MapWinFactionID` duplicated `FactionIDCurrent` (b
 and was folded into it.
 Boot test: the 671-redirect exe loaded Council.SAV and advanced the turn 289 -> 290 (34 s) with
 the game alive.
+
+## Batch 22, 2026-10-16 (Council.SAV, 671-redirect exe)
+
+`valid_patrol` (veh.cpp) and `energy_compute` (game.cpp). Trigger group `batch22` (the filter
+also re-runs `batch2`, still 0 mismatches). `valid_patrol` runs every aircraft and every 4th
+other unit against 40 targets: its own tile, 36 tiles out to 16 away, and three off the map.
+`energy_compute` runs every faction as loaded with and without the base refresh, with loans
+both ways and a sanction, with the Self-Aware Colony, with a research penalty and at war with
+everyone, comparing the energy report block (0x7492DC-0x749C10), the snapshot, the current-base
+globals, the selected base and `BaseComputeID`.
+
+| function | inputs | compared | mismatches |
+|---|---|---|---|
+| valid_patrol | 518 units x 40 targets (8,648 valid) | 20,720 | 0 |
+| energy_compute | 8 factions x 6 variants | 48 | 0 |
+
+Log: `regression-runs/2026-10-16-council-batch22.log`. Notes: the energy report globals are
+named (`EnergyReportMaint`, `EnergyReportBaseMaint[512]`, `EnergyReportLabs`,
+`EnergyReportTechTurns`, `EnergyReportEconomy`, `EnergyReportFacilities[70]`,
+`EnergyReportCommerce`, `EnergyReportNet`). Original behaviour kept: `valid_patrol` treats
+`base_at() != 0` as "at a base" for aircraft, so only base 0's tile counts as open ground; Veh
+offset 0x25 holds an aircraft's turns aloft.
+Boot test: the 673-redirect exe loaded Council.SAV and advanced the turn 289 -> 290 (34 s) with
+the game alive.

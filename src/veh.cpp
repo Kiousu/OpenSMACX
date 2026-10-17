@@ -165,6 +165,61 @@ void __cdecl say_morale(uint32_t veh_id, int faction_id_vs_native) {
 }
 
 /*
+Purpose: Check whether a unit may patrol to a tile. Land units stay within their region; ships
+         need the same sea, or a base on that sea, or a port-to-port link between bases; aircraft
+         (with limited range) need the round trip to fit their remaining range, or the one-way
+         trip when both ends are bases or airbases.
+Original Offset: 004CD6A0
+Return Value: Is the patrol valid? true/false
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch22.log).
+        The original tests base_at() != 0 for the air case, so every tile but base 0's counts as
+        a base there; that is kept.
+*/
+BOOL __cdecl valid_patrol(int veh_id, int x, int y) {
+    Veh *veh = &Vehs[veh_id];
+    if ((x == veh->x && y == veh->y) || y < 0 || y >= (int)*MapLatitudeBounds || x < 0
+        || x >= (int)*MapLongitudeBounds) {
+        return false;
+    }
+    RulesChassis *chassis = &Chassis[VehPrototypes[veh->proto_id].chassis_id];
+    uint8_t region_target = map_loc(x, y)->region;
+    uint8_t region_here = map_loc(veh->x, veh->y)->region;
+    if (chassis->triad == TRIAD_LAND) {
+        return region_target == region_here;
+    }
+    if (chassis->triad == TRIAD_SEA) {
+        int base_id_here = base_at(veh->x, veh->y);
+        int base_id_target = base_at(x, y);
+        if (base_id_here >= 0) {
+            if (base_id_target >= 0) {
+                return port_to_port(base_id_here, base_id_target) != 0;
+            }
+            return base_on_sea(base_id_here, region_target) != 0;
+        }
+        if (base_id_target >= 0) {
+            return base_on_sea(base_id_target, region_here) != 0;
+        }
+        return region_target == region_here;
+    }
+    if (chassis->triad != TRIAD_AIR || !chassis->range) {
+        return true;
+    }
+    BOOL safe_here = base_at(veh->x, veh->y) != 0
+        || (map_loc(veh->x, veh->y)->bit & BIT_AIRBASE);
+    BOOL safe_target = base_at(x, y) != 0 || (map_loc(x, y)->bit & BIT_AIRBASE);
+    int moves_left = (int)speed(veh_id, false) - veh->moves_expended;
+    moves_left = moves_left < 0 ? 0 : (moves_left > 999 ? 999 : moves_left);
+    // terraforming_turns holds the turns an aircraft has been aloft
+    int range = ((int)speed(veh_id, false) * (chassis->range - veh->terraforming_turns - 1)
+        + moves_left) / (int)Rules->move_rate_roads;
+    int dist = (x_dist(x, veh->x) + abs(y - veh->y)) >> 1;
+    if (safe_here && safe_target) {
+        return dist <= range;
+    }
+    return dist <= range / 2;
+}
+
+/*
 Purpose: Calculate maximum range a faction's units can drop (air drops, Drop Pods).
 Original Offset: 00500320
 Return Value: Max range

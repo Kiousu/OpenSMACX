@@ -701,3 +701,6 @@
 0x00077740	?mon_first_in_space@@YAXH@Z
 0x00077840	?mon_built_preserve@@YAXH@Z
 0x00077A60	?mon_killed_faction@@YAXHH@Z
+# --- batch 22: patrol checks, energy report
+0x000CD6A0	?valid_patrol@@YAHHHH@Z
+0x00045130	?energy_compute@@YAXIH@Z
