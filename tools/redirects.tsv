@@ -687,3 +687,17 @@
 0x00122F00	?do_fungal_towers@@YAXXZ
 # --- batch 20: golden ages and riot bookkeeping
 0x000F5CE0	?base_drones@@YAXXZ
+# --- batch 21: monument records
+0x00076B70	?mon_colony_founded@@YAXHPBD@Z
+0x00076DA0	?mon_secrets_of_tech@@YAXH@Z
+0x00076EE0	?mon_prototype_built@@YAXH@Z
+0x00076FE0	?mon_facility_built@@YAXHPBD@Z
+0x00077100	?mon_secret_project@@YAXHH@Z
+0x00077210	?mon_enemy_destroyed@@YAXHH@Z
+0x00077320	?mon_conquer_base@@YAXHPBD@Z
+0x00077440	?mon_naval_unit_built@@YAXH@Z
+0x00077540	?mon_air_unit_built@@YAXH@Z
+0x00077640	?mon_native_life_bred@@YAXH@Z
+0x00077740	?mon_first_in_space@@YAXH@Z
+0x00077840	?mon_built_preserve@@YAXH@Z
+0x00077A60	?mon_killed_faction@@YAXHH@Z

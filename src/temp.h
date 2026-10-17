@@ -291,6 +291,21 @@ extern func_void *do_fungal_towers_OG;
 // batch 20
 extern func_void *drone_riot; // drone_riot(): riot effects for the current base
 extern func_void *base_drones_OG;
+// batch 21
+typedef void func_mon_s(int, LPCSTR);
+extern func_mon_s *mon_colony_founded_OG;
+extern func5 *mon_secrets_of_tech_OG;
+extern func5 *mon_prototype_built_OG;
+extern func_mon_s *mon_facility_built_OG;
+extern func_diplo2 *mon_secret_project_OG;
+extern func_diplo2 *mon_enemy_destroyed_OG;
+extern func_mon_s *mon_conquer_base_OG;
+extern func5 *mon_naval_unit_built_OG;
+extern func5 *mon_air_unit_built_OG;
+extern func5 *mon_native_life_bred_OG;
+extern func5 *mon_first_in_space_OG;
+extern func5 *mon_built_preserve_OG;
+extern func_diplo2 *mon_killed_faction_OG;
 extern func_void *base_psych_OG;
 extern func_social_ai *social_ai_OG;
 extern func_path_sensors *Path_sensors_OG; // Path::sensors()
@@ -407,7 +422,6 @@ extern int *CouncilSessionPending; // hotseat/PBEM: a council session waits for 
 extern int *VehDrawBoomID; // unit being blown up by boom(); never picked as the top of a stack
 extern int *MapWinVehIDSelected; // Console::iUnit, the unit selected in the map window
 extern BOOL *MapWinUnitNotViewMode; // Console field after the owner (Thinker: fUnitNotViewMode)
-extern int *MapWinFactionID; // faction at the controls of the main map window (Thinker: MapWin->cOwner)
 extern int *MapWinUnkFlag; // Console field +0x23BE4, checked by pick_top_veh()
 extern int *VehUpgradeUnk; // zeroed by upgrade_any_prototypes(), set by upgrade_prototype()
 typedef int func_veh_init(int, uint32_t, int, int);

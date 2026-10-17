@@ -849,3 +849,32 @@ floating point, so it was not promoted. `base_drones` tail-calls it, so the DLL 
 nothing either way.
 Boot test: the 658-redirect exe loaded Council.SAV and advanced the turn 289 -> 290 (38 s) with
 the game alive.
+
+## Batch 21, 2026-10-16 (Council.SAV, 658-redirect exe)
+
+The thirteen remaining monument recorders (game.cpp): `mon_colony_founded`,
+`mon_secrets_of_tech`, `mon_prototype_built`, `mon_facility_built`, `mon_secret_project`,
+`mon_enemy_destroyed`, `mon_conquer_base`, `mon_naval_unit_built`, `mon_air_unit_built`,
+`mon_native_life_bred`, `mon_first_in_space`, `mon_built_preserve` and `mon_killed_faction`.
+Trigger group `batch21` (the filter also re-runs `batch2`, still 0 mismatches). One test calls
+each for every faction except the one at the controls (which would get the monument screen), in
+six table states (as loaded; every record clear; this faction's records clear while others hold
+them, with and without counts; half of its records set with the secrets-of-tech years part
+filled; all six killed-faction slots taken) and with two argument values (a short and an
+over-long base name; enemy/project/faction 0 and 3), comparing the whole monument table.
+
+| test | compared | mismatches |
+|---|---|---|
+| mon_records (13 functions x 7 factions x 6 states x 2 arguments; 977 changed the table) | 1,092 | 0 |
+
+Log: `regression-runs/2026-10-16-council-batch21.log`. Notes: the monument layout is now mapped:
+records 0-12 are colony founded, tech discovered, secrets of tech, prototype, facility, secret
+project, enemy destroyed, base conquered, naval unit, air unit, native life bred, first in
+space and nature preserve; 15-20 are killed-faction slots; after the records come
+`record_latest`, four unknown ints and the three base names. The secrets-of-tech record keeps
+its second and third years in `data` and `unk_1`. `mon_enemy_destroyed` makes the destroyed
+faction the "first" when others hold the record without a count; `mon_killed_faction` records
+aliens too. The batch 15 name `MapWinFactionID` duplicated `FactionIDCurrent` (both 0x939284)
+and was folded into it.
+Boot test: the 671-redirect exe loaded Council.SAV and advanced the turn 289 -> 290 (34 s) with
+the game alive.

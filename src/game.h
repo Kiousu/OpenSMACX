@@ -114,11 +114,11 @@ extern uint32_t *GameWarnings; // used for setting pop notifications
 extern uint32_t *GameRules; // bitfield
 extern uint32_t *GameMoreRules; // bitfield
 
-// Per faction record of firsts (the monument screen); only the tech record is understood so far.
+// Per faction record of firsts (the monument screen); see the mon_* functions.
 struct MonumentRecord {
     int year;
-    int unk_1;
-    int data; // tech id for the tech record
+    int unk_1; // third year for the secrets of tech
+    int data; // tech, project or faction id; second year for the secrets of tech
     int faction_id_first;
     BOOL achieved;
     int faction_count; // 1 marks the first faction to achieve the record
@@ -126,12 +126,28 @@ struct MonumentRecord {
 };
 
 constexpr int MaxMonumentRecordNum = 21;
+constexpr int MONUMENT_COLONY_FOUNDED = 0;
 constexpr int MONUMENT_TECH_DISCOVERED = 1;
+constexpr int MONUMENT_SECRETS_OF_TECH = 2;
+constexpr int MONUMENT_PROTOTYPE_BUILT = 3;
+constexpr int MONUMENT_FACILITY_BUILT = 4;
+constexpr int MONUMENT_SECRET_PROJECT = 5;
+constexpr int MONUMENT_ENEMY_DESTROYED = 6;
+constexpr int MONUMENT_CONQUER_BASE = 7;
+constexpr int MONUMENT_NAVAL_UNIT_BUILT = 8;
+constexpr int MONUMENT_AIR_UNIT_BUILT = 9;
+constexpr int MONUMENT_NATIVE_LIFE_BRED = 10;
+constexpr int MONUMENT_FIRST_IN_SPACE = 11;
+constexpr int MONUMENT_BUILT_PRESERVE = 12;
+constexpr int MONUMENT_KILLED_FACTION = 15; // six slots, 15 to 20
 
 struct Monument {
     MonumentRecord records[MaxMonumentRecordNum];
-    int unk_1; // -1 after clear_monuments(), 1 once a record is set
-    int unk_2[22];
+    int record_latest; // the record set last, -1 after clear_monuments()
+    int unk_2[4];
+    char colony_name[24]; // first base founded
+    char facility_base_name[24]; // base of the first facility
+    char conquered_base_name[24]; // first base conquered
 };
 
 extern Monument *Monuments; // [8]
@@ -165,3 +181,16 @@ DLLEXPORT void __cdecl mon_tech_discovered(int faction_id, int tech_id);
 DLLEXPORT void __cdecl repair_phase(uint32_t faction_id);
 DLLEXPORT void __cdecl allocate_energy(uint32_t faction_id);
 DLLEXPORT void __cdecl do_fungal_towers();
+DLLEXPORT void __cdecl mon_colony_founded(int faction_id, LPCSTR base_name);
+DLLEXPORT void __cdecl mon_secrets_of_tech(int faction_id);
+DLLEXPORT void __cdecl mon_prototype_built(int faction_id);
+DLLEXPORT void __cdecl mon_facility_built(int faction_id, LPCSTR base_name);
+DLLEXPORT void __cdecl mon_secret_project(int faction_id, int project_id);
+DLLEXPORT void __cdecl mon_enemy_destroyed(int faction_id, int faction_id_enemy);
+DLLEXPORT void __cdecl mon_conquer_base(int faction_id, LPCSTR base_name);
+DLLEXPORT void __cdecl mon_naval_unit_built(int faction_id);
+DLLEXPORT void __cdecl mon_air_unit_built(int faction_id);
+DLLEXPORT void __cdecl mon_native_life_bred(int faction_id);
+DLLEXPORT void __cdecl mon_first_in_space(int faction_id);
+DLLEXPORT void __cdecl mon_built_preserve(int faction_id);
+DLLEXPORT void __cdecl mon_killed_faction(int faction_id, int faction_id_killed);

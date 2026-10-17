@@ -3294,7 +3294,7 @@ void __cdecl base_doctors() {
             base = *BaseCurrent;
             if (base->drone_total + growing <= base->talent_total) {
                 // riots quelled with doctors: suggest the psych slider to the player at the controls
-                if (!*ControlUpkeepA || faction_id != (uint32_t)*MapWinFactionID
+                if (!*ControlUpkeepA || faction_id != (uint32_t)*FactionIDCurrent
                     || PlayersData[faction_id].se_alloc_psych > 1
                     || base->specialist_total - base->specialist_unk_1 < 2) {
                     return;

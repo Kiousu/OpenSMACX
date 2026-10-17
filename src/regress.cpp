@@ -5408,7 +5408,7 @@ static int test_allocate_energy() {
     int compared = 0, mismatches = 0, changed = 0;
     char label[64];
     for (uint32_t f = 1; f < MaxPlayerNum; f++) {
-        if (f == (uint32_t)*MapWinFactionID) {
+        if (f == (uint32_t)*FactionIDCurrent) {
             continue; // the player at the controls may get the infrastructure popups
         }
         int own_base = -1;
@@ -5707,6 +5707,118 @@ static int test_base_drones() {
     return mismatches;
 }
 
+// ---------------------------------------------------------------- batch 21
+
+struct MonumentFn {
+    const char *name;
+    int kind; // 0: (faction), 1: (faction, name), 2: (faction, int)
+    void *orig;
+    void *repl;
+};
+
+static int test_mon_records() {
+    typedef void mon_i(int);
+    typedef void mon_s(int, LPCSTR);
+    typedef void mon_ii(int, int);
+    const MonumentFn fns[] = {
+        { "mon_colony_founded", 1, (void *)mon_colony_founded_OG, (void *)mon_colony_founded },
+        { "mon_secrets_of_tech", 0, (void *)mon_secrets_of_tech_OG, (void *)mon_secrets_of_tech },
+        { "mon_prototype_built", 0, (void *)mon_prototype_built_OG, (void *)mon_prototype_built },
+        { "mon_facility_built", 1, (void *)mon_facility_built_OG, (void *)mon_facility_built },
+        { "mon_secret_project", 2, (void *)mon_secret_project_OG, (void *)mon_secret_project },
+        { "mon_enemy_destroyed", 2, (void *)mon_enemy_destroyed_OG, (void *)mon_enemy_destroyed },
+        { "mon_conquer_base", 1, (void *)mon_conquer_base_OG, (void *)mon_conquer_base },
+        { "mon_naval_unit_built", 0, (void *)mon_naval_unit_built_OG, (void *)mon_naval_unit_built },
+        { "mon_air_unit_built", 0, (void *)mon_air_unit_built_OG, (void *)mon_air_unit_built },
+        { "mon_native_life_bred", 0, (void *)mon_native_life_bred_OG, (void *)mon_native_life_bred },
+        { "mon_first_in_space", 0, (void *)mon_first_in_space_OG, (void *)mon_first_in_space },
+        { "mon_built_preserve", 0, (void *)mon_built_preserve_OG, (void *)mon_built_preserve },
+        { "mon_killed_faction", 2, (void *)mon_killed_faction_OG, (void *)mon_killed_faction },
+    };
+    uint8_t *saved = (uint8_t *)malloc(MonumentTableSize);
+    uint8_t *after_o = (uint8_t *)malloc(MonumentTableSize);
+    memcpy(saved, MonumentTable, MonumentTableSize);
+    int compared = 0, mismatches = 0, recorded = 0;
+    char label[96];
+    const char *names[] = { "Firstville", "A rather long base name for strncpy" };
+    for (const MonumentFn &fn : fns) {
+        for (int f = 0; f < MaxPlayerNum; f++) {
+            if (f == *FactionIDCurrent) {
+                continue; // the player at the controls gets the monument screen
+            }
+            for (int variant = 0; variant < 6; variant++) {
+                // as loaded; every record clear; this faction's records clear while others hold
+                // them; others holding them with counts; the second and third calls on top
+                // (secrets of tech, killed-faction slots); all six killed slots taken
+                auto prepare = [&]() {
+                    memcpy(MonumentTable, saved, MonumentTableSize);
+                    if (variant == 1) {
+                        for (int g = 0; g < MaxPlayerNum; g++) {
+                            for (int r = 0; r < MaxMonumentRecordNum; r++) {
+                                Monuments[g].records[r].achieved = false;
+                            }
+                        }
+                    } else if (variant == 2 || variant == 3) {
+                        for (int g = 0; g < MaxPlayerNum; g++) {
+                            for (int r = 0; r < MaxMonumentRecordNum; r++) {
+                                Monuments[g].records[r].achieved = g != f && (g + r) % 2;
+                                Monuments[g].records[r].faction_count = variant == 3 ? (g + r) % 3 == 0 : 0;
+                            }
+                        }
+                    } else if (variant == 4) {
+                        for (int r = 0; r < MaxMonumentRecordNum; r++) {
+                            Monuments[f].records[r].achieved = r % 2 == 0;
+                        }
+                        Monuments[f].records[MONUMENT_SECRETS_OF_TECH].data = (f % 2) ? -1 : 2100;
+                        Monuments[f].records[MONUMENT_SECRETS_OF_TECH].unk_1 = -1;
+                    } else if (variant == 5) {
+                        for (int r = MONUMENT_KILLED_FACTION; r < MaxMonumentRecordNum; r++) {
+                            Monuments[f].records[r].achieved = true;
+                        }
+                    }
+                };
+                for (int arg = 0; arg < 2; arg++) {
+                    int int_arg = arg ? 3 : 0;
+                    prepare();
+                    if (fn.kind == 0) {
+                        ((mon_i *)fn.orig)(f);
+                    } else if (fn.kind == 1) {
+                        ((mon_s *)fn.orig)(f, names[arg]);
+                    } else {
+                        ((mon_ii *)fn.orig)(f, int_arg);
+                    }
+                    memcpy(after_o, MonumentTable, MonumentTableSize);
+                    recorded += memcmp(after_o, saved, MonumentTableSize) != 0;
+                    prepare();
+                    if (fn.kind == 0) {
+                        ((mon_i *)fn.repl)(f);
+                    } else if (fn.kind == 1) {
+                        ((mon_s *)fn.repl)(f, names[arg]);
+                    } else {
+                        ((mon_ii *)fn.repl)(f, int_arg);
+                    }
+                    compared++;
+                    size_t d = first_diff(after_o, MonumentTable, MonumentTableSize);
+                    if (d != (size_t)-1) {
+                        if (mismatches < MAX_DETAIL) {
+                            sprintf_s(label, "%s(%d) variant %d arg %d", fn.name, f, variant, arg);
+                            logf("  %s: monument byte %u differs (orig %02X new %02X)", label,
+                                (unsigned)d, after_o[d], MonumentTable[d]);
+                        }
+                        mismatches++;
+                    }
+                }
+            }
+        }
+    }
+    memcpy(MonumentTable, saved, MonumentTableSize);
+    free(saved);
+    free(after_o);
+    logf("mon_records: %d compared (%d changed the table in the original), %d mismatches", compared,
+        recorded, mismatches);
+    return mismatches;
+}
+
 static DWORD WINAPI regress_watcher(LPVOID) {
     for (;;) {
         Sleep(1000);
@@ -5834,6 +5946,7 @@ void regress_run() {
     if (test_enabled("batch19", "world_UNK1")) total += run_guarded("world_UNK1", test_world_UNK1);
     if (test_enabled("batch19", "do_fungal_towers")) total += run_guarded("do_fungal_towers", test_do_fungal_towers);
     if (test_enabled("batch20", "base_drones")) total += run_guarded("base_drones", test_base_drones);
+    if (test_enabled("batch21", "mon_records")) total += run_guarded("mon_records", test_mon_records);
     if (test_enabled("enemy_capabilities")) total += run_guarded("enemy_capabilities", test_enemy_capabilities);
     if (test_enabled("social_ai")) total += run_guarded("social_ai", test_social_ai);
     if (test_enabled("Path::sensors") || test_enabled("path_sensors")) total += run_guarded("path_sensors", test_path_sensors);

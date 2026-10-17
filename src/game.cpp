@@ -66,8 +66,73 @@ void __cdecl clear_monuments() {
         for (int i = 0; i < MaxMonumentRecordNum; i++) {
             Monuments[faction_id].records[i].achieved = false;
         }
-        Monuments[faction_id].unk_1 = -1;
+        Monuments[faction_id].record_latest = -1;
     }
+}
+
+/*
+Purpose: Mark a monument record as achieved by the faction, counting how many factions got there
+         first: a faction that is first gets a count of 1, otherwise the count is 0 and the first
+         faction is the last one found holding a count (or first_default if none).
+Original Offset: n/a (inlined in the mon_* functions)
+Return Value: The record
+Status: Complete
+*/
+static MonumentRecord *monument_achieve(int faction_id, int record_id, int first_default) {
+    MonumentRecord *record = &Monuments[faction_id].records[record_id];
+    record->faction_count = 0;
+    for (int i = 0; i < MaxPlayerNum; i++) {
+        if (i != faction_id && Monuments[i].records[record_id].achieved) {
+            record->faction_count++;
+        }
+    }
+    int faction_id_first = faction_id;
+    if (!record->faction_count) {
+        record->faction_count = 1;
+    } else {
+        record->faction_count = 0;
+        faction_id_first = first_default;
+        for (int i = 0; i < MaxPlayerNum; i++) {
+            const MonumentRecord *other = &Monuments[i].records[record_id];
+            if (i != faction_id && other->achieved && other->faction_count) {
+                faction_id_first = i;
+            }
+        }
+    }
+    record->achieved = true;
+    record->faction_id_first = faction_id_first;
+    return record;
+}
+
+/*
+Purpose: Finish a monument record update: note it as the latest and show the monument screen to
+         the player at the controls.
+Original Offset: n/a (inlined in the mon_* functions)
+Return Value: n/a
+Status: Complete
+*/
+static void monument_latest(int faction_id, int record_id) {
+    Monuments[faction_id].record_latest = record_id;
+    if (faction_id == *FactionIDCurrent) {
+        monument(1);
+    }
+}
+
+/*
+Purpose: Record a non-alien faction's first base in its monument, with the base's name.
+Original Offset: 00476B70
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch21.log)
+*/
+void __cdecl mon_colony_founded(int faction_id, LPCSTR base_name) {
+    uint32_t year = game_year(*TurnCurrentNum);
+    if ((Players[faction_id].rule_flags & RFLAG_ALIEN)
+        || Monuments[faction_id].records[MONUMENT_COLONY_FOUNDED].achieved) {
+        return;
+    }
+    monument_achieve(faction_id, MONUMENT_COLONY_FOUNDED, faction_id)->year = year;
+    strncpy(Monuments[faction_id].colony_name, base_name, sizeof(Monuments->colony_name));
+    monument_latest(faction_id, MONUMENT_COLONY_FOUNDED);
 }
 
 /*
@@ -107,8 +172,218 @@ void __cdecl mon_tech_discovered(int faction_id, int tech_id) {
     record->year = year;
     record->faction_id_first = faction_id_first;
     record->data = tech_id;
-    Monuments[faction_id].unk_1 = 1;
+    Monuments[faction_id].record_latest = MONUMENT_TECH_DISCOVERED;
     if (faction_id == *FactionIDCurrent) {
+        monument(1);
+    }
+}
+
+/*
+Purpose: Record a non-alien faction's discoveries of the secrets of technology: the first sets the
+         record (with its year), the second and third only note their years.
+Original Offset: 00476DA0
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch21.log)
+*/
+void __cdecl mon_secrets_of_tech(int faction_id) {
+    uint32_t year = game_year(*TurnCurrentNum);
+    if (Players[faction_id].rule_flags & RFLAG_ALIEN) {
+        return;
+    }
+    MonumentRecord *record = &Monuments[faction_id].records[MONUMENT_SECRETS_OF_TECH];
+    if (!record->achieved) {
+        monument_achieve(faction_id, MONUMENT_SECRETS_OF_TECH, faction_id);
+        record->year = year;
+        record->data = -1; // year of the second secret
+        record->unk_1 = -1; // year of the third secret
+    } else if (record->data == -1) {
+        record->data = year;
+    } else if (record->unk_1 == -1) {
+        record->unk_1 = year;
+    }
+    monument_latest(faction_id, MONUMENT_SECRETS_OF_TECH);
+}
+
+/*
+Purpose: Record a non-alien faction's first prototype in its monument.
+Original Offset: 00476EE0
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch21.log)
+*/
+void __cdecl mon_prototype_built(int faction_id) {
+    uint32_t year = game_year(*TurnCurrentNum);
+    if ((Players[faction_id].rule_flags & RFLAG_ALIEN)
+        || Monuments[faction_id].records[MONUMENT_PROTOTYPE_BUILT].achieved) {
+        return;
+    }
+    monument_achieve(faction_id, MONUMENT_PROTOTYPE_BUILT, faction_id)->year = year;
+    monument_latest(faction_id, MONUMENT_PROTOTYPE_BUILT);
+}
+
+/*
+Purpose: Record a non-alien faction's first facility in its monument, with the base's name.
+Original Offset: 00476FE0
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch21.log)
+*/
+void __cdecl mon_facility_built(int faction_id, LPCSTR base_name) {
+    uint32_t year = game_year(*TurnCurrentNum);
+    if (Monuments[faction_id].records[MONUMENT_FACILITY_BUILT].achieved
+        || (Players[faction_id].rule_flags & RFLAG_ALIEN)) {
+        return;
+    }
+    monument_achieve(faction_id, MONUMENT_FACILITY_BUILT, faction_id)->year = year;
+    strncpy(Monuments[faction_id].facility_base_name, base_name, sizeof(Monuments->facility_base_name));
+    monument_latest(faction_id, MONUMENT_FACILITY_BUILT);
+}
+
+/*
+Purpose: Record a non-alien faction's first secret project in its monument.
+Original Offset: 00477100
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch21.log)
+*/
+void __cdecl mon_secret_project(int faction_id, int project_id) {
+    uint32_t year = game_year(*TurnCurrentNum);
+    if ((Players[faction_id].rule_flags & RFLAG_ALIEN)
+        || Monuments[faction_id].records[MONUMENT_SECRET_PROJECT].achieved) {
+        return;
+    }
+    MonumentRecord *record = monument_achieve(faction_id, MONUMENT_SECRET_PROJECT, faction_id);
+    record->year = year;
+    record->data = project_id;
+    monument_latest(faction_id, MONUMENT_SECRET_PROJECT);
+}
+
+/*
+Purpose: Record a non-alien faction's first destruction of an enemy (not the natives) in its
+         monument; when others got there first and none holds a count, the enemy stands in as
+         the first.
+Original Offset: 00477210
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch21.log)
+*/
+void __cdecl mon_enemy_destroyed(int faction_id, int faction_id_enemy) {
+    uint32_t year = game_year(*TurnCurrentNum);
+    if ((Players[faction_id].rule_flags & RFLAG_ALIEN)
+        || Monuments[faction_id].records[MONUMENT_ENEMY_DESTROYED].achieved || !faction_id_enemy) {
+        return;
+    }
+    MonumentRecord *record = monument_achieve(faction_id, MONUMENT_ENEMY_DESTROYED, faction_id_enemy);
+    record->year = year;
+    record->data = faction_id_enemy;
+    monument_latest(faction_id, MONUMENT_ENEMY_DESTROYED);
+}
+
+/*
+Purpose: Record a non-alien faction's first conquered base in its monument, with the base's name.
+Original Offset: 00477320
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch21.log)
+*/
+void __cdecl mon_conquer_base(int faction_id, LPCSTR base_name) {
+    uint32_t year = game_year(*TurnCurrentNum);
+    if ((Players[faction_id].rule_flags & RFLAG_ALIEN)
+        || Monuments[faction_id].records[MONUMENT_CONQUER_BASE].achieved) {
+        return;
+    }
+    monument_achieve(faction_id, MONUMENT_CONQUER_BASE, faction_id)->year = year;
+    strncpy(Monuments[faction_id].conquered_base_name, base_name, sizeof(Monuments->conquered_base_name));
+    monument_latest(faction_id, MONUMENT_CONQUER_BASE);
+}
+
+/*
+Purpose: Record a non-alien faction's first achievement of a simple monument record (no extra data).
+Original Offset: n/a (the body of the following mon_* functions)
+Return Value: n/a
+Status: Complete
+*/
+static void monument_simple(int faction_id, int record_id) {
+    uint32_t year = game_year(*TurnCurrentNum);
+    if ((Players[faction_id].rule_flags & RFLAG_ALIEN)
+        || Monuments[faction_id].records[record_id].achieved) {
+        return;
+    }
+    monument_achieve(faction_id, record_id, faction_id)->year = year;
+    monument_latest(faction_id, record_id);
+}
+
+/*
+Purpose: Record a non-alien faction's first naval unit in its monument.
+Original Offset: 00477440
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch21.log)
+*/
+void __cdecl mon_naval_unit_built(int faction_id) {
+    monument_simple(faction_id, MONUMENT_NAVAL_UNIT_BUILT);
+}
+
+/*
+Purpose: Record a non-alien faction's first air unit in its monument.
+Original Offset: 00477540
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch21.log)
+*/
+void __cdecl mon_air_unit_built(int faction_id) {
+    monument_simple(faction_id, MONUMENT_AIR_UNIT_BUILT);
+}
+
+/*
+Purpose: Record a non-alien faction's first bred native life form in its monument.
+Original Offset: 00477640
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch21.log)
+*/
+void __cdecl mon_native_life_bred(int faction_id) {
+    monument_simple(faction_id, MONUMENT_NATIVE_LIFE_BRED);
+}
+
+/*
+Purpose: Record a non-alien faction's first step into space in its monument.
+Original Offset: 00477740
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch21.log)
+*/
+void __cdecl mon_first_in_space(int faction_id) {
+    monument_simple(faction_id, MONUMENT_FIRST_IN_SPACE);
+}
+
+/*
+Purpose: Record a non-alien faction's first nature preserve in its monument.
+Original Offset: 00477840
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch21.log)
+*/
+void __cdecl mon_built_preserve(int faction_id) {
+    monument_simple(faction_id, MONUMENT_BUILT_PRESERVE);
+}
+
+/*
+Purpose: Record a faction wiped out by this one in the first free killed-faction slot of its
+         monument (six slots). Aliens get the record too, but never the monument screen.
+Original Offset: 00477A60
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch21.log)
+*/
+void __cdecl mon_killed_faction(int faction_id, int faction_id_killed) {
+    int record_id = -1;
+    uint32_t year = game_year(*TurnCurrentNum);
+    for (int i = 0; i < 6; i++) {
+        if (!Monuments[faction_id].records[MONUMENT_KILLED_FACTION + i].achieved && record_id == -1) {
+            record_id = MONUMENT_KILLED_FACTION + i;
+        }
+    }
+    if (record_id == -1) {
+        return;
+    }
+    MonumentRecord *record = &Monuments[faction_id].records[record_id];
+    record->year = year;
+    record->data = faction_id_killed;
+    record->faction_count = 1;
+    record->achieved = true;
+    record->faction_id_first = faction_id;
+    Monuments[faction_id].record_latest = record_id;
+    if (!(Players[faction_id].rule_flags & RFLAG_ALIEN) && faction_id == *FactionIDCurrent) {
         monument(1);
     }
 }
@@ -315,8 +590,8 @@ void __cdecl repair_phase(uint32_t faction_id) {
         if (veh->faction_id != faction_id || base_who(veh->x, veh->y) >= 0) {
             continue;
         }
-        if (veh->faction_id == (uint32_t)*MapWinFactionID
-            || (veh->visibility & (1 << *MapWinFactionID))) {
+        if (veh->faction_id == (uint32_t)*FactionIDCurrent
+            || (veh->visibility & (1 << *FactionIDCurrent))) {
             draw_tile(veh->x, veh->y, -1);
         }
     }
@@ -339,7 +614,7 @@ Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-
 void __cdecl allocate_energy(uint32_t faction_id) {
     PlayerData *p = &PlayersData[faction_id];
     if (is_human(faction_id)) {
-        if (p->diff_level < DLVL_TALENT || faction_id != (uint32_t)*MapWinFactionID
+        if (p->diff_level < DLVL_TALENT || faction_id != (uint32_t)*FactionIDCurrent
             || (int)p->current_num_bases < 2 || p->energy_reserves > 99
             || p->energy_reserves * 11 - *EnergyCredits * 10 >= 0) {
             return;
