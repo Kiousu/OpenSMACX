@@ -972,3 +972,31 @@ characters; after a Mk renumbering restart it compares the alternative name agai
 unsigned byte; it also scans each base queue once without using the result (omitted).
 Boot test: the 675-redirect exe loaded Council.SAV and advanced the turn 289 -> 290 (38 s) with
 the game alive.
+
+## Pointer-for-value corrections, 2026-10-16 (Council.SAV, 675-redirect exe)
+
+Five upstream redirects tested a global's pointer where the original reads its value, so the
+check was always true or always false (found with a scan for pointer globals used as values):
+`arm_strat` and `weap_strat` (`!ExpansionEnabled`): in SMAC mode the original rates the armors
+past id 9 and the resonance weapons and string disruptor at 1, the DLL used their real ratings;
+`goody_at` (`!MapRandSeed`): with a map seed of 0 the original finds nothing, the DLL still
+scattered unity pods and supplies; `read_factions` (`ExpansionEnabled ?`) always read
+NEWFACTIONS where the original reads FACTIONS in SMAC mode; `prefs_fac_load` (`if
+(ExpansionEnabled)`) always loaded the SMACX faction preferences, the original only with the
+expansion (the DLL's `read_factions` calls it unconditionally and relies on that check). All
+five now read the value, as the original does at 0x57D273, 0x57D2E3, 0x5921A8, 0x586F83 and
+0x59DBE9. `arm_strat` and `weap_strat` also do the psi ratio in signed arithmetic like the
+original (same results for the non-negative values the game keeps), and `propose_proto` now calls
+them where the original inlined them.
+
+Trigger group `ptrfix`: `arm_strat`/`weap_strat` for every armor and weapon and faction with the
+expansion on and off, and `goody_at` on every tile with the map's seed and with 0, each against
+the exe's own code (OriginalEntry). With the old checks: 159 mismatches (56 SMAC-mode parts, 103
+tiles with seed 0); with the fix: 0. `batch23` re-run on Council.SAV, sw_aki2213 and sw_steam1
+(673 exe) with `propose_proto` on the shared functions: 0 mismatches. `read_factions` and
+`prefs_fac_load` are checked against the disassembly only: launching with `-smac` leaves the
+expansion flag set at the main menu for the vanilla exe too, so no SMAC-mode run was possible.
+
+Logs: `regression-runs/2026-10-16-council-ptrfix.log` and
+`regression-runs/2026-10-16-council-ptrfix-before.log`. Boot test: the 675-redirect exe with the
+corrected DLL loaded Council.SAV and advanced the turn 289 -> 290 (34 s) with the game alive.

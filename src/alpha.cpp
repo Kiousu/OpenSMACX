@@ -686,7 +686,7 @@ BOOL __cdecl read_factions() {
         }
         strncpy_s(BonusName[i].key, text_item(), 24);
     }
-    if (text_open(AlphaxFileID, ExpansionEnabled ? "NEWFACTIONS" : "FACTIONS")) {
+    if (text_open(AlphaxFileID, *ExpansionEnabled ? "NEWFACTIONS" : "FACTIONS")) {
         return true;
     }
     for (int i = 1; i < MaxPlayerNum; i++) {
@@ -1314,7 +1314,7 @@ Return Value: n/a
 Status: Complete
 */
 void __cdecl prefs_fac_load() {
-    if (ExpansionEnabled) {
+    if (*ExpansionEnabled) {
         char returned_string[256];
         GetPrivateProfileStringA("Alpha Centauri", "Prefs Format", "0", returned_string, 256, 
             ".\\Alpha Centauri.ini");

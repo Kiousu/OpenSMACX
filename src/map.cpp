@@ -1007,7 +1007,7 @@ uint32_t __cdecl bonus_at(uint32_t x, uint32_t y, int UNUSED(unk_val)) {
 Purpose: Determine if the tile has a supply pod and if so what type.
 Original Offset: 00592140
 Return Value: 0 (no supply pod), 1 (standard supply pod), 2 (unity pod?)
-Status: Complete
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-ptrfix.log)
 */
 uint32_t __cdecl goody_at(uint32_t x, uint32_t y) {
     uint32_t bit = bit_at(x, y);
@@ -1020,7 +1020,7 @@ uint32_t __cdecl goody_at(uint32_t x, uint32_t y) {
     if (bit & BIT_SUPPLY_POD) {
         return 1; // supply pod
     }
-    if (!MapRandSeed) {
+    if (!*MapRandSeed) {
         return 0; // nothing
     }
     uint32_t avg = (x + y) >> 1;

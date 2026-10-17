@@ -6378,6 +6378,87 @@ static int test_propose_proto() {
     return mismatches;
 }
 
+// ---------------------------------------------------------------- pointer-for-value fixes
+
+static int test_strat() {
+    // arm_strat and weap_strat are upstream redirects: run the exe's own code for comparison
+    static const uint8_t strat_entry[6] = { 0x55, 0x8B, 0xEC, 0xA1, 0x88, 0x64 };
+    OriginalEntry vanilla_arm(0x0057D270, strat_entry);
+    OriginalEntry vanilla_weap(0x0057D2E0, strat_entry);
+    if (!vanilla_arm.ok || !vanilla_weap.ok) {
+        return 1;
+    }
+    func_uu *arm_strat_exe = (func_uu *)0x0057D270;
+    func_uu *weap_strat_exe = (func_uu *)0x0057D2E0;
+    BOOL expansion_saved = *ExpansionEnabled;
+    int compared = 0, mismatches = 0, flat = 0;
+    for (int expansion = 1; expansion >= 0; expansion--) {
+        *ExpansionEnabled = expansion; // SMACX and SMAC mode
+        for (uint32_t f = 0; f < MaxPlayerNum; f++) {
+            for (uint32_t id = 0; id < MaxArmorNum; id++) {
+                int a = arm_strat_exe(id, f);
+                int b = arm_strat(id, f);
+                compared++;
+                flat += !expansion && id > ARM_PSI_DEFENSE;
+                if (a != b) {
+                    if (mismatches < MAX_DETAIL) {
+                        logf("  arm_strat(%u, %u) expansion %d: orig %d new %d", id, f, expansion, a, b);
+                    }
+                    mismatches++;
+                }
+            }
+            for (uint32_t id = 0; id < MaxWeaponNum; id++) {
+                int a = weap_strat_exe(id, f);
+                int b = weap_strat(id, f);
+                compared++;
+                flat += !expansion && id >= WPN_RESONANCE_LASER && id <= WPN_STRING_DISRUPTOR;
+                if (a != b) {
+                    if (mismatches < MAX_DETAIL) {
+                        logf("  weap_strat(%u, %u) expansion %d: orig %d new %d", id, f, expansion, a, b);
+                    }
+                    mismatches++;
+                }
+            }
+        }
+    }
+    *ExpansionEnabled = expansion_saved;
+    logf("arm_strat/weap_strat: %d compared (%d SMAC-mode parts rated 1), %d mismatches", compared,
+        flat, mismatches);
+    return mismatches;
+}
+
+static int test_goody_at() {
+    static const uint8_t goody_entry[6] = { 0x55, 0x8B, 0xEC, 0xA1, 0xF0, 0xFA };
+    OriginalEntry vanilla_goody(0x00592140, goody_entry);
+    if (!vanilla_goody.ok) {
+        return 1;
+    }
+    func_uu *goody_at_exe = (func_uu *)0x00592140;
+    uint32_t seed_saved = *MapRandSeed;
+    int compared = 0, mismatches = 0, found = 0;
+    for (int pass = 0; pass < 2; pass++) {
+        *MapRandSeed = pass ? 0 : seed_saved; // the map's seed, and a map with seed 0
+        for (uint32_t y = 0; y < (uint32_t)*MapLatitudeBounds; y++) {
+            for (uint32_t x = y & 1; x < (uint32_t)*MapLongitudeBounds; x += 2) {
+                uint32_t a = (uint32_t)goody_at_exe(x, y);
+                uint32_t b = goody_at(x, y);
+                compared++;
+                found += a != 0;
+                if (a != b) {
+                    if (mismatches < MAX_DETAIL) {
+                        logf("  goody_at(%u, %u) seed %u: orig %u new %u", x, y, *MapRandSeed, a, b);
+                    }
+                    mismatches++;
+                }
+            }
+        }
+    }
+    *MapRandSeed = seed_saved;
+    logf("goody_at: %d compared (seed %u and 0; %d tiles with something by the original), "
+        "%d mismatches", compared, seed_saved, found, mismatches);
+    return mismatches;
+}
+
 static DWORD WINAPI regress_watcher(LPVOID) {
     for (;;) {
         Sleep(1000);
@@ -6510,6 +6591,8 @@ void regress_run() {
     if (test_enabled("batch22", "energy_compute")) total += run_guarded("energy_compute", test_energy_compute);
     if (test_enabled("batch23", "name_proto")) total += run_guarded("name_proto", test_name_proto);
     if (test_enabled("batch23", "propose_proto")) total += run_guarded("propose_proto", test_propose_proto);
+    if (test_enabled("ptrfix", "strat")) total += run_guarded("strat", test_strat);
+    if (test_enabled("ptrfix", "goody_at")) total += run_guarded("goody_at", test_goody_at);
     if (test_enabled("enemy_capabilities")) total += run_guarded("enemy_capabilities", test_enemy_capabilities);
     if (test_enabled("social_ai")) total += run_guarded("social_ai", test_social_ai);
     if (test_enabled("Path::sensors") || test_enabled("path_sensors")) total += run_guarded("path_sensors", test_path_sensors);

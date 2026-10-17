@@ -1532,17 +1532,17 @@ BOOL __cdecl want_monolith(uint32_t veh_id) {
 Purpose: Calculate the armor strategy for the specified armor id.
 Original Offset: 0057D270
 Return Value: Armor strategy
-Status: Complete
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-ptrfix.log)
 */
 int __cdecl arm_strat(uint32_t armor_id, uint32_t faction_id) {
-    if (!ExpansionEnabled && armor_id > ARM_PSI_DEFENSE) {
+    if (!*ExpansionEnabled && armor_id > ARM_PSI_DEFENSE) {
         return 1;
     }
     int defense_rating = Armor[armor_id].defense_rating;
     if (defense_rating < 0) {
-        return psi_factor((Rules->psi_combat_ratio_def[TRIAD_LAND]
-            * PlayersData[faction_id].enemy_best_weapon_value) 
-            / Rules->psi_combat_ratio_atk[TRIAD_LAND], faction_id, false, false);
+        return psi_factor(PlayersData[faction_id].enemy_best_weapon_value
+            * (int)Rules->psi_combat_ratio_def[TRIAD_LAND]
+            / (int)Rules->psi_combat_ratio_atk[TRIAD_LAND], faction_id, false, false);
     }
     return defense_rating;
 }
@@ -1551,17 +1551,17 @@ int __cdecl arm_strat(uint32_t armor_id, uint32_t faction_id) {
 Purpose: Calculate the weapon strategy for the specified weapon id.
 Original Offset: 0057D2E0
 Return Value: Weapon strategy
-Status: Complete
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-ptrfix.log)
 */
 int __cdecl weap_strat(uint32_t weapon_id, uint32_t faction_id) {
-    if (!ExpansionEnabled && (weapon_id == WPN_RESONANCE_LASER || weapon_id == WPN_RESONANCE_BOLT
+    if (!*ExpansionEnabled && (weapon_id == WPN_RESONANCE_LASER || weapon_id == WPN_RESONANCE_BOLT
         || weapon_id == WPN_STRING_DISRUPTOR))
         return 1;
     int offense_rating = Weapon[weapon_id].offense_rating;
     if (offense_rating < 0) {
-        return psi_factor((Rules->psi_combat_ratio_atk[TRIAD_LAND]
-            * PlayersData[faction_id].enemy_best_armor_value) 
-            / Rules->psi_combat_ratio_def[TRIAD_LAND], faction_id, true, false);
+        return psi_factor(PlayersData[faction_id].enemy_best_armor_value
+            * (int)Rules->psi_combat_ratio_atk[TRIAD_LAND]
+            / (int)Rules->psi_combat_ratio_def[TRIAD_LAND], faction_id, true, false);
     }
     return offense_rating;
 }
@@ -2375,47 +2375,6 @@ void __cdecl retire_proto(int proto_id, int faction_id) {
 }
 
 /*
-Purpose: Get the combat value propose_proto() rates a weapon at: its offense rating, or for psi the
-         psi factor against the faction's strongest known enemy armor. Without the expansion the
-         resonance weapons and the string disruptor count as 1.
-Original Offset: n/a (inlined twice in propose_proto)
-Return Value: Weapon value
-Status: Complete
-*/
-static int propose_proto_offense(uint32_t faction_id, uint32_t weapon_id) {
-    if (!*ExpansionEnabled && (weapon_id == WPN_RESONANCE_LASER || weapon_id == WPN_RESONANCE_BOLT
-        || weapon_id == WPN_STRING_DISRUPTOR)) {
-        return 1;
-    }
-    if (Weapon[weapon_id].offense_rating < 0) {
-        return psi_factor(PlayersData[faction_id].enemy_best_armor_value
-            * (int)Rules->psi_combat_ratio_atk[TRIAD_LAND]
-            / (int)Rules->psi_combat_ratio_def[TRIAD_LAND], faction_id, true, false);
-    }
-    return Weapon[weapon_id].offense_rating;
-}
-
-/*
-Purpose: Get the combat value propose_proto() rates an armor at: its defense rating, or for psi the
-         psi factor against the faction's strongest known enemy weapon. Without the expansion the
-         armors past id 9 count as 1.
-Original Offset: n/a (inlined twice in propose_proto)
-Return Value: Armor value
-Status: Complete
-*/
-static int propose_proto_defense(uint32_t faction_id, uint32_t armor_id) {
-    if (!*ExpansionEnabled && (int)armor_id > 9) {
-        return 1;
-    }
-    if (Armor[armor_id].defense_rating < 0) {
-        return psi_factor(PlayersData[faction_id].enemy_best_weapon_value
-            * (int)Rules->psi_combat_ratio_def[TRIAD_LAND]
-            / (int)Rules->psi_combat_ratio_atk[TRIAD_LAND], faction_id, false, false);
-    }
-    return Armor[armor_id].defense_rating;
-}
-
-/*
 Purpose: Propose a unit design for a faction. An existing design with the same parts is reused
          (made current again); otherwise the design goes into the best free slot of the faction's
          64: an empty slot, an obsolete design with no units, or a little used one, which is retired
@@ -2443,8 +2402,8 @@ int __cdecl propose_proto(uint32_t faction_id, uint32_t chassis_id, uint32_t wea
         && Weapon[weapon_id].offense_rating == 1 && !*DesignSuggestState) {
         return BSC_SCOUT_PATROL;
     }
-    int offense = propose_proto_offense(faction_id, weapon_id);
-    int defense = propose_proto_defense(faction_id, armor_id);
+    int offense = weap_strat(weapon_id, faction_id); // inlined in the original
+    int defense = arm_strat(armor_id, faction_id);
     uint8_t faction_bit = (uint8_t)(1 << faction_id);
     BOOL is_human_faction = *FactionsStatus & faction_bit;
     int score_best = 0;
@@ -2505,8 +2464,8 @@ int __cdecl propose_proto(uint32_t faction_id, uint32_t chassis_id, uint32_t wea
                 if (proto->chassis_id == chassis_id && proto->reactor_id == reactor_id
                     && !((proto->ability_flags ^ abilities) & 0x48841A)) {
                     // an AI faction keeps a design that's close enough and stronger
-                    int proto_offense = propose_proto_offense(faction_id, proto->weapon_id);
-                    int proto_defense = propose_proto_defense(faction_id, proto->armor_id);
+                    int proto_offense = weap_strat(proto->weapon_id, faction_id);
+                    int proto_defense = arm_strat(proto->armor_id, faction_id);
                     int high = (proto_offense > proto_defense) ? proto_offense : proto_defense;
                     int high_tie = high + (proto_offense == proto_defense);
                     if (offense < high && abs(offense - proto_offense) < 2 && defense < high_tie
