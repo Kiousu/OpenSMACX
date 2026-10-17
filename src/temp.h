@@ -234,6 +234,9 @@ extern func_void *base_research_OG;
 // batch 13
 extern func_void *farm_compute_OG;
 extern func_void *base_support_OG;
+// batch 14
+extern func_void *base_yield_OG;
+extern func_void *base_energy_OG;
 extern func_void *base_psych_OG;
 extern func_social_ai *social_ai_OG;
 extern func_path_sensors *Path_sensors_OG; // Path::sensors()

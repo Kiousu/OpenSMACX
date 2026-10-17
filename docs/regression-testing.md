@@ -671,3 +671,34 @@ territory after the stack walk has run the unit index to -1, so any foreign terr
 flagged whatever the treaty; convoy tallies index by the unit's resource type unchecked.
 Boot test: the 622-redirect exe loaded Council.SAV and advanced the turn 289 -> 290 (38 s) with
 the game alive.
+
+## Batch 14, 2026-10-16 (Council.SAV, 622-redirect exe)
+
+`base_yield` and `base_energy` (base.cpp). Trigger group `batch14`, two snapshot tests that also
+compare the current-base globals block 0x90E8F0..0x90EA60. `base_yield` runs every base as
+loaded, governed with the first placement pass skipped (`ControlUpkeepA` set), at turn 150 and
+size +3, with nothing worked, with five mixed specialists at size +2 (the psych-less ones get
+dropped), with a conquer priority while building a secret project, and starving at size +6 with
+orbital yields and an aerospace complex. `base_energy` runs every base as loaded, in the upkeep
+pass with a global trade pact, this faction governing and energy convoys, with a labs-heavy
+allocation at efficiency -4, with no allocation and four specialists of types 0-3, with every
+multiplying facility and project in the base, on stockpile energy (energy grid owned on odd
+bases) and under sanctions without treaties. The secret project table and proposal counts are
+saved and restored around each run.
+
+| function | inputs | compared | mismatches |
+|---|---|---|---|
+| base_yield | 281 bases x 7 variants (7,998 specialists, 1,084 worked-tile changes) | 1,967 | 0 |
+| base_energy | 281 bases x 7 variants (10,024 commerce imported, 154 alien-base runs) | 1,967 | 0 |
+
+Log: `regression-runs/2026-10-16-council-batch14.log`. Notes: 0x90E938 is
+`BaseCurrentWorkersLeft`, 0x90E900 `BaseYieldNutrientMet`, 0x90EA0C/0x90E960 the commerce
+import/export arrays (indexed by faction), 0x9A6618 `ProposalPassCount`; PlayerData `unk_13`
+renamed `energy_surplus_total` (summed from the surplus before commerce, as the original does).
+Deliberate change: the original seeds the alien energy grid from an uninitialized local unless
+some treaty partner passed the commerce checks; the DLL starts it from zero. The test gives
+alien factions a treaty partner so both sides start from the same value. Original behaviour
+kept: the specialist value divides by the energy intake plus the specialists already added, and
+`base_yield` writes new specialists from slot 0 while counting leftovers from the old total.
+Boot test: the 624-redirect exe loaded Council.SAV and advanced the turn 289 -> 290 (38 s) with
+the game alive.

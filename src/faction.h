@@ -371,7 +371,7 @@ struct PlayerData {
     SocialEffect soc_effect_active; // ?
     SocialEffect soc_effect_temp; // maybe previous turn?
     SocialEffect soc_effect_base; // from faction files?
-    int unk_13;
+    int energy_surplus_total; // energy surplus of all bases, summed by base_energy()
     uint32_t maint_cost_total; // Total maintenance costs for all bases (current turn)
     int tech_commerce_bonus; // Increases commerce income
     int turn_commerce_income;

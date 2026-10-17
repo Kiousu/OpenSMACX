@@ -4476,6 +4476,225 @@ static int test_farm_compute() {
     return mismatches;
 }
 
+// ---------------------------------------------------------------- batch 14
+
+static int *const SecretProjectTable = (int *)0x009A6514;
+static int *const ProposalPassTable = (int *)0x009A6618; // [?] only entries 3 and 4 are touched
+
+static void set_fac(int base_id, int facility_id) {
+    uint32_t offset, mask;
+    bitmask(facility_id, &offset, &mask);
+    Bases[base_id].facilities_built[offset] |= mask;
+}
+
+static int test_base_yield() {
+    GameSnapshot base, after_orig, after_new;
+    snap_alloc(&base); snap_alloc(&after_orig); snap_alloc(&after_new);
+    snap_take(&base);
+    uint8_t globals_saved[BaseGlobalsSize], globals_o[BaseGlobalsSize], globals_n[BaseGlobalsSize];
+    memcpy(globals_saved, BaseGlobals, BaseGlobalsSize);
+    int selected_saved = *BaseIDCurrentSelected;
+    int control_saved = *ControlUpkeepA;
+    int turn_saved = *TurnCurrentNum;
+    int compared = 0, mismatches = 0, specialists = 0, swaps_or_moves = 0;
+    char label[80];
+    for (int base_id = 0; base_id < base.base_count; base_id++) {
+        uint32_t f = base.bases[base_id].faction_id_current;
+        BOOL human = is_human(f);
+        for (int variant = 0; variant < 7; variant++) {
+            // as loaded; governed with the first pass skipped; turn 150 at size +3; nothing
+            // worked; five mixed specialists at size +2; conquer priority building a project;
+            // starving at size +6 with orbital yields and an aerospace complex
+            auto prepare = [&]() {
+                snap_restore(&base);
+                memcpy(BaseGlobals, globals_saved, BaseGlobalsSize);
+                *ControlUpkeepA = variant == 1 ? 1 : 0;
+                *TurnCurrentNum = (variant == 2 || variant == 4 || variant == 5) ? 150 : turn_saved;
+                set_base(base_id);
+                Base *b = &Bases[base_id];
+                PlayerData *p = &PlayersData[f];
+                if (human && (variant == 1 || variant == 4 || variant == 5)) {
+                    b->governor |= GOV_MANAGES_CITIZENS_SPECS | GOV_ACTIVE;
+                }
+                if (variant == 2) {
+                    b->population_size += 3;
+                } else if (variant == 3) {
+                    b->resource_sqr_radius = 1;
+                    b->specialist_total = 0;
+                } else if (variant == 4) {
+                    b->population_size += 2;
+                    b->specialist_total = 5;
+                    b->spec[0] = 0x31413141;
+                } else if (variant == 5) {
+                    if (human) {
+                        b->governor |= GOV_PRIORITY_CONQUER;
+                    } else {
+                        p->ai_power = 1;
+                        p->ai_fight = 1;
+                        p->ai_wealth = 0;
+                    }
+                    b->queue_production_id[0] = -75;
+                } else if (variant == 6) {
+                    b->population_size += 6;
+                    b->resource_sqr_radius = 1;
+                    p->satellites_nutrient = 4;
+                    p->satellites_mineral = 3;
+                    p->satellites_energy = 2;
+                    set_fac(base_id, FAC_AEROSPACE_COMPLEX);
+                }
+            };
+            prepare();
+            uint32_t worked_before = Bases[base_id].resource_sqr_radius;
+            base_yield_OG();
+            snap_take(&after_orig);
+            memcpy(globals_o, BaseGlobals, BaseGlobalsSize);
+            specialists += Bases[base_id].specialist_total;
+            swaps_or_moves += Bases[base_id].resource_sqr_radius != worked_before;
+            prepare();
+            base_yield();
+            snap_take(&after_new);
+            memcpy(globals_n, BaseGlobals, BaseGlobalsSize);
+            compared++;
+            sprintf_s(label, "base_yield(%d) variant %d", base_id, variant);
+            BOOL detail = mismatches < MAX_DETAIL;
+            if (base_globals_differ(globals_o, globals_n, detail ? label : NULL)
+                || snap_differs(&after_orig, &after_new, detail ? label : NULL)) {
+                mismatches++;
+            }
+        }
+    }
+    snap_restore(&base);
+    memcpy(BaseGlobals, globals_saved, BaseGlobalsSize);
+    *BaseIDCurrentSelected = selected_saved;
+    *ControlUpkeepA = control_saved;
+    *TurnCurrentNum = turn_saved;
+    snap_free(&base); snap_free(&after_orig); snap_free(&after_new);
+    logf("base_yield: %d compared (%d specialists, %d worked-tile changes by the original), %d mismatches",
+        compared, specialists, swaps_or_moves, mismatches);
+    return mismatches;
+}
+
+static int test_base_energy() {
+    GameSnapshot base, after_orig, after_new;
+    snap_alloc(&base); snap_alloc(&after_orig); snap_alloc(&after_new);
+    snap_take(&base);
+    uint8_t globals_saved[BaseGlobalsSize], globals_o[BaseGlobalsSize], globals_n[BaseGlobalsSize];
+    memcpy(globals_saved, BaseGlobals, BaseGlobalsSize);
+    int sp_saved[MaxSecretProjectNum];
+    memcpy(sp_saved, SecretProjectTable, sizeof(sp_saved));
+    int pass_saved[2] = { ProposalPassTable[PROP_GLOBAL_TRADE_PACT], ProposalPassTable[PROP_REPEAL_GLOBAL_TRADE_PACT] };
+    int governor_saved = *GovernorFactionID;
+    int selected_saved = *BaseIDCurrentSelected;
+    int most_bases = 1;
+    for (int g = 1; g < MaxPlayerNum; g++) {
+        if (base.players[g].current_num_bases > base.players[most_bases].current_num_bases) {
+            most_bases = g;
+        }
+    }
+    int compared = 0, mismatches = 0, commerce = 0, grids = 0;
+    char label[80];
+    for (int base_id = 0; base_id < base.base_count; base_id++) {
+        uint32_t f = base.bases[base_id].faction_id_current;
+        BOOL alien = (Players[f].rule_flags & RFLAG_ALIEN) != 0;
+        for (int variant = 0; variant < 7; variant++) {
+            // as loaded; the upkeep pass with a global trade pact and this faction governing;
+            // labs-heavy allocation at efficiency -4; no allocation with four specialists of
+            // types 0-3; every multiplier facility and project here; stockpile energy (energy
+            // grid project owned on odd bases); sanctions with no treaties. Alien factions always
+            // keep a treaty partner so the original's energy grid starts from a known value.
+            auto prepare = [&]() {
+                snap_restore(&base);
+                memcpy(BaseGlobals, globals_saved, BaseGlobalsSize);
+                memcpy(SecretProjectTable, sp_saved, sizeof(sp_saved));
+                ProposalPassTable[PROP_GLOBAL_TRADE_PACT] = pass_saved[0];
+                ProposalPassTable[PROP_REPEAL_GLOBAL_TRADE_PACT] = pass_saved[1];
+                *GovernorFactionID = governor_saved;
+                set_base(base_id);
+                Base *b = &Bases[base_id];
+                PlayerData *p = &PlayersData[f];
+                *BaseUpkeepStage = variant == 1 ? 1 : 0;
+                if (variant == 1) {
+                    ProposalPassTable[PROP_GLOBAL_TRADE_PACT] = 1;
+                    ProposalPassTable[PROP_REPEAL_GLOBAL_TRADE_PACT] = 0;
+                    *GovernorFactionID = f;
+                    BaseCurrentConvoyTo[RSC_ENERGY] = 3;
+                    BaseCurrentConvoyFrom[RSC_ENERGY] = 1;
+                } else if (variant == 2) {
+                    p->se_alloc_labs = 8;
+                    p->se_alloc_psych = 2;
+                    p->soc_effect_pending.efficiency = -4;
+                } else if (variant == 3) {
+                    p->se_alloc_labs = 0;
+                    p->se_alloc_psych = 0;
+                    p->soc_effect_pending.efficiency = 1;
+                    b->specialist_total = 4;
+                    b->spec[0] = 0x3210;
+                } else if (variant == 4) {
+                    int facs[] = { FAC_ENERGY_BANK, FAC_NETWORK_NODE, FAC_BIOLOGY_LAB,
+                        FAC_HOLOGRAM_THEATRE, FAC_TREE_FARM, FAC_HYBRID_FOREST, FAC_FUSION_LAB,
+                        FAC_QUANTUM_LAB, FAC_RESEARCH_HOSPITAL, FAC_NANOHOSPITAL };
+                    for (int k = 0; k < 10; k++) {
+                        set_fac(base_id, facs[k]);
+                    }
+                    SecretProject->supercollider = base_id;
+                    SecretProject->theory_of_everything = base_id;
+                    SecretProject->space_elevator = base_id;
+                    SecretProject->longevity_vaccine = base_id;
+                    SecretProject->network_backbone = base_id;
+                    SecretProject->planetary_energy_grid = base_id;
+                    p->soc_category_pending.economics = SE_FREE_MARKET;
+                    p->se_alloc_labs = 3;
+                    p->se_alloc_psych = 1;
+                } else if (variant == 5) {
+                    b->queue_production_id[0] = -FAC_STOCKPILE_ENERGY;
+                    b->production_id_last = -FAC_STOCKPILE_ENERGY;
+                    b->mineral_surplus = 7 + base_id % 5;
+                    SecretProject->planetary_energy_grid = (base_id % 2) ? base_id : -1;
+                } else if (variant == 6) {
+                    p->sanction_turns = 3;
+                    for (int g = 0; g < MaxPlayerNum; g++) {
+                        p->diplo_treaties[g] &= ~DTREATY_TREATY;
+                        PlayersData[g].diplo_treaties[f] &= ~DTREATY_TREATY;
+                    }
+                }
+                if (alien && (int)f != most_bases) {
+                    p->diplo_treaties[most_bases] |= DTREATY_TREATY;
+                }
+            };
+            prepare();
+            base_energy_OG();
+            snap_take(&after_orig);
+            memcpy(globals_o, BaseGlobals, BaseGlobalsSize);
+            for (int g = 1; g < MaxPlayerNum; g++) {
+                commerce += BaseCommerceImport[g];
+            }
+            grids += alien;
+            prepare();
+            base_energy();
+            snap_take(&after_new);
+            memcpy(globals_n, BaseGlobals, BaseGlobalsSize);
+            compared++;
+            sprintf_s(label, "base_energy(%d) variant %d", base_id, variant);
+            BOOL detail = mismatches < MAX_DETAIL;
+            if (base_globals_differ(globals_o, globals_n, detail ? label : NULL)
+                || snap_differs(&after_orig, &after_new, detail ? label : NULL)) {
+                mismatches++;
+            }
+        }
+    }
+    snap_restore(&base);
+    memcpy(BaseGlobals, globals_saved, BaseGlobalsSize);
+    memcpy(SecretProjectTable, sp_saved, sizeof(sp_saved));
+    ProposalPassTable[PROP_GLOBAL_TRADE_PACT] = pass_saved[0];
+    ProposalPassTable[PROP_REPEAL_GLOBAL_TRADE_PACT] = pass_saved[1];
+    *GovernorFactionID = governor_saved;
+    *BaseIDCurrentSelected = selected_saved;
+    snap_free(&base); snap_free(&after_orig); snap_free(&after_new);
+    logf("base_energy: %d compared (%d commerce imported, %d alien-base runs by the original), %d mismatches",
+        compared, commerce, grids, mismatches);
+    return mismatches;
+}
+
 static DWORD WINAPI regress_watcher(LPVOID) {
     for (;;) {
         Sleep(1000);
@@ -4587,6 +4806,8 @@ void regress_run() {
     if (test_enabled("batch12", "base_check_support")) total += run_guarded("base_check_support", test_base_check_support);
     if (test_enabled("batch13", "base_support")) total += run_guarded("base_support", test_base_support);
     if (test_enabled("batch13", "farm_compute")) total += run_guarded("farm_compute", test_farm_compute);
+    if (test_enabled("batch14", "base_yield")) total += run_guarded("base_yield", test_base_yield);
+    if (test_enabled("batch14", "base_energy")) total += run_guarded("base_energy", test_base_energy);
     if (test_enabled("enemy_capabilities")) total += run_guarded("enemy_capabilities", test_enemy_capabilities);
     if (test_enabled("social_ai")) total += run_guarded("social_ai", test_social_ai);
     if (test_enabled("Path::sensors") || test_enabled("path_sensors")) total += run_guarded("path_sensors", test_path_sensors);

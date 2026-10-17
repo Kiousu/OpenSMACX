@@ -58,6 +58,10 @@ int *BaseTerraformReduce = (int *)0x0090E998; // yield lost to the three-per-squ
 int *BaseTileFlags = (int *)0x0090E99C; // [25] availability flags of the radius tiles; see farm_compute()
 uint32_t *BaseCurrentUsedTiles = (uint32_t *)0x0090EA00; // radius tiles the current base can't work
 uint32_t *BaseCurrentForcesMaintCount = (uint32_t *)0x0090EA08; // units the current base pays for
+int *BaseCurrentWorkersLeft = (int *)0x0090E938; // citizens base_yield() has still to place
+int *BaseYieldNutrientMet = (int *)0x0090E900; // base_yield() found the base fed without bonuses
+int *BaseCommerceImport = (int *)0x0090EA0C; // [8] energy the current base gains from each partner
+int *BaseCommerceExport = (int *)0x0090E960; // [8] energy each partner gains from the current base
 
 /*
 Purpose: Check if the base already has a particular facility built or if it's in the queue.
@@ -1339,6 +1343,382 @@ int __cdecl resource_yield(uint32_t rsc_type, uint32_t faction_id, int base_id, 
 }
 
 /*
+Purpose: Get the specialist type in a slot of the current base. Only the first 16 slots are stored;
+         beyond them the best available specialist is assumed.
+Original Offset: n/a (inlined in base_yield)
+Return Value: Citizen type
+Status: Complete
+*/
+static uint32_t base_spec_get(int slot) {
+    if (slot < 16) {
+        return ((*BaseCurrent)->spec[slot >> 3] >> ((slot & 7) * 4)) & 0xF;
+    }
+    return best_specialist();
+}
+
+/*
+Purpose: Set the specialist type in a slot of the current base; slots past 16 aren't stored.
+Original Offset: n/a (inlined in base_yield)
+Return Value: n/a
+Status: Complete
+*/
+static void base_spec_set(int slot, uint32_t citizen_id) {
+    if (slot < 16) {
+        int shift = (slot & 7) * 4;
+        (*BaseCurrent)->spec[slot >> 3] &= ~(0xFu << shift);
+        (*BaseCurrent)->spec[slot >> 3] |= citizen_id << shift;
+    }
+}
+
+/*
+Purpose: Add (sign 1) or remove (sign -1) the yield of the radius tile at offset index i to the
+         current base's intake, flagging the base as working the sea when the tile is ocean.
+Original Offset: n/a (inlined in base_yield)
+Return Value: n/a
+Status: Complete
+*/
+static void base_yield_tile(int i, int sign) {
+    Base *base = *BaseCurrent;
+    int x = base->x + RadiusOffsetX[i];
+    if (!*MapIsFlat) {
+        if (x < 0) {
+            x += *MapLongitudeBounds;
+        } else if (x >= (int)*MapLongitudeBounds) {
+            x -= *MapLongitudeBounds;
+        }
+    }
+    int y = base->y + RadiusOffsetY[i];
+    if (y < 0 || y >= (int)*MapLatitudeBounds || x < 0 || x >= (int)*MapLongitudeBounds) {
+        return;
+    }
+    if ((map_loc(x, y)->climate & 0xE0) < ALT_BIT_SHORE_LINE) {
+        (*BaseCurrent)->state |= BSTATE_UNK_8000;
+    }
+    for (int k = 0; k < 4; k++) {
+        int yield = resource_yield(k, (*BaseCurrent)->faction_id_current, *BaseIDCurrentSelected,
+            x, y);
+        (&(*BaseCurrent)->nutrient_intake_2)[k] += sign * yield;
+    }
+}
+
+/*
+Purpose: Assign the current base's citizens to tiles and specialists. Orbital yields come first
+         (halved without an aerospace complex, space elevator or cloudbase academy, capped by the
+         population). A human base without an active governor keeps the tiles it works; otherwise
+         the base tile is worked and the remaining workers go one at a time to the best-scoring
+         free tile (or, for a large governed base late in the game, the best specialist), the
+         score weighing nutrients, minerals and energy against what the base lacks and its
+         faction's priorities. Once every worker is placed one worst/best tile swap is tried,
+         reverted if the base would starve. Leftover workers become the best specialist. Ends by
+         copying the intake and summing the radius terraforming into eco_damage.
+Original Offset: 004E80B0
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch14.log)
+*/
+void __cdecl base_yield() {
+    farm_compute();
+    Base *base = *BaseCurrent;
+    uint32_t faction_id = base->faction_id_current;
+    *BaseCurrentWorkersLeft = base->population_size + 1;
+    uint32_t faction_bit = 1 << faction_id;
+    BOOL governed = !(*FactionsStatus & faction_bit)
+        || ((base->governor & GOV_MANAGES_CITIZENS_SPECS) && (base->governor & GOV_ACTIVE));
+    uint32_t worked = 0;
+    base->state &= ~BSTATE_UNK_8000;
+    (*BaseCurrent)->specialist_unk_1 = 0;
+    (*BaseCurrent)->resource_sqr_radius &= ~*BaseCurrentUsedTiles | 1;
+    for (int k = 0; k < 4; k++) {
+        int *intake = &(&(*BaseCurrent)->nutrient_intake_2)[k];
+        if (k == 3) {
+            *intake = 0;
+            continue;
+        }
+        *intake = (&PlayersData[faction_id].satellites_nutrient)[k];
+        if (!has_fac_built(FAC_AEROSPACE_COMPLEX, *BaseIDCurrentSelected)
+            && (SecretProject->space_elevator < 0
+                || Bases[SecretProject->space_elevator].faction_id_current != faction_id)
+            && (SecretProject->cloudbase_academy < 0
+                || Bases[SecretProject->cloudbase_academy].faction_id_current != faction_id)) {
+            *intake = (*intake + 1) / 2;
+        }
+        int pop = (*BaseCurrent)->population_size;
+        *intake = pop < *intake ? pop : *intake;
+    }
+    BOOL placed = false;
+    if (!governed || !*ControlUpkeepA) {
+        if (governed) {
+            // set aside the specialists that do nothing for psych
+            base = *BaseCurrent;
+            for (int i = 0; i < base->specialist_total; i++) {
+                if (!Citizen[base_spec_get(i)].psych_bonus) {
+                    base->specialist_unk_1++;
+                }
+            }
+            base->specialist_total -= base->specialist_unk_1;
+        }
+        base = *BaseCurrent;
+        if ((int)bit_count(base->resource_sqr_radius) <= *BaseCurrentWorkersLeft) {
+            for (int i = 0; i < BaseRadiusTiles; i++) {
+                if (i && !((1 << i) & (*BaseCurrent)->resource_sqr_radius)) {
+                    continue;
+                }
+                worked |= 1 << i;
+                base_yield_tile(i, 1);
+                if (!--*BaseCurrentWorkersLeft) {
+                    break;
+                }
+            }
+            base = *BaseCurrent;
+            if (*BaseCurrentWorkersLeft == base->specialist_unk_1 + base->specialist_total) {
+                placed = true;
+            }
+        }
+    }
+    if (!placed) {
+        base = *BaseCurrent;
+        if (governed && base->specialist_total) {
+            for (int i = 0; i < base->specialist_unk_1 + base->specialist_total; i++) {
+                if (Citizen[base_spec_get(i)].psych_bonus) {
+                    continue;
+                }
+                for (int j = i; j < base->specialist_unk_1 + base->specialist_total; j++) {
+                    uint32_t next = base_spec_get(j + 1);
+                    base_spec_set(j, next);
+                }
+                if (base->specialist_unk_1) {
+                    base->specialist_unk_1--;
+                }
+            }
+        }
+        if (!(worked & 1)) {
+            base_yield_tile(0, 1);
+            worked |= 1;
+            (*BaseCurrentWorkersLeft)--;
+        }
+        BOOL human = (*FactionsStatus & faction_bit) != 0;
+        *BaseYieldNutrientMet = 0;
+        int growth, tech, wealth, power, fight;
+        base = *BaseCurrent;
+        if (human && (base->governor & GOV_ACTIVE)) {
+            uint32_t gov = base->governor;
+            tech = (gov >> 24) & 2;
+            growth = (gov >> 24) & 1;
+            wealth = (gov >> 25) & 2;
+            power = (gov >> 26) & 2;
+            if (power) {
+                fight = 2;
+            } else if (growth || wealth) {
+                fight = 0;
+            } else if (tech) {
+                fight = -2;
+            } else {
+                fight = PlayersData[faction_id].ai_fight;
+            }
+        } else if (!human) {
+            growth = PlayersData[faction_id].ai_growth;
+            tech = PlayersData[faction_id].ai_tech;
+            wealth = PlayersData[faction_id].ai_wealth;
+            power = PlayersData[faction_id].ai_power;
+            fight = PlayersData[faction_id].ai_fight;
+        } else {
+            growth = tech = wealth = power = fight = 0;
+        }
+        int nutrient_req = Rules->nutrient_req_citizen;
+        do {
+            base = *BaseCurrent;
+            BOOL full = *BaseCurrentWorkersLeft <= base->specialist_unk_1 + base->specialist_total;
+            int best_id = 0;
+            int best_value = 0;
+            int nutrient_best = 0;
+            uint32_t skip = full ? 0 : worked;
+            int worst_value = 9999;
+            int worst_id = -1;
+            for (int i = 1; i < BaseRadiusTiles; i++) {
+                uint32_t bit = 1 << i;
+                if (bit & (skip | *BaseCurrentUsedTiles)) {
+                    continue;
+                }
+                base = *BaseCurrent;
+                int x = base->x + RadiusOffsetX[i];
+                if (!*MapIsFlat) {
+                    if (x < 0) {
+                        x += *MapLongitudeBounds;
+                    } else if (x >= (int)*MapLongitudeBounds) {
+                        x -= *MapLongitudeBounds;
+                    }
+                }
+                int y = base->y + RadiusOffsetY[i];
+                if (y < 0 || y >= (int)*MapLatitudeBounds || x < 0 || x >= (int)*MapLongitudeBounds) {
+                    continue;
+                }
+                int nutrient = crop_yield(base->faction_id_current, *BaseIDCurrentSelected, x, y, false);
+                int mineral = mine_yield((*BaseCurrent)->faction_id_current, *BaseIDCurrentSelected,
+                    x, y, false);
+                int energy = energy_yield((*BaseCurrent)->faction_id_current, *BaseIDCurrentSelected,
+                    x, y, false);
+                if (nutrient_best < nutrient) {
+                    nutrient_best = nutrient;
+                }
+                base = *BaseCurrent;
+                int workers = *BaseCurrentWorkersLeft;
+                int pop = base->population_size;
+                int pop_req = pop * nutrient_req;
+                int bonus = 0;
+                if (workers / nutrient_req + base->nutrient_intake_2 < pop_req) {
+                    // short of food: favour nutrients, the more so when the base can't make up
+                    // the shortfall even with every worker
+                    bonus = (base->nutrient_intake_2 + workers >= pop_req) ? 2 : 8;
+                    if (nutrient < 0) {
+                        // unchanged
+                    } else if (nutrient <= bonus) {
+                        nutrient *= 2;
+                    } else {
+                        nutrient += bonus;
+                    }
+                } else {
+                    *BaseYieldNutrientMet = 1;
+                }
+                nutrient *= 2;
+                mineral *= 2;
+                energy *= 2;
+                if (base->nutrient_intake_2 <= pop + pop_req && !nutrient) {
+                    mineral /= 2;
+                    energy /= 2;
+                }
+                if (!mineral && !bonus) {
+                    nutrient /= 2;
+                }
+                int nutrient_div = ((base->nutrient_intake_2 - pop / 3 - pop_req + workers) * 2 - 2);
+                nutrient_div = nutrient_div < 1 ? 1 : (nutrient_div > 99 ? 99 : nutrient_div);
+                int mineral_mod = base->queue_production_id[0] < -70 ? 2 : -tech;
+                int mineral_div = (base->mineral_intake_2 - (int)*BaseCurrentForcesMaintCost + 1) / 2;
+                mineral_div = mineral_div < 1 ? 1 : (mineral_div > 99 ? 99 : mineral_div);
+                int energy_mult = pop - power;
+                energy_mult = energy_mult < 1 ? 1 : (energy_mult > 99 ? 99 : energy_mult);
+                int energy_div = base->energy_intake_2;
+                energy_div = energy_div < 1 ? 1 : (energy_div > 99 ? 99 : energy_div);
+                int value = ((growth + 4) * nutrient * 256) / nutrient_div
+                    + ((mineral_mod + fight + power + 6 + wealth) * pop * mineral * 64) / mineral_div
+                    + ((wealth + 1 + tech * 2) * energy_mult * energy * 64) / energy_div;
+                if (!(worked & bit)) {
+                    if (best_value < value) {
+                        best_id = i;
+                        best_value = value;
+                    }
+                } else if (value < worst_value) {
+                    worst_id = i;
+                    worst_value = value;
+                }
+            }
+            base = *BaseCurrent;
+            if (governed && base->population_size > 4
+                && (base->population_size * nutrient_req < base->nutrient_intake_2 || !nutrient_best)
+                && *TurnCurrentNum > 100) {
+                for (int citizen_id = 0; citizen_id < MaxSpecialistNum; citizen_id++) {
+                    if (!has_tech(Citizen[citizen_id].preq_tech, faction_id)
+                        || has_tech(Citizen[citizen_id].obsol_tech, faction_id)) {
+                        continue;
+                    }
+                    base = *BaseCurrent;
+                    int div = base->specialist_unk_1 + base->energy_intake_2;
+                    div = div < 1 ? 1 : (div > 99 ? 99 : div);
+                    int pop = base->population_size;
+                    int value = Citizen[citizen_id].psych_bonus * 64
+                        + ((wealth + 2) * pop * Citizen[citizen_id].ops_bonus * 64) / div
+                        + ((tech + 2) * pop * Citizen[citizen_id].research_bonus * 64) / div;
+                    if (best_value < value) {
+                        best_id = -1 - citizen_id;
+                        best_value = value;
+                    }
+                }
+            }
+            if (full) {
+                if (best_id > 0 && worst_value < best_value && worst_id > 0) {
+                    worked = (worked & ~(1 << worst_id)) | (1 << best_id);
+                    base_yield_tile(worst_id, -1);
+                    base_yield_tile(best_id, 1);
+                    base = *BaseCurrent;
+                    if (base->nutrient_intake_2 < (base->population_size + 1) * nutrient_req) {
+                        worked = (worked & ~(1 << best_id)) | (1 << worst_id);
+                        base_yield_tile(best_id, -1);
+                        base_yield_tile(worst_id, 1);
+                    }
+                }
+                break;
+            }
+            if (best_id < 0) {
+                base = *BaseCurrent;
+                base_spec_set(base->specialist_unk_1, -1 - best_id);
+                (*BaseCurrent)->specialist_unk_1++;
+            } else {
+                if (best_id < 1) {
+                    break;
+                }
+                worked |= 1 << best_id;
+                base_yield_tile(best_id, 1);
+                (*BaseCurrentWorkersLeft)--;
+            }
+            base = *BaseCurrent;
+        } while (base->specialist_unk_1 + base->specialist_total < *BaseCurrentWorkersLeft
+            || base->nutrient_intake_2 < base->population_size * nutrient_req);
+    }
+    for (int i = (*BaseCurrent)->specialist_total; i < *BaseCurrentWorkersLeft; i++) {
+        base_spec_set(i, best_specialist());
+    }
+    base = *BaseCurrent;
+    base->resource_sqr_radius = worked;
+    base->specialist_total = *BaseCurrentWorkersLeft;
+    base->state &= ~BSTATE_UNK_100;
+    base->nutrient_intake_1 = base->nutrient_intake_2;
+    base->mineral_intake_1 = base->mineral_intake_2;
+    base->energy_intake_1 = base->energy_intake_2;
+    base->unused_intake_1 = base->unused_intake_2;
+    base->eco_damage = 0;
+    for (int i = 0; i < BaseRadiusTiles; i++) {
+        base = *BaseCurrent;
+        int x = base->x + RadiusOffsetX[i];
+        if (!*MapIsFlat) {
+            if (x < 0) {
+                x += *MapLongitudeBounds;
+            } else if (x >= (int)*MapLongitudeBounds) {
+                x -= *MapLongitudeBounds;
+            }
+        }
+        int y = base->y + RadiusOffsetY[i];
+        if (y < 0 || y >= (int)*MapLatitudeBounds || x < 0 || x >= (int)*MapLongitudeBounds) {
+            continue;
+        }
+        uint32_t bits = map_loc(x, y)->bit;
+        int damage = bit_count(bits & (BIT_ROAD | BIT_MAGTUBE | BIT_MINE | BIT_SOLAR_TIDAL | BIT_FARM
+            | BIT_SOIL_ENRICHER | BIT_CONDENSER | BIT_ECH_MIRROR | BIT_THERMAL_BORE));
+        if (base->resource_sqr_radius & (1 << i)) {
+            damage *= 2;
+        }
+        if (bits & BIT_THERMAL_BORE) {
+            damage += 8;
+        }
+        if (bits & BIT_ECH_MIRROR) {
+            damage += 6;
+        }
+        if (bits & BIT_CONDENSER) {
+            damage += 4;
+        }
+        if (bits & BIT_FOREST) {
+            damage--;
+        }
+        BOOL tree_farm = has_fac_built(FAC_TREE_FARM, *BaseIDCurrentSelected);
+        BOOL hybrid_forest = has_fac_built(FAC_HYBRID_FOREST, *BaseIDCurrentSelected);
+        if (tree_farm && hybrid_forest) {
+            damage = 0;
+        }
+        if (tree_farm || hybrid_forest) {
+            damage /= 2;
+        }
+        (*BaseCurrent)->eco_damage += damage;
+    }
+}
+
+/*
 Purpose: Tally what the current base's units cost and bring in. Supply convoys out in the field
          add their tile's yield to the base (BaseCurrentConvoyTo), those parked in a base count
          one unit per resource (BaseCurrentConvoyFrom, or ConvoyTo for another base's convoy in
@@ -1911,6 +2291,248 @@ int __cdecl base_rank(uint32_t faction_id, int rank_position) {
     }
     sort_descending(bases_found, base_id, base_energy);
     return base_id[rank_position];
+}
+
+/*
+Purpose: Work out the current base's energy. Energy convoys and commerce with every treaty partner
+         (scaled by the trading bases' energy, commerce techs and the global trade pact; halved
+         without a pact, +1 for the Planetary Governor, none under sanctions or with aliens) are
+         added, and an alien base taps the energy grid (half its facilities plus 2.5 per secret
+         project). After inefficiency the surplus (0-9999) is split by the economy/psych/labs
+         allocation, specialists add their bonuses (obsolete types upgraded in place), facilities
+         and projects multiply the totals, and unbalanced allocations lose output unless the
+         faction's efficiency is high. Stockpile energy turns surplus minerals into credits.
+         Finishes with base_psych().
+Original Offset: 004EB560
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch14.log).
+        One deliberate change: the alien energy grid starts from zero, where the original
+        starts from an uninitialized local unless some treaty partner passed the commerce checks.
+*/
+void __cdecl base_energy() {
+    Base *base = *BaseCurrent;
+    uint32_t faction_id = base->faction_id_current;
+    base->energy_intake_2 += BaseCurrentConvoyTo[RSC_ENERGY];
+    base->energy_consumption = BaseCurrentConvoyFrom[RSC_ENERGY];
+    base->energy_inefficiency = black_market(base->energy_intake_2 - base->energy_consumption);
+    base->energy_surplus = base->energy_intake_2 - base->energy_consumption - base->energy_inefficiency;
+    int rank = 0;
+    int base_id = 0;
+    for (int i = 0; i < *BaseCurrentCount; i++) {
+        if (Bases[i].faction_id_current != faction_id) {
+            continue;
+        }
+        if (base->energy_intake_1 * 0x200 + *BaseIDCurrentSelected < Bases[i].energy_intake_1 * 0x200 + i) {
+            rank++;
+        }
+        if (&Bases[i] == base) {
+            base_id = i;
+        }
+    }
+    int commerce = 0; // the last import computed; seeds the alien energy grid below
+    for (uint32_t faction_id_2 = 1; faction_id_2 < MaxPlayerNum; faction_id_2++) {
+        BaseCommerceImport[faction_id_2] = 0;
+        BaseCommerceExport[faction_id_2] = 0;
+        if (faction_id_2 == faction_id
+            || (!(PlayersData[faction_id].diplo_treaties[faction_id_2] & DTREATY_TREATY)
+                && !(PlayersData[faction_id_2].diplo_treaties[faction_id] & DTREATY_TREATY))
+            || !PlayersData[faction_id_2].current_num_bases) {
+            continue;
+        }
+        int base_id_2 = base_rank(faction_id_2, rank);
+        if (base_id_2 < 0) {
+            continue;
+        }
+        int value = (Bases[base_id_2].energy_intake_1 + 7 + base->energy_intake_1) / 8;
+        if (ProposalPassCount[PROP_REPEAL_GLOBAL_TRADE_PACT] < ProposalPassCount[PROP_GLOBAL_TRADE_PACT]) {
+            value *= 2;
+        }
+        int techs = *TechCommerceCount + 1;
+        int value_export = ((PlayersData[faction_id_2].tech_commerce_bonus + 1) * value + techs / 2) / techs;
+        commerce = ((PlayersData[faction_id].tech_commerce_bonus + 1) * value + techs / 2) / techs;
+        if (!(PlayersData[faction_id].diplo_treaties[faction_id_2] & DTREATY_PACT)) {
+            commerce /= 2;
+            value_export /= 2;
+        }
+        if ((uint32_t)*GovernorFactionID == faction_id) {
+            commerce++;
+        }
+        if ((uint32_t)*GovernorFactionID == faction_id_2) {
+            value_export++;
+        }
+        if (PlayersData[faction_id].sanction_turns || PlayersData[faction_id_2].sanction_turns
+            || (Players[faction_id].rule_flags & RFLAG_ALIEN)
+            || (Players[faction_id_2].rule_flags & RFLAG_ALIEN)) {
+            value_export = 0;
+            commerce = 0;
+        }
+        BaseCommerceImport[faction_id_2] = commerce;
+        BaseCommerceExport[faction_id_2] = value_export;
+        (*BaseCurrent)->energy_intake_2 += commerce;
+    }
+    if (*ExpansionEnabled && (Players[faction_id].rule_flags & RFLAG_ALIEN)) {
+        for (int facility_id = 0; facility_id <= FAC_STOCKPILE_ENERGY; facility_id++) {
+            if ((*BaseCurrent)->facilities_built[facility_id / 8] & (1 << (facility_id % 8))) {
+                commerce++;
+            }
+        }
+        for (int sp = 0; sp < MaxSecretProjectNum; sp++) {
+            if ((&SecretProject->human_genome_project)[sp] == base_id) {
+                commerce += 5;
+            }
+        }
+        commerce /= 2;
+        if (PlayersData[faction_id].sanction_turns) {
+            commerce = 0;
+        }
+        (*BaseCurrent)->energy_intake_2 += commerce;
+    }
+    base = *BaseCurrent;
+    if (*BaseUpkeepStage == 1) {
+        int surplus = base->energy_surplus;
+        PlayersData[faction_id].energy_surplus_total += surplus < 0 ? 0 : (surplus > 99999 ? 99999 : surplus);
+    }
+    base->energy_inefficiency = black_market(base->energy_intake_2 - base->energy_consumption);
+    base->energy_surplus = base->energy_intake_2 - base->energy_consumption - base->energy_inefficiency;
+    int energy = base->energy_surplus;
+    energy = energy < 0 ? 0 : (energy > 9999 ? 9999 : energy);
+    PlayerData *player = &PlayersData[faction_id];
+    int psych = (player->se_alloc_psych * energy + 4) / 10;
+    base->psych_total = (psych < 0 || energy < 0) ? 0 : (energy < psych ? energy : psych);
+    int left = energy - base->psych_total;
+    int economy = ((10 - player->se_alloc_labs - player->se_alloc_psych) * energy + 4) / 10;
+    base->economy_total = (economy < 0 || left < 0) ? 0 : (economy <= left ? economy : left);
+    base->labs_total = energy - base->psych_total - base->economy_total;
+    int unk = ((9 - player->se_alloc_labs - player->se_alloc_psych) * energy + 4) / 10;
+    base->unk_10 = (unk < 0 || left < 0) ? 0 : (left < unk ? left : unk);
+    for (int i = 0; i < (*BaseCurrent)->specialist_total; i++) {
+        int citizen_id = base_spec_get(i);
+        citizen_id = citizen_id < 0 ? 0 : (citizen_id > MaxSpecialistNum - 1 ? MaxSpecialistNum - 1 : citizen_id);
+        if (has_tech(Citizen[citizen_id].obsol_tech, faction_id)) {
+            for (int j = 0; j < MaxSpecialistNum; j++) {
+                if (has_tech(Citizen[j].preq_tech, faction_id) && !has_tech(Citizen[j].obsol_tech, faction_id)
+                    && Citizen[citizen_id].ops_bonus <= Citizen[j].ops_bonus
+                    && Citizen[citizen_id].psych_bonus <= Citizen[j].psych_bonus
+                    && Citizen[citizen_id].research_bonus <= Citizen[j].research_bonus) {
+                    citizen_id = j;
+                    base_spec_set(i, citizen_id);
+                    break;
+                }
+            }
+        }
+        (*BaseCurrent)->economy_total += Citizen[citizen_id].ops_bonus;
+        (*BaseCurrent)->psych_total += Citizen[citizen_id].psych_bonus;
+        (*BaseCurrent)->labs_total += Citizen[citizen_id].research_bonus;
+    }
+    base = *BaseCurrent;
+    base_id = *BaseIDCurrentSelected;
+    base->labs_total += Players[faction_id].rule_research;
+    if (has_fac_built(FAC_BIOLOGY_LAB, base_id)) {
+        base->labs_total += 2;
+    }
+    int mult_economy = 4, mult_labs = 4, mult_psych = 4;
+    if (has_fac_built(FAC_ENERGY_BANK, base_id) || (SecretProject->planetary_energy_grid >= 0
+        && Bases[SecretProject->planetary_energy_grid].faction_id_current == faction_id)) {
+        mult_economy = 6;
+    }
+    if (has_fac_built(FAC_NETWORK_NODE, base_id)) {
+        mult_labs = 6;
+    }
+    if (has_fac_built(FAC_HOLOGRAM_THEATRE, base_id) || (has_fac_built(FAC_NETWORK_NODE, base_id)
+        && SecretProject->virtual_world >= 0
+        && Bases[SecretProject->virtual_world].faction_id_current == faction_id)) {
+        mult_psych = 6;
+    }
+    if (has_fac_built(FAC_RESEARCH_HOSPITAL, base_id)) {
+        mult_psych++;
+        mult_labs += 2;
+    }
+    if (has_fac_built(FAC_NANOHOSPITAL, base_id)) {
+        mult_psych++;
+        mult_labs += 2;
+    }
+    if (has_fac_built(FAC_TREE_FARM, base_id)) {
+        mult_psych += 2;
+        mult_economy += 2;
+    }
+    if (has_fac_built(FAC_HYBRID_FOREST, base_id)) {
+        mult_psych += 2;
+        mult_economy += 2;
+    }
+    if (has_fac_built(FAC_FUSION_LAB, base_id)) {
+        mult_economy += 2;
+        mult_labs += 2;
+    }
+    if (has_fac_built(FAC_QUANTUM_LAB, base_id)) {
+        mult_economy += 2;
+        mult_labs += 2;
+    }
+    base->psych_total = (base->psych_total * mult_psych + 3) / 4;
+    base->labs_total = (base->labs_total * mult_labs + 3) / 4;
+    if (SecretProject->supercollider == base_id) {
+        base->labs_total *= 2;
+    }
+    if (SecretProject->theory_of_everything == base_id) {
+        base->labs_total *= 2;
+    }
+    base->economy_total = (base->economy_total * mult_economy + 3) / 4;
+    if (SecretProject->space_elevator == base_id) {
+        base->economy_total *= 2;
+    }
+    if (SecretProject->longevity_vaccine == base_id && player->soc_category_pending.economics == SE_FREE_MARKET) {
+        base->economy_total += base->economy_total / 2;
+    }
+    base->unk_10 = (base->unk_10 * mult_economy + 3) / 4;
+    if (SecretProject->network_backbone == base_id) {
+        for (int i = 0; i < *BaseCurrentCount; i++) {
+            if (has_fac_built(FAC_NETWORK_NODE, i)) {
+                base->labs_total++;
+            }
+        }
+        if (Players[faction_id].rule_flags & RFLAG_ALIEN) {
+            base->labs_total += commerce;
+        }
+        for (uint32_t faction_id_2 = 1; faction_id_2 < MaxPlayerNum; faction_id_2++) {
+            if (!player->sanction_turns && !PlayersData[faction_id_2].sanction_turns
+                && !(Players[faction_id].rule_flags & RFLAG_ALIEN)
+                && !(Players[faction_id_2].rule_flags & RFLAG_ALIEN)) {
+                base->labs_total += BaseCommerceImport[faction_id_2];
+            }
+        }
+    }
+    int alloc_labs = player->se_alloc_labs;
+    int alloc_psych = player->se_alloc_psych;
+    int imbalance = alloc_psych - 10 + alloc_labs * 2;
+    if (imbalance < 0) {
+        imbalance = (5 - alloc_labs) * 2 - alloc_psych;
+    }
+    imbalance /= 2;
+    int efficiency = player->soc_effect_pending.efficiency;
+    efficiency = efficiency < -4 ? -4 : (efficiency > 4 ? 4 : efficiency);
+    int inefficiency = (4 - efficiency) * 2;
+    if (imbalance && inefficiency) {
+        int penalty = inefficiency * imbalance;
+        int penalty_labs, penalty_economy;
+        if (10 - alloc_labs - alloc_psych < alloc_labs) {
+            penalty_labs = penalty < 0 ? 0 : (penalty > 40 ? 40 : penalty);
+            penalty_economy = penalty * 2 < 0 ? 0 : (penalty * 2 > 80 ? 80 : penalty * 2);
+        } else {
+            penalty_labs = penalty * 2 < 0 ? 0 : (penalty * 2 > 80 ? 80 : penalty * 2);
+            penalty_economy = penalty < 0 ? 0 : (penalty > 40 ? 40 : penalty);
+        }
+        base->labs_total = ((100 - penalty_labs) * base->labs_total + 50) / 100;
+        base->economy_total = ((100 - penalty_economy) * base->economy_total + 50) / 100;
+    }
+    if (base->queue_production_id[0] == -FAC_STOCKPILE_ENERGY && base->mineral_surplus > 0
+        && base->production_id_last == -FAC_STOCKPILE_ENERGY) {
+        int stockpile = (base->mineral_surplus + 1) / 2;
+        if (SecretProject->planetary_energy_grid >= 0
+            && Bases[SecretProject->planetary_energy_grid].faction_id_current == faction_id) {
+            stockpile = (stockpile * 5 + 3) / 4;
+        }
+        base->economy_total += stockpile;
+    }
+    base_psych();
 }
 
 /*

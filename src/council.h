@@ -43,6 +43,7 @@ constexpr int MaxProposalNum = 11;
 
 extern RulesProposal *Proposal;
 extern int *GovernorFactionID;
+extern int *ProposalPassCount;
 
 DLLEXPORT uint32_t __cdecl council_votes(uint32_t faction_id);
 DLLEXPORT BOOL __cdecl eligible(uint32_t faction_id);

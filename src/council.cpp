@@ -23,6 +23,7 @@
 
 RulesProposal *Proposal = (RulesProposal *)0x009A6828;
 int *GovernorFactionID = (int *)0x009A6614; // current Planetary Governor, 0 if none
+int *ProposalPassCount = (int *)0x009A6618; // times each council proposal has passed
 
 /*
 Purpose: Calculate faction's vote count. Used for Planetary Governor and Supreme Leader.

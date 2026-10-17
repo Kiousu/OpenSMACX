@@ -512,6 +512,10 @@ extern int *BaseTerraformReduce;
 extern int *BaseTileFlags;
 extern uint32_t *BaseCurrentUsedTiles;
 extern uint32_t *BaseCurrentForcesMaintCount;
+extern int *BaseCurrentWorkersLeft;
+extern int *BaseYieldNutrientMet;
+extern int *BaseCommerceImport;
+extern int *BaseCommerceExport;
 extern uint32_t *BaseCurrentConvoyFrom; // resources convoyed from base
 extern uint32_t *BaseCurrentConvoyTo; // resources convoyed/extracted to base
 extern int *BaseCurrentGrowthRate;
@@ -556,6 +560,8 @@ DLLEXPORT void __cdecl base_check_support();
 DLLEXPORT void __cdecl base_research();
 DLLEXPORT void __cdecl farm_compute();
 DLLEXPORT void __cdecl base_support();
+DLLEXPORT void __cdecl base_yield();
+DLLEXPORT void __cdecl base_energy();
 DLLEXPORT uint32_t __cdecl fac_maint(uint32_t facility_id, uint32_t faction_id);
 DLLEXPORT void __cdecl base_maint();
 DLLEXPORT void __cdecl make_base_unique(uint32_t base_id);
