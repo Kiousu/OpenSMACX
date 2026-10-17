@@ -155,6 +155,7 @@ func_void *farm_compute_OG = (func_void *)0x004E68B0;
 func_void *base_support_OG = (func_void *)0x004E9550;
 func_void *base_yield_OG = (func_void *)0x004E80B0;
 func_void *base_energy_OG = (func_void *)0x004EB560;
+func_void *base_minerals_OG = (func_void *)0x004E9CB0;
 func_rand *base_growth_OG = (func_rand *)0x004EF1C0;
 func_void *base_doctors_OG = (func_void *)0x004F5F30;
 func_s_i *get_name_OG = (func_s_i *)0x00559060;

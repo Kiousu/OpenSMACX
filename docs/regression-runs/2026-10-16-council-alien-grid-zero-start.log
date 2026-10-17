@@ -1,0 +1,36 @@
+OpenSMACX regression run: turn 289, 281 bases, 1741 vehs, filter='batch14'
+survey: map 128x128, SP owners: SAC 83 LV 0 HGP 21 CI 0 VW 35 PTS 17
+survey: faction 1 Consciousness human diff 2 bases 35 units 390 away 6 | SE talent 0 police 1 econ 3 eff 6 | rules talent 0 drone 0 | staple 0 punish 0 brood 28 rec 30 holo 2 paradise 0 assim 8
+survey: faction 2 Pirates      AI diff 3 bases 79 units 409 away 18 | SE talent 0 police 0 econ 0 eff -1 | rules talent 0 drone 0 | staple 0 punish 0 brood 0 rec 58 holo 21 paradise 0 assim 16
+survey: faction 3 Drones       AI diff 3 bases 77 units 505 away 6 | SE talent 0 police 0 econ 0 eff 2 | rules talent 0 drone 0 | staple 0 punish 0 brood 0 rec 62 holo 17 paradise 0 assim 22
+survey: faction 4 Angels       AI diff 3 bases 68 units 365 away 14 | SE talent 0 police -1 econ 3 eff 5 | rules talent 0 drone 0 | staple 0 punish 1 brood 0 rec 42 holo 19 paradise 0 assim 19
+survey: faction 6 Caretakers   AI diff 3 bases 3 units 3 away 0 | SE talent 0 police 0 econ 2 eff -2 | rules talent 0 drone 0 | staple 0 punish 0 brood 0 rec 1 holo 1 paradise 0 assim 0
+survey: faction 7 Usurpers     AI diff 3 bases 19 units 62 away 2 | SE talent 0 police 0 econ 2 eff -2 | rules talent 0 drone 0 | staple 0 punish 0 brood 0 rec 13 holo 1 paradise 0 assim 2
+base_yield: 1967 compared (7998 specialists, 1084 worked-tile changes by the original), 0 mismatches
+  base_minerals+base_energy(4) variant 0: Base[4] +0xC8 differs (orig 21 new 20)
+  base_minerals+base_energy(4) variant 1: PlayerData[7] +0x7E8 differs (orig C4 new C3)
+  base_minerals+base_energy(4) variant 2: Base[4] +0xC8 differs (orig 21 new 20)
+  base_minerals+base_energy(4) variant 3: Base[4] +0xC8 differs (orig 21 new 20)
+  base_minerals+base_energy(4) variant 5: Base[4] +0xC8 differs (orig 21 new 20)
+  base_minerals+base_energy(4) variant 7: Base[4] +0xC8 differs (orig 21 new 20)
+  base_minerals+base_energy(31) variant 4: Base[31] +0xC8 differs (orig 23 new 22)
+  base_minerals+base_energy(31) variant 5: Base[31] +0xC8 differs (orig 12 new 11)
+  base_minerals+base_energy(52) variant 4: Base[52] +0xC8 differs (orig 2D new 2C)
+  base_minerals+base_energy(65) variant 0: Base[65] +0xC8 differs (orig 0D new 0C)
+  base_minerals+base_energy(65) variant 1: PlayerData[7] +0x7D0 differs (orig 37 new 36)
+  base_minerals+base_energy(65) variant 2: Base[65] +0xC8 differs (orig 0D new 0C)
+  base_minerals+base_energy(65) variant 3: Base[65] +0xC8 differs (orig 0D new 0C)
+  base_minerals+base_energy(65) variant 7: Base[65] +0xC8 differs (orig 0D new 0C)
+  base_minerals+base_energy(72) variant 0: Base[72] +0xC8 differs (orig 12 new 11)
+  base_minerals+base_energy(72) variant 1: PlayerData[7] +0x7F0 differs (orig EC new EB)
+  base_minerals+base_energy(72) variant 2: Base[72] +0xC8 differs (orig 12 new 11)
+  base_minerals+base_energy(72) variant 3: Base[72] +0xC8 differs (orig 12 new 11)
+  base_minerals+base_energy(72) variant 4: Base[72] +0xC8 differs (orig 26 new 25)
+  base_minerals+base_energy(72) variant 5: Base[72] +0xC8 differs (orig 12 new 11)
+  base_minerals+base_energy(72) variant 7: Base[72] +0xC8 differs (orig 12 new 11)
+  base_minerals+base_energy(74) variant 0: Base[74] +0xC8 differs (orig 0F new 0E)
+  base_minerals+base_energy(74) variant 1: PlayerData[7] +0x7D4 differs (orig 44 new 43)
+  base_minerals+base_energy(74) variant 2: Base[74] +0xC8 differs (orig 0F new 0E)
+  base_minerals+base_energy(74) variant 3: Base[74] +0xC8 differs (orig 0F new 0E)
+base_energy (after base_minerals): 2248 compared (10024 commerce imported, 176 alien-base runs), 108 mismatches
+TOTAL mismatches: 108 (750 ms)

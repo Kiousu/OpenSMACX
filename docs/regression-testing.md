@@ -695,10 +695,8 @@ Log: `regression-runs/2026-10-16-council-batch14.log`. Notes: 0x90E938 is
 `BaseCurrentWorkersLeft`, 0x90E900 `BaseYieldNutrientMet`, 0x90EA0C/0x90E960 the commerce
 import/export arrays (indexed by faction), 0x9A6618 `ProposalPassCount`; PlayerData `unk_13`
 renamed `energy_surplus_total` (summed from the surplus before commerce, as the original does).
-Deliberate change: the original seeds the alien energy grid from an uninitialized local unless
-some treaty partner passed the commerce checks; the DLL starts it from zero. The test gives
-alien factions a treaty partner so both sides start from the same value. Original behaviour
-kept: the specialist value divides by the energy intake plus the specialists already added, and
+The alien energy grid as first promoted here started from zero; that was wrong and is
+corrected in "Alien energy grid correction" below. Original behaviour kept: the specialist value divides by the energy intake plus the specialists already added, and
 `base_yield` writes new specialists from slot 0 while counting leftovers from the old total.
 Boot test: the 624-redirect exe loaded Council.SAV and advanced the turn 289 -> 290 (38 s) with
 the game alive.
@@ -902,3 +900,34 @@ named (`EnergyReportMaint`, `EnergyReportBaseMaint[512]`, `EnergyReportLabs`,
 offset 0x25 holds an aircraft's turns aloft.
 Boot test: the 673-redirect exe loaded Council.SAV and advanced the turn 289 -> 290 (34 s) with
 the game alive.
+
+## Alien energy grid correction, 2026-10-16 (Council.SAV, 673-redirect exe)
+
+Batch 14 started the alien energy grid in `base_energy` from zero and called that a deliberate
+change, and its test gave alien factions treaty partners to avoid the case. Both were wrong:
+aliens don't trade, so the no-partner case is the normal one, and the original's value there is
+not random. `base_energy` keeps the commerce import in a local it never initializes (its frame
+is `sub esp, 0x28` and the slot is first written inside the treaty branch), then adds the grid
+(half of the facilities plus 5 per secret project) to it. All twelve call sites in the exe run
+`base_minerals` immediately before `base_energy` at the same stack depth, and `base_minerals`
+always leaves its eco-damage divisor in that slot (1, or 2 with a nanoreplicator or the
+Singularity Inductor, plus one each for a Centauri Preserve, a Temple of Planet and the Pholus
+Mutagen). So in the game an alien base's grid starts from that divisor unless some treaty
+partner passed the commerce checks, whose zeroed import replaces it. The DLL now does exactly
+that (`base_eco_divisor`, shared with `base_minerals`).
+
+The `batch14` test no longer adds treaties; it adds a no-treaty variant and runs the exe's own
+`base_minerals` + `base_energy` back to back (the harness restores their first six bytes in
+place of the patcher's jumps) against the DLL pair, comparing the snapshot and the base globals.
+
+| run | compared | alien-base runs | mismatches |
+|---|---|---|---|
+| zero start (the batch 14 version) | 2,248 | 176 | 108 |
+| divisor start (now) | 2,248 | 176 | 0 |
+
+Logs: `regression-runs/2026-10-16-council-alien-grid.log` and
+`regression-runs/2026-10-16-council-alien-grid-zero-start.log` (the mismatches are alien bases'
+energy intake one lower than vanilla). Before batch 14 the patched exe already differed here,
+because the DLL's `base_minerals` leaves something else in that slot; this restores vanilla.
+Boot test: the 673-redirect exe with the corrected DLL loaded Council.SAV and advanced the turn
+289 -> 290 (38 s) with the game alive.

@@ -1874,6 +1874,29 @@ void __cdecl base_nutrient() {
 }
 
 /*
+Purpose: Get the divisor applied to the current base's mineral eco-damage: 1, or 2 with a
+         nanoreplicator or the Singularity Inductor, plus one each for a Centauri Preserve, a
+         Temple of Planet and the Pholus Mutagen.
+Original Offset: n/a (inlined in base_minerals; see also base_energy)
+Return Value: Eco-damage divisor (1-5)
+Status: Complete
+*/
+static int base_eco_divisor(uint32_t faction_id) {
+    int divisor = (has_fac_built(FAC_NANOREPLICATOR, *BaseIDCurrentSelected)
+        || has_project(SP_SINGULARITY_INDUCTOR, faction_id)) ? 2 : 1;
+    if (has_fac_built(FAC_CENTAURI_PRESERVE, *BaseIDCurrentSelected)) {
+        divisor++;
+    }
+    if (has_fac_built(FAC_TEMPLE_OF_PLANET, *BaseIDCurrentSelected)) {
+        divisor++;
+    }
+    if (has_project(SP_PHOLUS_MUTAGEN, faction_id)) {
+        divisor++;
+    }
+    return divisor;
+}
+
+/*
 Purpose: Calculate minerals and ecological damage for the current base.
 Original Offset: 004E9CB0
 Return Value: n/a
@@ -1914,17 +1937,7 @@ void __cdecl base_minerals() {
         planet_eco_factor -= planet_modifier;
         (*BaseCurrent)->eco_damage -= planet_modifier;
     }
-    int eco_dmg_reduction = (has_fac_built(FAC_NANOREPLICATOR, *BaseIDCurrentSelected)
-        || has_project(SP_SINGULARITY_INDUCTOR, faction_id)) ? 2 : 1;
-    if (has_fac_built(FAC_CENTAURI_PRESERVE, *BaseIDCurrentSelected)) {
-        eco_dmg_reduction++;
-    }
-    if (has_fac_built(FAC_TEMPLE_OF_PLANET, *BaseIDCurrentSelected)) {
-        eco_dmg_reduction++;
-    }
-    if (has_project(SP_PHOLUS_MUTAGEN, faction_id)) {
-        eco_dmg_reduction++;
-    }
+    int eco_dmg_reduction = base_eco_divisor(faction_id);
     (*BaseCurrent)->eco_damage += ((*BaseCurrent)->mineral_intake_2 - planet_eco_factor
         - range(PlayersData[faction_id].satellites_mineral, 0, (*BaseCurrent)->population_size))
         / eco_dmg_reduction;
@@ -2306,9 +2319,9 @@ Purpose: Work out the current base's energy. Energy convoys and commerce with ev
          Finishes with base_psych().
 Original Offset: 004EB560
 Return Value: n/a
-Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch14.log).
-        One deliberate change: the alien energy grid starts from zero, where the original
-        starts from an uninitialized local unless some treaty partner passed the commerce checks.
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch14.log;
+        the alien energy grid against vanilla base_minerals + base_energy in
+        docs/regression-runs/2026-10-16-council-alien-grid.log)
 */
 void __cdecl base_energy() {
     Base *base = *BaseCurrent;
@@ -2330,7 +2343,12 @@ void __cdecl base_energy() {
             base_id = i;
         }
     }
-    int commerce = 0; // the last import computed; seeds the alien energy grid below
+    // Aliens don't trade (every import is zeroed for them below) but have an energy grid. The
+    // original keeps the import in a local it never initializes and then adds the grid to it.
+    // base_minerals() always runs just before at the same stack depth and leaves its eco-damage
+    // divisor in that slot, so an alien grid starts from the divisor unless some treaty partner
+    // passed the commerce checks (whose zeroed import replaces it).
+    int commerce = base_eco_divisor(faction_id);
     for (uint32_t faction_id_2 = 1; faction_id_2 < MaxPlayerNum; faction_id_2++) {
         BaseCommerceImport[faction_id_2] = 0;
         BaseCommerceExport[faction_id_2] = 0;

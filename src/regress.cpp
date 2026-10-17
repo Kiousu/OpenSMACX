@@ -4574,6 +4574,43 @@ static int test_base_yield() {
     return mismatches;
 }
 
+// The patcher replaces a redirected function's first six bytes with jmp [IAT]; this puts the
+// original bytes back while it lives, so the exe's own code runs again.
+struct OriginalEntry {
+    uint8_t *entry;
+    uint8_t saved[6];
+    DWORD old_protect;
+    BOOL ok;
+    OriginalEntry(uint32_t address, const uint8_t (&original)[6])
+        : entry((uint8_t *)address), old_protect(0), ok(false) {
+        if (!VirtualProtect(entry, 6, PAGE_EXECUTE_READWRITE, &old_protect)) {
+            logf("cannot unprotect %08X (%u)", address, GetLastError());
+            return;
+        }
+        memcpy(saved, entry, 6);
+        memcpy(entry, original, 6);
+        FlushInstructionCache(GetCurrentProcess(), entry, 6);
+        ok = true;
+    }
+    ~OriginalEntry() {
+        if (ok) {
+            memcpy(entry, saved, 6);
+            FlushInstructionCache(GetCurrentProcess(), entry, 6);
+            VirtualProtect(entry, 6, old_protect, &old_protect);
+        }
+    }
+};
+
+// Run two functions back to back at the same stack depth, as the game's base_support ..
+// base_energy chain does, so the second sees what the first left in the stack slots it doesn't
+// initialize.
+static void __declspec(noinline) call_pair(func_void *first, func_void *second) {
+    __asm {
+        call first
+        call second
+    }
+}
+
 static int test_base_energy() {
     GameSnapshot base, after_orig, after_new;
     snap_alloc(&base); snap_alloc(&after_orig); snap_alloc(&after_new);
@@ -4585,23 +4622,27 @@ static int test_base_energy() {
     int pass_saved[2] = { ProposalPassTable[PROP_GLOBAL_TRADE_PACT], ProposalPassTable[PROP_REPEAL_GLOBAL_TRADE_PACT] };
     int governor_saved = *GovernorFactionID;
     int selected_saved = *BaseIDCurrentSelected;
-    int most_bases = 1;
-    for (int g = 1; g < MaxPlayerNum; g++) {
-        if (base.players[g].current_num_bases > base.players[most_bases].current_num_bases) {
-            most_bases = g;
-        }
+    // run the exe's own base_minerals and base_energy, not the jumps into the DLL
+    static const uint8_t minerals_entry[6] = { 0x55, 0x8B, 0xEC, 0x83, 0xEC, 0x10 };
+    static const uint8_t energy_entry[6] = { 0x55, 0x8B, 0xEC, 0x83, 0xEC, 0x28 };
+    OriginalEntry vanilla_minerals(0x004E9CB0, minerals_entry);
+    OriginalEntry vanilla_energy(0x004EB560, energy_entry);
+    if (!vanilla_minerals.ok || !vanilla_energy.ok) {
+        return 1;
     }
     int compared = 0, mismatches = 0, commerce = 0, grids = 0;
     char label[80];
     for (int base_id = 0; base_id < base.base_count; base_id++) {
         uint32_t f = base.bases[base_id].faction_id_current;
         BOOL alien = (Players[f].rule_flags & RFLAG_ALIEN) != 0;
-        for (int variant = 0; variant < 7; variant++) {
+        for (int variant = 0; variant < 8; variant++) {
             // as loaded; the upkeep pass with a global trade pact and this faction governing;
             // labs-heavy allocation at efficiency -4; no allocation with four specialists of
             // types 0-3; every multiplier facility and project here; stockpile energy (energy
-            // grid project owned on odd bases); sanctions with no treaties. Alien factions always
-            // keep a treaty partner so the original's energy grid starts from a known value.
+            // grid project owned on odd bases); sanctions with no treaties; no treaties at all.
+            // Each run pairs base_minerals and base_energy at one stack depth as the game always
+            // does, because base_energy starts an alien base's energy grid from what
+            // base_minerals leaves on the stack.
             auto prepare = [&]() {
                 snap_restore(&base);
                 memcpy(BaseGlobals, globals_saved, BaseGlobalsSize);
@@ -4657,12 +4698,15 @@ static int test_base_energy() {
                         PlayersData[g].diplo_treaties[f] &= ~DTREATY_TREATY;
                     }
                 }
-                if (alien && (int)f != most_bases) {
-                    p->diplo_treaties[most_bases] |= DTREATY_TREATY;
+                if (variant == 7) {
+                    for (int g = 0; g < MaxPlayerNum; g++) {
+                        p->diplo_treaties[g] &= ~(DTREATY_TREATY | DTREATY_PACT);
+                        PlayersData[g].diplo_treaties[f] &= ~(DTREATY_TREATY | DTREATY_PACT);
+                    }
                 }
             };
             prepare();
-            base_energy_OG();
+            call_pair(base_minerals_OG, base_energy_OG);
             snap_take(&after_orig);
             memcpy(globals_o, BaseGlobals, BaseGlobalsSize);
             for (int g = 1; g < MaxPlayerNum; g++) {
@@ -4670,11 +4714,11 @@ static int test_base_energy() {
             }
             grids += alien;
             prepare();
-            base_energy();
+            call_pair(base_minerals, base_energy);
             snap_take(&after_new);
             memcpy(globals_n, BaseGlobals, BaseGlobalsSize);
             compared++;
-            sprintf_s(label, "base_energy(%d) variant %d", base_id, variant);
+            sprintf_s(label, "base_minerals+base_energy(%d) variant %d", base_id, variant);
             BOOL detail = mismatches < MAX_DETAIL;
             if (base_globals_differ(globals_o, globals_n, detail ? label : NULL)
                 || snap_differs(&after_orig, &after_new, detail ? label : NULL)) {
@@ -4690,7 +4734,7 @@ static int test_base_energy() {
     *GovernorFactionID = governor_saved;
     *BaseIDCurrentSelected = selected_saved;
     snap_free(&base); snap_free(&after_orig); snap_free(&after_new);
-    logf("base_energy: %d compared (%d commerce imported, %d alien-base runs by the original), %d mismatches",
+    logf("base_energy (after base_minerals): %d compared (%d commerce imported, %d alien-base runs), %d mismatches",
         compared, commerce, grids, mismatches);
     return mismatches;
 }

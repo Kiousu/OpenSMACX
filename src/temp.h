@@ -239,6 +239,7 @@ extern func_void *base_support_OG;
 // batch 14
 extern func_void *base_yield_OG;
 extern func_void *base_energy_OG;
+extern func_void *base_minerals_OG;
 // batch 15
 extern func_rand *base_growth_OG;
 extern func_void *base_doctors_OG;
