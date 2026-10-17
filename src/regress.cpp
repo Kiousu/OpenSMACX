@@ -4695,6 +4695,229 @@ static int test_base_energy() {
     return mismatches;
 }
 
+// ---------------------------------------------------------------- batch 15
+
+static int test_base_growth() {
+    GameSnapshot base, after_orig, after_new;
+    snap_alloc(&base); snap_alloc(&after_orig); snap_alloc(&after_new);
+    snap_take(&base);
+    uint8_t globals_saved[BaseGlobalsSize], globals_o[BaseGlobalsSize], globals_n[BaseGlobalsSize];
+    memcpy(globals_saved, BaseGlobals, BaseGlobalsSize);
+    int sp_saved[MaxSecretProjectNum];
+    memcpy(sp_saved, SecretProjectTable, sizeof(sp_saved));
+    int selected_saved = *BaseIDCurrentSelected;
+    int compute_saved = *BaseComputeID;
+    uint32_t state_saved = *GameState;
+    int compared = 0, mismatches = 0, grew = 0, starved = 0;
+    char label[80];
+    for (int base_id = 0; base_id < base.base_count; base_id++) {
+        uint32_t f = base.bases[base_id].faction_id_current;
+        if (!quiet_faction(f)) {
+            continue; // popups for the player at the controls
+        }
+        for (int variant = 0; variant < 9; variant++) {
+            // as loaded; starving with a nutrient convoy parked here; starving once the game is
+            // over; just enough nutrients; a pop boom; at the habitation limit with plenty;
+            // stagnation; starvation ahead; a pop boom with cloning vats at the limit
+            auto prepare = [&]() {
+                snap_restore(&base);
+                memcpy(BaseGlobals, globals_saved, BaseGlobalsSize);
+                memcpy(SecretProjectTable, sp_saved, sizeof(sp_saved));
+                *GameState = state_saved;
+                *BaseComputeID = compute_saved;
+                set_base(base_id);
+                Base *b = &Bases[base_id];
+                int cost = cost_factor(f, RSC_NUTRIENTS, base_id) * (b->population_size + 1);
+                if (variant == 1 || variant == 2) {
+                    b->nutrients_accumulated = -3;
+                    if (b->population_size < 2) {
+                        b->population_size = 2;
+                    }
+                    if (variant == 2) {
+                        *GameState |= STATE_UNK_1;
+                        *GameState &= ~STATE_UNK_8;
+                    }
+                    BaseCurrentConvoyFrom[RSC_NUTRIENTS] = 1;
+                    for (int v = 0; v < *VehCurrentCount; v++) {
+                        if (Vehs[v].home_base_id == base_id
+                            && VehPrototypes[Vehs[v].proto_id].plan == PLAN_SUPPLY_CONVOY) {
+                            Vehs[v].order = ORDER_CONVOY;
+                            Vehs[v].order_auto_type = RSC_NUTRIENTS;
+                            Vehs[v].x = b->x;
+                            Vehs[v].y = b->y;
+                            break;
+                        }
+                    }
+                } else if (variant == 3) {
+                    b->nutrients_accumulated = cost;
+                    *BaseCurrentGrowthRate = 0;
+                } else if (variant == 4) {
+                    *BaseCurrentGrowthRate = 6;
+                    b->nutrient_surplus = Rules->nutrient_req_citizen + 1;
+                    b->nutrients_accumulated = cost * 2;
+                } else if (variant == 5 || variant == 8) {
+                    b->population_size = (int8_t)Rules->pop_limit_sans_hab_complex;
+                    uint32_t offset, mask;
+                    bitmask(FAC_HAB_COMPLEX, &offset, &mask);
+                    b->facilities_built[offset] &= ~mask;
+                    b->nutrients_accumulated = 999;
+                    *BaseCurrentGrowthRate = 0;
+                    if (variant == 8) {
+                        SecretProject->cloning_vats = base_id;
+                        b->nutrient_surplus = Rules->nutrient_req_citizen;
+                    }
+                } else if (variant == 6) {
+                    *BaseCurrentGrowthRate = -3;
+                    b->nutrients_accumulated = cost + 5;
+                } else if (variant == 7) {
+                    b->nutrients_accumulated = 5;
+                    b->nutrient_surplus = -3;
+                    *BaseCurrentGrowthRate = 0;
+                }
+            };
+            prepare();
+            int pop_before = Bases[base_id].population_size;
+            int r_o = base_growth_OG();
+            snap_take(&after_orig);
+            memcpy(globals_o, BaseGlobals, BaseGlobalsSize);
+            int compute_o = *BaseComputeID;
+            grew += Bases[base_id].population_size > pop_before;
+            starved += Bases[base_id].population_size < pop_before;
+            prepare();
+            int r_n = base_growth();
+            snap_take(&after_new);
+            memcpy(globals_n, BaseGlobals, BaseGlobalsSize);
+            int compute_n = *BaseComputeID;
+            compared++;
+            sprintf_s(label, "base_growth(%d) variant %d", base_id, variant);
+            BOOL detail = mismatches < MAX_DETAIL;
+            BOOL diff = false;
+            if (r_o != r_n || compute_o != compute_n) {
+                if (detail) {
+                    logf("  %s: return orig %d new %d, computed base orig %d new %d", label, r_o, r_n,
+                        compute_o, compute_n);
+                }
+                diff = true;
+            }
+            if (!diff) {
+                diff = base_globals_differ(globals_o, globals_n, detail ? label : NULL)
+                    || snap_differs(&after_orig, &after_new, detail ? label : NULL);
+            }
+            if (diff) {
+                mismatches++;
+            }
+        }
+    }
+    snap_restore(&base);
+    memcpy(BaseGlobals, globals_saved, BaseGlobalsSize);
+    memcpy(SecretProjectTable, sp_saved, sizeof(sp_saved));
+    *GameState = state_saved;
+    *BaseComputeID = compute_saved;
+    *BaseIDCurrentSelected = selected_saved;
+    snap_free(&base); snap_free(&after_orig); snap_free(&after_new);
+    logf("base_growth: %d compared (%d grew, %d starved by the original), %d mismatches",
+        compared, grew, starved, mismatches);
+    return mismatches;
+}
+
+static int test_base_doctors() {
+    GameSnapshot base, after_orig, after_new;
+    snap_alloc(&base); snap_alloc(&after_orig); snap_alloc(&after_new);
+    snap_take(&base);
+    uint8_t globals_saved[BaseGlobalsSize], globals_o[BaseGlobalsSize], globals_n[BaseGlobalsSize];
+    memcpy(globals_saved, BaseGlobals, BaseGlobalsSize);
+    int sp_saved[MaxSecretProjectNum];
+    memcpy(sp_saved, SecretProjectTable, sizeof(sp_saved));
+    int selected_saved = *BaseIDCurrentSelected;
+    int compute_saved = *BaseComputeID;
+    int control_saved = *ControlUpkeepA;
+    int compared = 0, mismatches = 0, changed = 0;
+    char label[80];
+    for (int base_id = 0; base_id < base.base_count; base_id++) {
+        uint32_t f = base.bases[base_id].faction_id_current;
+        BOOL quiet = quiet_faction(f);
+        for (int variant = 0; variant < 6; variant++) {
+            // as loaded; drones ahead of talents in a fed base; three spare specialists in an
+            // unfed one; rioting under weak police while about to grow; drones ahead with the
+            // Telepathic Matrix; a human base under its governor (no slider advice)
+            if (variant < 5 ? !quiet : (quiet || !is_human(f))) {
+                continue;
+            }
+            auto prepare = [&]() {
+                snap_restore(&base);
+                memcpy(BaseGlobals, globals_saved, BaseGlobalsSize);
+                memcpy(SecretProjectTable, sp_saved, sizeof(sp_saved));
+                *BaseComputeID = compute_saved;
+                *ControlUpkeepA = control_saved;
+                set_base(base_id);
+                Base *b = &Bases[base_id];
+                if (variant == 1 || variant == 4) {
+                    *BaseYieldNutrientMet = 1;
+                    b->drone_total = b->talent_total + 3;
+                    if (variant == 4) {
+                        SecretProject->telepathic_matrix = base_id;
+                    }
+                } else if (variant == 2) {
+                    *BaseYieldNutrientMet = 0;
+                    b->specialist_total += 3;
+                    b->specialist_unk_1 = 0;
+                    b->spec[0] = 0x14141414;
+                } else if (variant == 3) {
+                    b->state |= BSTATE_DRONE_RIOTS_ACTIVE;
+                    PlayersData[f].soc_effect_pending.police = -3;
+                    b->nutrients_accumulated = 999;
+                    *BaseYieldNutrientMet = 1;
+                    b->drone_total = b->talent_total + 1;
+                } else if (variant == 5) {
+                    b->governor |= GOV_MANAGES_CITIZENS_SPECS | GOV_ACTIVE;
+                    *ControlUpkeepA = 0;
+                    *BaseYieldNutrientMet = 1;
+                    b->drone_total = b->talent_total + 2;
+                }
+            };
+            prepare();
+            int spec_before = Bases[base_id].specialist_total;
+            base_doctors_OG();
+            snap_take(&after_orig);
+            memcpy(globals_o, BaseGlobals, BaseGlobalsSize);
+            int compute_o = *BaseComputeID;
+            changed += Bases[base_id].specialist_total != spec_before;
+            prepare();
+            base_doctors();
+            snap_take(&after_new);
+            memcpy(globals_n, BaseGlobals, BaseGlobalsSize);
+            int compute_n = *BaseComputeID;
+            compared++;
+            sprintf_s(label, "base_doctors(%d) variant %d", base_id, variant);
+            BOOL detail = mismatches < MAX_DETAIL;
+            BOOL diff = false;
+            if (compute_o != compute_n) {
+                if (detail) {
+                    logf("  %s: computed base orig %d new %d", label, compute_o, compute_n);
+                }
+                diff = true;
+            }
+            if (!diff) {
+                diff = base_globals_differ(globals_o, globals_n, detail ? label : NULL)
+                    || snap_differs(&after_orig, &after_new, detail ? label : NULL);
+            }
+            if (diff) {
+                mismatches++;
+            }
+        }
+    }
+    snap_restore(&base);
+    memcpy(BaseGlobals, globals_saved, BaseGlobalsSize);
+    memcpy(SecretProjectTable, sp_saved, sizeof(sp_saved));
+    *BaseComputeID = compute_saved;
+    *ControlUpkeepA = control_saved;
+    *BaseIDCurrentSelected = selected_saved;
+    snap_free(&base); snap_free(&after_orig); snap_free(&after_new);
+    logf("base_doctors: %d compared (%d specialist changes by the original), %d mismatches",
+        compared, changed, mismatches);
+    return mismatches;
+}
+
 static DWORD WINAPI regress_watcher(LPVOID) {
     for (;;) {
         Sleep(1000);
@@ -4808,6 +5031,8 @@ void regress_run() {
     if (test_enabled("batch13", "farm_compute")) total += run_guarded("farm_compute", test_farm_compute);
     if (test_enabled("batch14", "base_yield")) total += run_guarded("base_yield", test_base_yield);
     if (test_enabled("batch14", "base_energy")) total += run_guarded("base_energy", test_base_energy);
+    if (test_enabled("batch15", "base_growth")) total += run_guarded("base_growth", test_base_growth);
+    if (test_enabled("batch15", "base_doctors")) total += run_guarded("base_doctors", test_base_doctors);
     if (test_enabled("enemy_capabilities")) total += run_guarded("enemy_capabilities", test_enemy_capabilities);
     if (test_enabled("social_ai")) total += run_guarded("social_ai", test_social_ai);
     if (test_enabled("Path::sensors") || test_enabled("path_sensors")) total += run_guarded("path_sensors", test_path_sensors);

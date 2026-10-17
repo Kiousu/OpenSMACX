@@ -702,3 +702,32 @@ kept: the specialist value divides by the energy intake plus the specialists alr
 `base_yield` writes new specialists from slot 0 while counting leftovers from the old total.
 Boot test: the 624-redirect exe loaded Council.SAV and advanced the turn 289 -> 290 (38 s) with
 the game alive.
+
+## Batch 15, 2026-10-16 (Council.SAV, 624-redirect exe)
+
+`base_growth` and `base_doctors` (base.cpp). Trigger group `batch15`, two snapshot tests that
+also compare the current-base globals block and `BaseComputeID` (0x689374). `base_growth` runs
+every AI base (the player at the controls would get popups) as loaded, starving with a nutrient
+convoy parked in the base, starving once the game is over, with exactly enough nutrients, in a
+pop boom, at the habitation limit with plenty stored, stagnating at growth -3, heading for
+starvation (the advice branch, a no-op popup for AI bases), and in a cloning-vats boom at the
+limit. Starving bases keep at least two citizens so no base dies. `base_doctors` runs every AI
+base as loaded, with drones ahead of talents in a fed base, with three spare specialists in an
+unfed base, rioting under weak police while about to grow, and with the Telepathic Matrix, plus
+every human base under an active governor with the slider advice switched off.
+
+| function | inputs | compared | mismatches |
+|---|---|---|---|
+| base_growth | 246 AI bases x 9 variants (367 grew, 248 starved) | 2,214 | 0 |
+| base_doctors | 246 AI bases x 5 variants + 35 governed human bases | 1,265 | 0 |
+
+Log: `regression-runs/2026-10-16-council-batch15.log`. Notes: 0x689374 is `BaseComputeID` (the
+base whose figures the base_support..base_energy chain last refreshed), 0x939284
+`MapWinFactionID`; `base_kill` (0x4E5250) and `eliminate_player` (0x5B3380) are exe pointers.
+`base_growth` returns 1 only when the base starves to death (the original's fall-through path
+also returns 0). Original behaviour kept: the slider advice in `base_doctors` skips bases
+building `+8` (a unit design) rather than the network node `-8`; `base_doctors` picks its
+specialists without the obsolescence check `base_yield` applies. Not promoted: `base_drones`,
+whose Ghidra output didn't settle its types.
+Boot test: the 626-redirect exe loaded Council.SAV and advanced the turn 289 -> 290 (38 s) with
+the game alive.

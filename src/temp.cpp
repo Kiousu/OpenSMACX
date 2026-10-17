@@ -46,6 +46,8 @@ func5 *draw_map = (func5 *)0x0046B190;
 func5 *wave_it = (func5 *)0x004455F0;
 func5 *veh_kill = (func5 *)0x005C08C0;
 func5 *kill = (func5 *)0x005C0B00;
+func5 *base_kill = (func5 *)0x004E5250;
+func14 *eliminate_player = (func14 *)0x005B3380;
 // TODO: crash bug; X_pop > . > BasePop::start > text_close > NULLs 009B7CF4 (FILE *Txt.text_file_)
 // Next call to text_get() tries to access 009B7CF4 and the game crashes.
 func6 *X_pop = (func6 *)0x005BF310;
@@ -153,6 +155,8 @@ func_void *farm_compute_OG = (func_void *)0x004E68B0;
 func_void *base_support_OG = (func_void *)0x004E9550;
 func_void *base_yield_OG = (func_void *)0x004E80B0;
 func_void *base_energy_OG = (func_void *)0x004EB560;
+func_rand *base_growth_OG = (func_rand *)0x004EF1C0;
+func_void *base_doctors_OG = (func_void *)0x004F5F30;
 func_void *base_psych_OG = (func_void *)0x004EA540;
 func_social_ai *social_ai_OG = (func_social_ai *)0x005B4790;
 func_path_sensors *Path_sensors_OG = (func_path_sensors *)0x0059CCA0;
@@ -850,6 +854,7 @@ int *CouncilSessionPending = (int *)0x00703DE8;
 int *VehDrawBoomID = (int *)0x00689F30;
 int *MapWinVehIDSelected = (int *)0x0093928C;
 BOOL *MapWinUnitNotViewMode = (BOOL *)0x00939288;
+int *MapWinFactionID = (int *)0x00939284;
 int *MapWinUnkFlag = (int *)0x00939294;
 int *VehUpgradeUnk = (int *)0x0090EA3C;
 func_veh_init *veh_init = (func_veh_init *)0x005C03D0;

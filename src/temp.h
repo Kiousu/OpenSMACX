@@ -61,6 +61,7 @@ extern func5 *draw_map;
 extern func5 *wave_it;
 extern func5 *veh_kill;
 extern func5 *kill; // kill(veh_id): veh_kill() plus stack and interface cleanup
+extern func5 *base_kill; // base_kill(base_id)
 typedef void *func6(char const *, int(*)(void));
 extern func6 *X_pop;
 typedef int func7(LPCSTR, LPCSTR, int, LPCSTR, int(__cdecl *)());
@@ -71,6 +72,7 @@ extern func9 *mapwin_terrain_fixup;
 typedef BOOL func11(int, int, int);
 extern func11 *wants_to_attack_;
 typedef int func14(int, int);
+extern func14 *eliminate_player; // eliminate_player(faction_id, faction_id_victor)
 typedef uint32_t func15(LPCSTR);
 extern func15 *save_daemon;
 typedef uint32_t func16(LPCSTR, BOOL);
@@ -237,6 +239,9 @@ extern func_void *base_support_OG;
 // batch 14
 extern func_void *base_yield_OG;
 extern func_void *base_energy_OG;
+// batch 15
+extern func_rand *base_growth_OG;
+extern func_void *base_doctors_OG;
 extern func_void *base_psych_OG;
 extern func_social_ai *social_ai_OG;
 extern func_path_sensors *Path_sensors_OG; // Path::sensors()
@@ -353,6 +358,7 @@ extern int *CouncilSessionPending; // hotseat/PBEM: a council session waits for 
 extern int *VehDrawBoomID; // unit being blown up by boom(); never picked as the top of a stack
 extern int *MapWinVehIDSelected; // Console::iUnit, the unit selected in the map window
 extern BOOL *MapWinUnitNotViewMode; // Console field after the owner (Thinker: fUnitNotViewMode)
+extern int *MapWinFactionID; // faction at the controls of the main map window (Thinker: MapWin->cOwner)
 extern int *MapWinUnkFlag; // Console field +0x23BE4, checked by pick_top_veh()
 extern int *VehUpgradeUnk; // zeroed by upgrade_any_prototypes(), set by upgrade_prototype()
 typedef int func_veh_init(int, uint32_t, int, int);

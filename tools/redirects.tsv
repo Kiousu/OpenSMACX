@@ -647,3 +647,6 @@
 # --- batch 14: citizen placement and energy allocation
 0x000E80B0	?base_yield@@YAXXZ
 0x000EB560	?base_energy@@YAXXZ
+# --- batch 15: base growth and riot doctors
+0x000EF1C0	?base_growth@@YAHXZ
+0x000F5F30	?base_doctors@@YAXXZ

@@ -35,6 +35,7 @@ RulesCitizen *Citizen = (RulesCitizen *)0x00946020;
 Base *Bases = (Base *)0x0097D040; // [512]
 BaseSecretProject *SecretProject = (BaseSecretProject *)0x009A6514; // [64]
 int *BaseIDCurrentSelected = (int *)0x00689370;
+int *BaseComputeID = (int *)0x00689374; // base whose figures were last recomputed (Thinker: ComputeBaseID)
 int *BaseCurrentCount = (int *)0x009A64CC;
 int *BaseFindDist = (int *)0x0090EA04;
 Base **BaseCurrent = (Base **)0x0090EA30;
@@ -2625,6 +2626,181 @@ int __cdecl upgrade_cost(uint32_t faction_id, int proto_id_new, int proto_id_old
 }
 
 /*
+Purpose: Grow or starve the current base at the end of its turn. A base out of nutrients recalls
+         its nutrient convoys parked in bases, warns, and loses a citizen (an objective base
+         keeps its last one); losing the last kills the base. A pop boom (cloning vats or growth
+         rating above 5 with a full citizen's worth of surplus) adds a citizen at once; otherwise
+         the base grows when its store reaches the cost, unless growth is -3 or lower or a
+         habitation limit is in the way (then it warns and keeps half the cost). The surplus is
+         then banked, and a human base heading for starvation gets advice on why.
+Original Offset: 004EF1C0
+Return Value: 1 if the base starved to death, otherwise 0
+Status: Complete (verified vs original for AI bases: docs/regression-runs/2026-10-16-council-batch15.log)
+*/
+int __cdecl base_growth() {
+    Base *base = *BaseCurrent;
+    uint32_t faction_id = base->faction_id_current;
+    int base_id = *BaseIDCurrentSelected;
+    int x = base->x;
+    int y = base->y;
+    BOOL alien = (Players[faction_id].rule_flags & RFLAG_ALIEN) != 0;
+    if (base->nutrients_accumulated < 0) {
+        if (!(*GameState & STATE_UNK_1) || (*GameState & STATE_UNK_8)) {
+            if (BaseCurrentConvoyFrom[RSC_NUTRIENTS]) {
+                for (int veh_id = 0; veh_id < *VehCurrentCount; veh_id++) {
+                    Veh *veh = &Vehs[veh_id];
+                    if (veh->home_base_id == base_id
+                        && VehPrototypes[veh->proto_id].plan == PLAN_SUPPLY_CONVOY
+                        && veh->order == ORDER_CONVOY && veh->order_auto_type == RSC_NUTRIENTS
+                        && base_who(veh->x, veh->y) >= 0) {
+                        veh->order = ORDER_NONE;
+                    }
+                }
+            }
+            popb("STARVE", 0x4000, 14, alien ? "al_starv_sm.pcx" : "starv_sm.pcx", 0);
+            base = *BaseCurrent;
+            if (!is_objective(base_id) || base->population_size > 1) {
+                base->population_size--;
+                if (base->population_size < 1) {
+                    base_kill(base_id);
+                    draw_map(1);
+                    eliminate_player(faction_id, 0);
+                    return 1;
+                }
+            }
+        }
+        (*BaseCurrent)->nutrients_accumulated = (*BaseCurrent)->nutrient_surplus;
+        draw_tile(x, y, 2);
+        return 0;
+    }
+    int cost = cost_factor(faction_id, RSC_NUTRIENTS, base_id) * (base->population_size + 1);
+    // the population allowed below each habitation facility, the faction's rule and Ascetic Virtues
+    auto pop_level = [&]() {
+        Base *b = &Bases[base_id];
+        int ascetic = (SecretProject->ascetic_virtues >= 0
+            && Bases[SecretProject->ascetic_virtues].faction_id_current == b->faction_id_current) ? 2 : 0;
+        return b->population_size - ascetic + Players[b->faction_id_current].rule_population;
+    };
+    if (((SecretProject->cloning_vats >= 0
+        && Bases[SecretProject->cloning_vats].faction_id_current == faction_id)
+        || *BaseCurrentGrowthRate > 5)
+        && Rules->nutrient_req_citizen && (int)Rules->nutrient_req_citizen <= base->nutrient_surplus) {
+        if ((pop_level() < (int)Rules->pop_limit_sans_hab_complex || has_fac(FAC_HAB_COMPLEX, base_id, 0))
+            && (pop_level() < (int)Rules->pop_limit_sans_hab_dome || has_fac(FAC_HABITATION_DOME, base_id, 0))) {
+            if (base->population_size < 127) {
+                base->population_size++;
+            }
+            *BaseComputeID = *BaseIDCurrentSelected;
+            base_support();
+            base_yield();
+            base_nutrient();
+            base_minerals();
+            base_energy();
+            draw_tile(x, y, 2);
+            if ((*BaseCurrent)->nutrients_accumulated > cost) {
+                (*BaseCurrent)->nutrients_accumulated = cost;
+            }
+            return 0;
+        }
+    }
+    base = *BaseCurrent;
+    if (cost <= base->nutrients_accumulated) {
+        if (*BaseCurrentGrowthRate < -2) {
+            base->nutrients_accumulated = cost;
+            return 0;
+        }
+        int facility_id;
+        if (pop_level() >= (int)Rules->pop_limit_sans_hab_complex && !has_fac(FAC_HAB_COMPLEX, base_id, 0)) {
+            facility_id = FAC_HAB_COMPLEX;
+        } else if (pop_level() >= (int)Rules->pop_limit_sans_hab_dome
+            && !has_fac(FAC_HABITATION_DOME, *BaseIDCurrentSelected, 0)) {
+            facility_id = FAC_HABITATION_DOME;
+        } else {
+            facility_id = 0;
+            base->nutrients_accumulated = 0;
+            base->population_size++;
+            *BaseComputeID = *BaseIDCurrentSelected;
+            base_support();
+            base_yield();
+            base_nutrient();
+            base_minerals();
+            base_energy();
+            draw_tile(x, y, 2);
+        }
+        if (facility_id) {
+            base = *BaseCurrent;
+            base->nutrients_accumulated = (cost_factor(base->faction_id_current, RSC_NUTRIENTS,
+                *BaseIDCurrentSelected) * (base->population_size + 1)) / 2;
+            parse_say(1, (int)Facility[facility_id].name, -1, -1);
+            popb("POPULATIONLIMIT", 0x800, 16, alien ? "al_pop_sm.pcx" : "pop_sm.pcx", 0);
+        }
+    }
+    base = *BaseCurrent;
+    base->nutrients_accumulated += base->nutrient_surplus;
+    int surplus = base->nutrient_surplus;
+    if (surplus >= 0 || base->nutrients_accumulated - surplus < 0
+        || base->nutrients_accumulated + surplus * 5 >= 0
+        || (base->governor & (GOV_ACTIVE | GOV_MANAGES_CITIZENS_SPECS))
+            == (GOV_ACTIVE | GOV_MANAGES_CITIZENS_SPECS)) {
+        return 0;
+    }
+    // starvation ahead: count the land the base could farm better to choose the advice
+    int farmable = 0;
+    for (int i = 1; i < BaseRadiusTiles; i++) {
+        int x_radius = x + RadiusOffsetX[i];
+        if (!*MapIsFlat) {
+            if (x_radius < 0) {
+                x_radius += *MapLongitudeBounds;
+            } else if (x_radius >= (int)*MapLongitudeBounds) {
+                x_radius -= *MapLongitudeBounds;
+            }
+        }
+        int y_radius = y + RadiusOffsetY[i];
+        if (y_radius < 0 || y_radius >= (int)*MapLatitudeBounds || x_radius < 0
+            || x_radius >= (int)*MapLongitudeBounds) {
+            continue;
+        }
+        Map *tile = map_loc(x_radius, y_radius);
+        uint32_t alt = tile->climate & 0xE0;
+        if (alt < ALT_BIT_SHORE_LINE || (tile->bit & BIT_FARM)) {
+            continue;
+        }
+        if ((tile->bit & BIT_FOREST) && has_fac_built(FAC_TREE_FARM, *BaseIDCurrentSelected)) {
+            continue;
+        }
+        if ((tile->bit & BIT_FUNGUS) && alt >= ALT_BIT_OCEAN_SHELF
+            && PlayersData[faction_id].tech_fungus_nutrient >= 2) {
+            continue;
+        }
+        uint32_t rainfall = (tile->climate >> 3) & 3;
+        if (((*BaseCurrent)->resource_sqr_radius & (1 << i))
+            && (((tile->bit & BIT_FUNGUS) && alt > 0x3F) || (tile->bit & BIT_FOREST)
+                || (tile->val3 & 0xC0) == 0x80 || !rainfall)) {
+            continue;
+        }
+        if (rainfall == 1 || has_tech(Rules->tech_three_nutrients_sqr, faction_id)) {
+            farmable++;
+        }
+    }
+    LPCSTR pcx = alien ? "al_starv_sm.pcx" : "starv_sm.pcx";
+    base = *BaseCurrent;
+    if (farmable && has_tech(VehPrototypes[BSC_FORMERS].preq_tech, faction_id)) {
+        if (PlayersData[faction_id].proto_id_active[BSC_FORMERS]) {
+            popb("LOWNUTRIENTFARMS", 0, -1, pcx, 0);
+        } else {
+            popb("LOWNUTRIENTFORMERS", 0, -1, pcx, 0);
+        }
+    } else if (base->specialist_total < 2 && (!base->specialist_total || base->population_size > 2)) {
+        popb("LOWNUTRIENT", 0x80, 16, pcx, 0);
+    } else if (BaseCurrentDronesStage[0]) {
+        popb("LOWNUTRIENTSPEC1", 0, -1, pcx, 0);
+    } else {
+        popb("LOWNUTRIENTSPEC2", 0, -1, pcx, 0);
+    }
+    return 0;
+}
+
+/*
 Purpose: Upgrade every unit of one prototype to another: pay the energy, re-type the units
          (adjusting morale when the Trained ability comes or goes), update the active prototype
          counts and base production queues, mark the new design as built and retire the old one.
@@ -2956,6 +3132,146 @@ void __cdecl base_research() {
         player->net_random_event = remainder - 100;
     }
     tech_research(faction_id, value / 100);
+}
+
+/*
+Purpose: Choose the best specialist type available to the current base, weighing psych triple
+         and, once the base is big enough for specialists, economy and labs too. Obsolescence is
+         not checked here, unlike in base_yield().
+Original Offset: n/a (inlined in base_doctors)
+Return Value: Citizen type
+Status: Complete
+*/
+static int base_doctor_type() {
+    int best_value = -999;
+    int best_id = 0;
+    for (int citizen_id = 0; citizen_id < MaxSpecialistNum; citizen_id++) {
+        if (!has_tech(Citizen[citizen_id].preq_tech, (*BaseCurrent)->faction_id_current)) {
+            continue;
+        }
+        int value = Citizen[citizen_id].psych_bonus * 3;
+        if ((*BaseCurrent)->population_size >= (int)Rules->min_base_size_specialists) {
+            value += Citizen[citizen_id].ops_bonus + Citizen[citizen_id].research_bonus;
+        }
+        if (best_value < value) {
+            best_id = citizen_id;
+            best_value = value;
+        }
+    }
+    return best_id;
+}
+
+/*
+Purpose: Settle the current base's drones by moving citizens between work and doctoring, for AI
+         bases and human bases whose governor manages citizens. While drones outnumber talents
+         (counting one more if a rioting base under weak police is about to grow) and the base
+         is fed, a specialist is added; otherwise a specialist goes back to work as long as that
+         doesn't start a riot (Telepathic Matrix bases ignore drones). Up to nine steps. A human
+         player who could have used the psych slider instead is told so.
+Original Offset: 004F5F30
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch15.log)
+*/
+void __cdecl base_doctors() {
+    Base *base = *BaseCurrent;
+    uint32_t faction_id = base->faction_id_current;
+    int growing = 0; // a rioting base about to grow needs a spare talent
+    if ((base->state & BSTATE_DRONE_RIOTS_ACTIVE)
+        && PlayersData[faction_id].soc_effect_pending.police
+            + has_fac(FAC_BROOD_PIT, *BaseIDCurrentSelected, 0) * 2 < -1) {
+        int base_id = *BaseIDCurrentSelected;
+        Base *b = &Bases[base_id];
+        int ascetic = (SecretProject->ascetic_virtues >= 0
+            && Bases[SecretProject->ascetic_virtues].faction_id_current == b->faction_id_current) ? 2 : 0;
+        int pop_level = b->population_size - ascetic + Players[b->faction_id_current].rule_population;
+        if ((pop_level < (int)Rules->pop_limit_sans_hab_complex || has_fac(FAC_HAB_COMPLEX, base_id, 0))
+            && (pop_level < (int)Rules->pop_limit_sans_hab_dome || has_fac(FAC_HABITATION_DOME, base_id, 0))
+            && ((((SecretProject->cloning_vats >= 0
+                && Bases[SecretProject->cloning_vats].faction_id_current == faction_id)
+                || *BaseCurrentGrowthRate > 5)
+                && Rules->nutrient_req_citizen
+                && (int)Rules->nutrient_req_citizen <= base->nutrient_surplus)
+                || cost_factor(faction_id, RSC_NUTRIENTS, base_id) * (base->population_size + 1)
+                    <= base->nutrient_surplus + base->nutrients_accumulated)) {
+            growing = 1;
+        }
+    }
+    for (int step = 1; step < 10; step++) {
+        base = *BaseCurrent;
+        if (is_human(faction_id) && (!(base->governor & GOV_MANAGES_CITIZENS_SPECS)
+            || !(base->governor & GOV_ACTIVE))) {
+            return;
+        }
+        BOOL telepathic = SecretProject->telepathic_matrix >= 0
+            && Bases[SecretProject->telepathic_matrix].faction_id_current == faction_id;
+        if (*BaseYieldNutrientMet && base->drone_total + growing > base->talent_total && !telepathic) {
+            int citizen_id = base_doctor_type();
+            base = *BaseCurrent;
+            int slot = base->specialist_total++;
+            base_spec_set(slot, citizen_id);
+            *BaseComputeID = *BaseIDCurrentSelected;
+            base_support();
+            base_yield();
+            base_nutrient();
+            base_minerals();
+            base_energy();
+            base = *BaseCurrent;
+            if (base->drone_total + growing <= base->talent_total) {
+                // riots quelled with doctors: suggest the psych slider to the player at the controls
+                if (!*ControlUpkeepA || faction_id != (uint32_t)*MapWinFactionID
+                    || PlayersData[faction_id].se_alloc_psych > 1
+                    || base->specialist_total - base->specialist_unk_1 < 2) {
+                    return;
+                }
+                int queue = base->queue_production_id[0];
+                if (queue == -FAC_RECREATION_COMMONS || queue == -FAC_HOLOGRAM_THEATRE
+                    || queue == -FAC_PARADISE_GARDEN || queue == -FAC_RESEARCH_HOSPITAL
+                    || queue == -FAC_NANOHOSPITAL) {
+                    return;
+                }
+                // the original compares with +8 here rather than -FAC_NETWORK_NODE
+                if (queue == FAC_NETWORK_NODE && SecretProject->virtual_world >= 0
+                    && Bases[SecretProject->virtual_world].faction_id_current == faction_id) {
+                    return;
+                }
+                if (Players[faction_id].rule_flags & RFLAG_ALIEN) {
+                    popb("PSYCHREQUEST", 0, -1, "Alopdir.pcx", 0);
+                } else {
+                    popb("PSYCHREQUEST", 0, -1, "talent_sm.pcx", 0);
+                }
+                return;
+            }
+            continue;
+        }
+        int specialists = base->specialist_total;
+        if (specialists - base->specialist_unk_1 <= 0 || (base->state & BSTATE_DRONE_RIOTS_ACTIVE)) {
+            return;
+        }
+        if (base->drone_total && base->drone_total + growing >= base->talent_total && !telepathic) {
+            return;
+        }
+        base->specialist_total = specialists - 1;
+        *BaseComputeID = *BaseIDCurrentSelected;
+        base_support();
+        base_yield();
+        base_nutrient();
+        base_minerals();
+        base_energy();
+        base = *BaseCurrent;
+        if (base->drone_total + growing > base->talent_total
+            && !(SecretProject->telepathic_matrix >= 0
+                && Bases[SecretProject->telepathic_matrix].faction_id_current == faction_id)) {
+            // that started a riot: put a specialist back
+            int citizen_id = base_doctor_type();
+            base = *BaseCurrent;
+            int slot = base->specialist_total++;
+            base_spec_set(slot, citizen_id);
+            return;
+        }
+        if (specialists <= base->specialist_total) {
+            return;
+        }
+    }
 }
 
 /*
