@@ -323,6 +323,11 @@ typedef int func_can_terraform(int, int, int, BOOL, int);
 extern func_can_terraform *can_terraform_OG;
 // batch 25
 extern func_void *balance_OG;
+// batch 26
+typedef BOOL func_upgrade_proto(int, int, int, BOOL);
+extern func_upgrade_proto *upgrade_prototype_OG;
+typedef int __fastcall func_net_receive(void *This, void *edx_unused);
+extern func_net_receive *NetDaemon_receive; // NetDaemon::receive(): non-zero while messages wait
 extern func_void *base_psych_OG;
 extern func_social_ai *social_ai_OG;
 extern func_path_sensors *Path_sensors_OG; // Path::sensors()
@@ -429,8 +434,6 @@ extern void *NetMsgVar; // global NetMsg instance
 extern int *BaseIDUnk; // never written by the exe; compared against base ids in study_artifact(),
                        // order_veh(), capture_base(), enemy_move() and Console::go_to()
 extern func_iii *wants_prop; // wants_prop(faction_id, proposal, faction_id_proposer)
-typedef int func_upgrade_proto(int, int, int, int);
-extern func_upgrade_proto *upgrade_prototype; // upgrade_prototype(faction_id, proto_id, proto_id_other, flag)
 typedef int __fastcall func_console_focus(void *This, void *edx_unused, int x, int y, int faction_id);
 extern func_console_focus *Console_focus; // Console::focus()
 extern BOOL *IsLoggingActive; // set by net_end_of_turn() when the per-faction log file could be opened

@@ -711,3 +711,5 @@
 0x00165320	?can_terraform@@YAHHHHHH@Z
 # --- batch 25: starting position balance
 0x001B0420	?balance@@YAXXZ
+# --- batch 26: prototype upgrades
+0x000EFE80	?upgrade_prototype@@YAHHHHH@Z

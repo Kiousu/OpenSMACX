@@ -29,6 +29,7 @@
 #include "log.h"
 #include "council.h"
 #include "general.h"
+#include "net.h"
 
 RulesFacility *Facility = (RulesFacility *)0x009A4B68;
 RulesCitizen *Citizen = (RulesCitizen *)0x00946020;
@@ -2893,6 +2894,118 @@ void __cdecl do_upgrade(uint32_t faction_id, int proto_id_new, int proto_id_old)
     if (faction_id == (uint32_t)*FactionIDCurrent) {
         Console_update_data(ConsoleVar, 0, 0);
     }
+}
+
+/*
+Purpose: Write a prototype's name, stats and ability abbreviations ("Name (stats abilities)") into
+         stringTemp for the upgrade popups. Used by upgrade_prototype().
+Original Offset: n/a (inlined twice in upgrade_prototype)
+Return Value: n/a
+Status: Complete
+*/
+static void upgrade_prototype_say(int proto_id) {
+    stringTemp->str[0] = 0;
+    strcat(stringTemp->str, VehPrototypes[proto_id].veh_name);
+    strcat(stringTemp->str, " ");
+    strcat(stringTemp->str, "(");
+    say_stats_2(stringTemp->str, proto_id);
+    if (VehPrototypes[proto_id].ability_flags) {
+        strcat(stringTemp->str, " ");
+        for (int i = 0; i < MaxAbilityNum; i++) {
+            if (has_abil(proto_id, 1 << i)) {
+                strcat(stringTemp->str, StringTable->get((int)Ability[i].abbreviation));
+            }
+        }
+    }
+    strcat(stringTemp->str, ")");
+}
+
+/*
+Purpose: Upgrade all of a faction's units of one prototype to another, for the upgrade cost. An AI
+         pays when the cost, less a discount for the difficulty level and the lowest ranked
+         faction's standing (halved or dropped when it is richer than another faction), is within
+         its reserves weighted by its priorities. The player at the controls is asked first, or
+         told it can't afford it (when quiet only with that warning on); other human players are
+         left alone. In a network game a human's upgrade is sent to the host.
+Original Offset: 004EFE80
+Return Value: Was the upgrade made (or sent)? true/false
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch26.log
+        and 2026-10-16-sweep-batch26.log)
+*/
+BOOL __cdecl upgrade_prototype(int faction_id, int proto_id_new, int proto_id_old, BOOL quiet) {
+    if (*GameState & STATE_UNK_1 && !(*GameState & STATE_UNK_8)) {
+        return false;
+    }
+    int cost = upgrade_cost(faction_id, proto_id_new, proto_id_old)
+        * PlayersData[faction_id].proto_id_active[proto_id_old] * 10;
+    uint8_t faction_bit = (uint8_t)(1 << faction_id);
+    if (!cost && (quiet || !(*FactionsStatus & faction_bit))) {
+        return false;
+    }
+    if (!(*FactionsStatus & faction_bit)) {
+        int discount = *DiffLevelCurrent * cost / 10
+            / (8 - (int)PlayersData[*RankingFactionIDUnk1].ranking);
+        int reserves = PlayersData[faction_id].energy_reserves;
+        if (reserves > PlayersData[*RankingFactionIDUnk2].energy_reserves) {
+            if (reserves >= 1000) {
+                discount /= 2;
+            }
+            if (reserves >= 2000) {
+                discount = 0;
+            }
+        }
+        int willing = (((VehPrototypes[proto_id_new].plan == PLAN_DEFENSIVE)
+            + PlayersData[faction_id].ai_power + PlayersData[faction_id].ai_tech) * 2 + 1)
+            * reserves;
+        if (cost - discount > willing / 8) {
+            return false;
+        }
+    } else {
+        if (faction_id != *FactionIDCurrent) {
+            return false;
+        }
+        if (cost) {
+            upgrade_prototype_say(proto_id_old);
+            parse_says(0, stringTemp->str, -1, -1);
+            upgrade_prototype_say(proto_id_new);
+            parse_says(1, stringTemp->str, -1, -1);
+            parse_num(0, cost);
+            parse_num(1, PlayersData[faction_id].energy_reserves);
+            parse_num(2, PlayersData[faction_id].proto_id_active[proto_id_old]);
+            BOOL untyped = !(VehPrototypes[proto_id_new].flags & PROTO_TYPED_COMPLETE);
+            BOOL alien = Players[faction_id].rule_flags & RFLAG_ALIEN;
+            uint8_t triad = Chassis[VehPrototypes[proto_id_new].chassis_id].triad;
+            LPCSTR pic = (triad == TRIAD_AIR) ? (alien ? "alair_sm.pcx" : "air_sm.pcx")
+                : (triad == TRIAD_SEA) ? "navun_sm.pcx" : (alien ? "alunit_sm.pcx" : "unit_sm.pcx");
+            if (cost > PlayersData[faction_id].energy_reserves) {
+                if (quiet && !(*GameWarnings & 4)) {
+                    return false;
+                }
+                popp(ScriptTxtID, untyped ? "UPGRADEPROTOCOST2" : "UPGRADEPROTOCOST", 0, pic, 0);
+                return false;
+            }
+            if (!*VehUpgradeUnk) {
+                int choice = popp(ScriptTxtID, untyped ? "UPGRADEPROTO2" : "UPGRADEPROTO", 0, pic,
+                    0);
+                if (!choice) {
+                    return false;
+                }
+                if (choice > 1) {
+                    *VehUpgradeUnk = 1; // don't ask again
+                }
+            }
+        }
+    }
+    if (*FactionsStatus & faction_bit && *IsMultiplayerNet) {
+        message_data(0x2411, 0, faction_id, proto_id_new, proto_id_old, 0);
+        if (NetDaemon_receive(NetDaemonVar, 0)) {
+            while (NetDaemon_receive(NetDaemonVar, 0)) {
+            }
+        }
+        return true;
+    }
+    do_upgrade(faction_id, proto_id_new, proto_id_old);
+    return true;
 }
 
 /*

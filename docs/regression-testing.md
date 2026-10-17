@@ -1067,3 +1067,31 @@ starts it zeroed (see the combat trio notes), so the two differ with whatever th
 holds. With the 677-redirect exe both sides call the DLL's `wants_to_attack` and match. Logs:
 `regression-runs/2026-10-16-council-ishuman.log` and
 `regression-runs/2026-10-16-council-ishuman-before.log`.
+
+## Batch 26, 2026-10-17 (Council.SAV and the 14 sweep saves, 677-redirect exe)
+
+`upgrade_prototype` (base.cpp), which upgrades all of a faction's units of one prototype to
+another for the upgrade cost: an AI pays when the cost, less a discount for difficulty and
+standing, fits its reserves weighted by its priorities; the player at the controls is asked (or
+told it can't afford it); other humans are left alone. The exe pointer of the same name in
+temp.cpp is gone, so `upgrade_any_prototypes` now calls the DLL version. `NetDaemon_receive`
+(0x530320) is a new temp.cpp pointer for the network path. Trigger group `batch26`: every pair of
+an active prototype the faction has units of and another active prototype of its own with the
+same triad. AI factions run quiet and not, and once as a hotseat human. The player at the
+controls runs every third pair with 24 variants: each popup answer (0, 1, 2), asked before or
+not, quiet or not, and the "can't afford" warning on or off. `popp` (0x48C0A0) is replaced
+by a recorder for the test, and the label and picture it was asked for are compared along with
+the return value, the snapshot, `VehPrototypes`, the popup text (`stringTemp`, the first two
+parse strings, three parse numbers) and `VehUpgradeUnk`.
+
+| function | Council.SAV | all 14 sweep saves | mismatches |
+|---|---|---|---|
+| upgrade_prototype | 17,202 | 41,826 | 0 |
+
+Council.SAV: 8,364 upgrades by the original, 2,256 popups, 752 refusals after a popup. A first
+run showed 2 mismatches that came from the test: it did not restore `VehPrototypes`, which
+`do_upgrade` changes, so each run saw the previous run's prototypes. Logs:
+`regression-runs/2026-10-16-council-batch26.log` and `regression-runs/2026-10-16-sweep-batch26.log`.
+Original behaviour kept: the popup text lists the ability abbreviations with no separator.
+Boot test: the 678-redirect exe loaded Council.SAV and advanced the turn 289 -> 290 (38 s) with
+the game alive.

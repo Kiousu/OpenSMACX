@@ -602,6 +602,8 @@ DLLEXPORT int __cdecl suggest_plan(uint32_t faction_id, uint32_t faction_id_2);
 DLLEXPORT void __cdecl rankings(BOOL is_full);
 DLLEXPORT int __cdecl upgrade_cost(uint32_t faction_id, int proto_id_new, int proto_id_old);
 DLLEXPORT void __cdecl do_upgrade(uint32_t faction_id, int proto_id_new, int proto_id_old);
+DLLEXPORT BOOL __cdecl upgrade_prototype(int faction_id, int proto_id_new, int proto_id_old,
+                                        BOOL quiet);
 DLLEXPORT void __cdecl upgrade_prototypes(int faction_id, uint32_t proto_id);
 DLLEXPORT void __cdecl upgrade_any_prototypes(int faction_id);
 DLLEXPORT BOOL __cdecl base_claimed(int item_id, int value, BOOL skip_explore, BOOL skip_discover,

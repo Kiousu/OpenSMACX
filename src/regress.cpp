@@ -6649,6 +6649,186 @@ static int test_tech_val() {
     return mismatches;
 }
 
+// ---------------------------------------------------------------- batch 26
+
+// Put a jmp to target over an exe function's first five bytes while this lives.
+struct JmpStub {
+    uint8_t *entry;
+    uint8_t saved_code[5];
+    DWORD old_protect;
+    BOOL ok;
+    JmpStub(uint32_t address, void *target) : entry((uint8_t *)address), old_protect(0), ok(false) {
+        uint8_t stub[5] = { 0xE9, 0, 0, 0, 0 };
+        int32_t rel = (int32_t)((uint8_t *)target - (entry + 5));
+        memcpy(stub + 1, &rel, 4);
+        if (!VirtualProtect(entry, sizeof(stub), PAGE_EXECUTE_READWRITE, &old_protect)) {
+            logf("cannot unprotect %08X (%u)", address, GetLastError());
+            return;
+        }
+        memcpy(saved_code, entry, sizeof(stub));
+        memcpy(entry, stub, sizeof(stub));
+        FlushInstructionCache(GetCurrentProcess(), entry, sizeof(stub));
+        ok = true;
+    }
+    ~JmpStub() {
+        if (ok) {
+            memcpy(entry, saved_code, sizeof(saved_code));
+            FlushInstructionCache(GetCurrentProcess(), entry, sizeof(saved_code));
+            VirtualProtect(entry, sizeof(saved_code), old_protect, &old_protect);
+        }
+    }
+};
+
+// popp() is a dialog: record what it was asked and answer with PoppAnswer
+static int PoppAnswer;
+static int PoppCount;
+static char PoppLabel[32];
+static char PoppPic[32];
+static int __cdecl popp_recorder(LPCSTR file, LPCSTR label, int unk, LPCSTR pic,
+                                 int(__cdecl *callback)()) {
+    PoppCount++;
+    strncpy_s(PoppLabel, label ? label : "", _TRUNCATE);
+    strncpy_s(PoppPic, pic ? pic : "", _TRUNCATE);
+    return PoppAnswer;
+}
+
+static int test_upgrade_prototype() {
+    JmpStub popp_stub(0x0048C0A0, (void *)popp_recorder);
+    if (!popp_stub.ok) {
+        return 1;
+    }
+    GameSnapshot base, after_orig, after_new;
+    snap_alloc(&base); snap_alloc(&after_orig); snap_alloc(&after_new);
+    snap_take(&base);
+    const size_t parse_size = 2 * sizeof(char256);
+    static uint8_t temp_saved[sizeof(char1032)], temp_o[sizeof(char1032)];
+    static uint8_t parse_saved[2 * sizeof(char256)], parse_o[2 * sizeof(char256)];
+    int nums_saved[3], nums_o[3];
+    memcpy(temp_saved, stringTemp, sizeof(char1032));
+    memcpy(parse_saved, ParseStrBuffer, parse_size);
+    memcpy(nums_saved, ParseNumTable, sizeof(nums_saved));
+    int upgrade_unk_saved = *VehUpgradeUnk;
+    const size_t proto_size = sizeof(VehPrototype) * MaxVehProtoNum;
+    uint8_t *proto_saved = (uint8_t *)malloc(proto_size);
+    uint8_t *proto_o = (uint8_t *)malloc(proto_size);
+    memcpy(proto_saved, VehPrototypes, proto_size);
+    uint32_t warnings_saved = *GameWarnings;
+    uint8_t status_saved = *FactionsStatus;
+    int compared = 0, mismatches = 0, upgraded = 0, asked = 0, refused = 0;
+    char label[96];
+    for (int f = 1; f < MaxPlayerNum; f++) {
+        BOOL player = f == *FactionIDCurrent;
+        int pair = 0;
+        for (int i = 0; i < 2 * MaxVehProtoFactionNum; i++) {
+            int old_id = i < MaxVehProtoFactionNum ? i : f * MaxVehProtoFactionNum + i - MaxVehProtoFactionNum;
+            VehPrototype *protos = (VehPrototype *)proto_saved; // as loaded
+            if (!(protos[old_id].flags & PROTO_ACTIVE) || !base.players[f].proto_id_active[old_id]) {
+                continue;
+            }
+            for (int j = 0; j < MaxVehProtoFactionNum; j++) {
+                int new_id = f * MaxVehProtoFactionNum + j;
+                if (new_id == old_id || !(protos[new_id].flags & PROTO_ACTIVE)
+                    || Chassis[protos[new_id].chassis_id].triad
+                    != Chassis[protos[old_id].chassis_id].triad) {
+                    continue;
+                }
+                pair++;
+                // AI: quiet and not. The player: every answer, asked before or not, quiet with
+                // and without the warning, every 3rd pair. Also once as a hotseat human.
+                int variants = player ? ((pair % 3) ? 0 : 24) : 3;
+                for (int v = 0; v < variants; v++) {
+                    BOOL quiet = v & 1;
+                    auto prepare = [&]() {
+                        snap_restore(&base);
+                        memcpy(VehPrototypes, proto_saved, proto_size);
+                        memcpy(stringTemp, temp_saved, sizeof(char1032));
+                        memcpy(ParseStrBuffer, parse_saved, parse_size);
+                        memcpy(ParseNumTable, nums_saved, sizeof(nums_saved));
+                        *VehUpgradeUnk = player ? (v >> 1) & 1 : upgrade_unk_saved;
+                        *GameWarnings = (player && (v >> 2) & 1) ? (warnings_saved ^ 4)
+                            : warnings_saved;
+                        *FactionsStatus = (!player && v == 2) ? (uint8_t)(status_saved | (1 << f))
+                            : status_saved;
+                        PoppAnswer = player ? (v >> 3) % 3 : 0;
+                        PoppCount = 0;
+                        PoppLabel[0] = PoppPic[0] = 0;
+                    };
+                    prepare();
+                    BOOL ret_o = upgrade_prototype_OG(f, new_id, old_id, quiet);
+                    snap_take(&after_orig);
+                    memcpy(temp_o, stringTemp, sizeof(char1032));
+                    memcpy(proto_o, VehPrototypes, proto_size);
+                    memcpy(parse_o, ParseStrBuffer, parse_size);
+                    memcpy(nums_o, ParseNumTable, sizeof(nums_o));
+                    int unk_o = *VehUpgradeUnk;
+                    int count_o = PoppCount;
+                    char label_o[32], pic_o[32];
+                    strcpy_s(label_o, PoppLabel);
+                    strcpy_s(pic_o, PoppPic);
+                    prepare();
+                    BOOL ret_n = upgrade_prototype(f, new_id, old_id, quiet);
+                    snap_take(&after_new);
+                    compared++;
+                    upgraded += ret_o != 0;
+                    asked += count_o;
+                    refused += count_o && !ret_o;
+                    sprintf_s(label, "upgrade_prototype(%d, %d, %d, %d) variant %d", f, new_id,
+                        old_id, quiet, v);
+                    BOOL diff = false;
+                    if ((ret_o != 0) != (ret_n != 0) || count_o != PoppCount
+                        || strcmp(label_o, PoppLabel) || strcmp(pic_o, PoppPic)
+                        || unk_o != *VehUpgradeUnk) {
+                        if (mismatches < MAX_DETAIL) {
+                            logf("  %s: orig %d popp %d '%s' '%s' unk %d; new %d popp %d '%s' '%s' unk %d",
+                                label, ret_o, count_o, label_o, pic_o, unk_o, ret_n, PoppCount,
+                                PoppLabel, PoppPic, *VehUpgradeUnk);
+                        }
+                        diff = true;
+                    }
+                    if (!diff) {
+                        diff = snap_differs(&after_orig, &after_new,
+                            mismatches < MAX_DETAIL ? label : NULL);
+                    }
+                    size_t at;
+                    if (!diff && (at = first_diff(proto_o, VehPrototypes, proto_size)) != (size_t)-1) {
+                        if (mismatches < MAX_DETAIL) {
+                            logf("  %s: VehPrototype[%u] +0x%X differs", label,
+                                (unsigned)(at / sizeof(VehPrototype)), (unsigned)(at % sizeof(VehPrototype)));
+                        }
+                        diff = true;
+                    }
+                    if (!diff && (memcmp(temp_o, stringTemp, sizeof(char1032))
+                        || memcmp(parse_o, ParseStrBuffer, parse_size)
+                        || memcmp(nums_o, ParseNumTable, sizeof(nums_o)))) {
+                        if (mismatches < MAX_DETAIL) {
+                            logf("  %s: popup text differs: orig '%s' new '%s'", label,
+                                ((char256 *)parse_o)[1].str, ParseStrBuffer[1].str);
+                        }
+                        diff = true;
+                    }
+                    if (diff) {
+                        mismatches++;
+                    }
+                }
+            }
+        }
+    }
+    snap_restore(&base);
+    memcpy(VehPrototypes, proto_saved, proto_size);
+    free(proto_saved);
+    free(proto_o);
+    memcpy(stringTemp, temp_saved, sizeof(char1032));
+    memcpy(ParseStrBuffer, parse_saved, parse_size);
+    memcpy(ParseNumTable, nums_saved, sizeof(nums_saved));
+    *VehUpgradeUnk = upgrade_unk_saved;
+    *GameWarnings = warnings_saved;
+    *FactionsStatus = status_saved;
+    snap_free(&base); snap_free(&after_orig); snap_free(&after_new);
+    logf("upgrade_prototype: %d compared (%d upgraded by the original, %d popups, %d refused "
+        "after a popup), %d mismatches", compared, upgraded, asked, refused, mismatches);
+    return mismatches;
+}
+
 static DWORD WINAPI regress_watcher(LPVOID) {
     for (;;) {
         Sleep(1000);
@@ -6786,6 +6966,7 @@ void regress_run() {
     if (test_enabled("batch24", "can_terraform")) total += run_guarded("can_terraform", test_can_terraform);
     if (test_enabled("batch25", "balance")) total += run_guarded("balance", test_balance);
     if (test_enabled("ishuman", "tech_val")) total += run_guarded("tech_val", test_tech_val);
+    if (test_enabled("batch26", "upgrade_prototype")) total += run_guarded("upgrade_prototype", test_upgrade_prototype);
     if (test_enabled("enemy_capabilities")) total += run_guarded("enemy_capabilities", test_enemy_capabilities);
     if (test_enabled("social_ai")) total += run_guarded("social_ai", test_social_ai);
     if (test_enabled("Path::sensors") || test_enabled("path_sensors")) total += run_guarded("path_sensors", test_path_sensors);

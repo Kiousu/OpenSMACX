@@ -1,0 +1,42 @@
+== Council.SAV: OpenSMACX regression run: turn 289, 281 bases, 1741 vehs, filter='batch26'
+upgrade_prototype: 17202 compared (8364 upgraded by the original, 2256 popups, 752 refused after a popup), 0 mismatches
+TOTAL mismatches: 0 (220422 ms)
+== sw_aki2120.SAV: OpenSMACX regression run: turn 20, 17 bases, 84 vehs, filter='batch26'
+upgrade_prototype: 39 compared (14 upgraded by the original, 0 popups, 0 refused after a popup), 0 mismatches
+TOTAL mismatches: 0 (94 ms)
+== sw_aki2152.SAV: OpenSMACX regression run: turn 52, 72 bases, 219 vehs, filter='batch26'
+upgrade_prototype: 183 compared (48 upgraded by the original, 0 popups, 0 refused after a popup), 0 mismatches
+TOTAL mismatches: 0 (156 ms)
+== sw_aki2213.SAV: OpenSMACX regression run: turn 113, 300 bases, 1151 vehs, filter='batch26'
+upgrade_prototype: 1986 compared (480 upgraded by the original, 0 popups, 0 refused after a popup), 0 mismatches
+TOTAL mismatches: 0 (922 ms)
+== sw_aki2247.SAV: OpenSMACX regression run: turn 147, 300 bases, 1590 vehs, filter='batch26'
+upgrade_prototype: 3765 compared (1328 upgraded by the original, 288 popups, 120 refused after a popup), 0 mismatches
+TOTAL mismatches: 0 (17485 ms)
+== sw_artifacts.SAV: OpenSMACX regression run: turn 74, 142 bases, 384 vehs, filter='batch26'
+upgrade_prototype: 168 compared (38 upgraded by the original, 18 popups, 18 refused after a popup), 0 mismatches
+TOTAL mismatches: 0 (328 ms)
+== sw_bugged.SAV: OpenSMACX regression run: turn 272, 291 bases, 1637 vehs, filter='batch26'
+upgrade_prototype: 17829 compared (8378 upgraded by the original, 2580 popups, 1076 refused after a popup), 0 mismatches
+TOTAL mismatches: 0 (232813 ms)
+== sw_cheese.SAV: OpenSMACX regression run: turn 71, 131 bases, 352 vehs, filter='batch26'
+upgrade_prototype: 156 compared (28 upgraded by the original, 18 popups, 18 refused after a popup), 0 mismatches
+TOTAL mismatches: 0 (328 ms)
+== sw_morgan.SAV: OpenSMACX regression run: turn 48, 59 bases, 173 vehs, filter='batch26'
+upgrade_prototype: 117 compared (36 upgraded by the original, 12 popups, 4 refused after a popup), 0 mismatches
+TOTAL mismatches: 0 (515 ms)
+== sw_quake.SAV: OpenSMACX regression run: turn 53, 71 bases, 204 vehs, filter='batch26'
+upgrade_prototype: 117 compared (32 upgraded by the original, 12 popups, 4 refused after a popup), 0 mismatches
+TOTAL mismatches: 0 (516 ms)
+== sw_starcraft.SAV: OpenSMACX regression run: turn 75, 146 bases, 391 vehs, filter='batch26'
+upgrade_prototype: 168 compared (34 upgraded by the original, 18 popups, 18 refused after a popup), 0 mismatches
+TOTAL mismatches: 0 (328 ms)
+== sw_steam1.SAV: OpenSMACX regression run: turn 32, 20 bases, 81 vehs, filter='batch26'
+upgrade_prototype: 48 compared (14 upgraded by the original, 0 popups, 0 refused after a popup), 0 mismatches
+TOTAL mismatches: 0 (93 ms)
+== sw_steam20.SAV: OpenSMACX regression run: turn 20, 13 bases, 74 vehs, filter='batch26'
+upgrade_prototype: 42 compared (16 upgraded by the original, 0 popups, 0 refused after a popup), 0 mismatches
+TOTAL mismatches: 0 (94 ms)
+== sw_urfl.SAV: OpenSMACX regression run: turn 1, 5 bases, 51 vehs, filter='batch26'
+upgrade_prototype: 6 compared (0 upgraded by the original, 0 popups, 0 refused after a popup), 0 mismatches
+TOTAL mismatches: 0 (110 ms)
