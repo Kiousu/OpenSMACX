@@ -185,6 +185,7 @@ DLLEXPORT uint32_t __cdecl game_year(int turn);
 DLLEXPORT void __cdecl say_year(LPSTR output);
 DLLEXPORT void __cdecl yearmotize(LPSTR str);
 DLLEXPORT void __cdecl clear_monuments();
+DLLEXPORT void __cdecl balance();
 DLLEXPORT void __cdecl mon_tech_discovered(int faction_id, int tech_id);
 DLLEXPORT void __cdecl repair_phase(uint32_t faction_id);
 DLLEXPORT void __cdecl allocate_energy(uint32_t faction_id);

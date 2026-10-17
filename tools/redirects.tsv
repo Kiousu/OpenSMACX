@@ -709,3 +709,5 @@
 0x00180860	?propose_proto@@YAHIIIIIIHPBD@Z
 # --- batch 24: AI terraforming choice
 0x00165320	?can_terraform@@YAHHHHHH@Z
+# --- batch 25: starting position balance
+0x001B0420	?balance@@YAXXZ

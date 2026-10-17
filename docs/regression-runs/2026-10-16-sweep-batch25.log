@@ -1,0 +1,42 @@
+== Council.SAV: OpenSMACX regression run: turn 289, 281 bases, 1741 vehs, filter='batch25'
+balance: 24 compared (80 colony pods and 456 pod tiles placed by the original), 0 mismatches
+TOTAL mismatches: 0 (984 ms)
+== sw_aki2120.SAV: OpenSMACX regression run: turn 20, 17 bases, 84 vehs, filter='batch25'
+balance: 24 compared (72 colony pods and 416 pod tiles placed by the original), 0 mismatches
+TOTAL mismatches: 0 (125 ms)
+== sw_aki2152.SAV: OpenSMACX regression run: turn 52, 72 bases, 219 vehs, filter='batch25'
+balance: 24 compared (88 colony pods and 176 pod tiles placed by the original), 0 mismatches
+TOTAL mismatches: 0 (141 ms)
+== sw_aki2213.SAV: OpenSMACX regression run: turn 113, 300 bases, 1151 vehs, filter='batch25'
+balance: 24 compared (96 colony pods and 272 pod tiles placed by the original), 0 mismatches
+TOTAL mismatches: 0 (531 ms)
+== sw_aki2247.SAV: OpenSMACX regression run: turn 147, 300 bases, 1590 vehs, filter='batch25'
+balance: 24 compared (84 colony pods and 760 pod tiles placed by the original), 0 mismatches
+TOTAL mismatches: 0 (704 ms)
+== sw_artifacts.SAV: OpenSMACX regression run: turn 74, 142 bases, 384 vehs, filter='batch25'
+balance: 24 compared (100 colony pods and 496 pod tiles placed by the original), 0 mismatches
+TOTAL mismatches: 0 (297 ms)
+== sw_bugged.SAV: OpenSMACX regression run: turn 272, 291 bases, 1637 vehs, filter='batch25'
+balance: 24 compared (68 colony pods and 560 pod tiles placed by the original), 0 mismatches
+TOTAL mismatches: 0 (813 ms)
+== sw_cheese.SAV: OpenSMACX regression run: turn 71, 131 bases, 352 vehs, filter='batch25'
+balance: 24 compared (100 colony pods and 384 pod tiles placed by the original), 0 mismatches
+TOTAL mismatches: 0 (375 ms)
+== sw_morgan.SAV: OpenSMACX regression run: turn 48, 59 bases, 173 vehs, filter='batch25'
+balance: 24 compared (88 colony pods and 660 pod tiles placed by the original), 0 mismatches
+TOTAL mismatches: 0 (313 ms)
+== sw_quake.SAV: OpenSMACX regression run: turn 53, 71 bases, 204 vehs, filter='batch25'
+balance: 24 compared (88 colony pods and 596 pod tiles placed by the original), 0 mismatches
+TOTAL mismatches: 0 (250 ms)
+== sw_starcraft.SAV: OpenSMACX regression run: turn 75, 146 bases, 391 vehs, filter='batch25'
+balance: 24 compared (100 colony pods and 432 pod tiles placed by the original), 0 mismatches
+TOTAL mismatches: 0 (375 ms)
+== sw_steam1.SAV: OpenSMACX regression run: turn 32, 20 bases, 81 vehs, filter='batch25'
+balance: 24 compared (84 colony pods and 460 pod tiles placed by the original), 0 mismatches
+TOTAL mismatches: 0 (141 ms)
+== sw_steam20.SAV: OpenSMACX regression run: turn 20, 13 bases, 74 vehs, filter='batch25'
+balance: 24 compared (72 colony pods and 568 pod tiles placed by the original), 0 mismatches
+TOTAL mismatches: 0 (94 ms)
+== sw_urfl.SAV: OpenSMACX regression run: turn 1, 5 bases, 51 vehs, filter='batch25'
+balance: 24 compared (100 colony pods and 632 pod tiles placed by the original), 0 mismatches
+TOTAL mismatches: 0 (156 ms)

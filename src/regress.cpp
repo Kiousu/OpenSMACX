@@ -6517,6 +6517,87 @@ static int test_can_terraform() {
     return mismatches;
 }
 
+// ---------------------------------------------------------------- batch 25
+
+static int test_balance() {
+    GameSnapshot base, after_orig, after_new;
+    snap_alloc(&base); snap_alloc(&after_orig); snap_alloc(&after_new);
+    snap_take(&base);
+    uint8_t globals_saved[BaseGlobalsSize], globals_o[BaseGlobalsSize];
+    memcpy(globals_saved, BaseGlobals, BaseGlobalsSize);
+    int compute_saved = *BaseComputeID;
+    int diff_saved = *DiffLevelCurrent;
+    BOOL draw_saved = VehBattleUnkTgl[0];
+    int compared = 0, mismatches = 0, units = 0, pods = 0;
+    char label[64];
+    static Veh added[2048]; // Vehs holds at most 2048 units (veh_init stops at 0x7FF)
+    // every difficulty level, a few random streams each
+    for (int diff = 0; diff < 6; diff++) {
+        for (uint32_t seed = 1; seed <= 4; seed++) {
+            auto prepare = [&]() {
+                snap_restore(&base);
+                memcpy(BaseGlobals, globals_saved, BaseGlobalsSize);
+                *BaseComputeID = compute_saved;
+                *DiffLevelCurrent = diff;
+                reseed(seed * 7919);
+            };
+            prepare();
+            balance_OG();
+            snap_take(&after_orig);
+            memcpy(globals_o, BaseGlobals, BaseGlobalsSize);
+            int compute_o = *BaseComputeID;
+            units += after_orig.veh_count_global - base.veh_count_global;
+            int added_o = after_orig.veh_count_global - base.veh_count_global;
+            if (added_o > 0) {
+                memcpy(added, &Vehs[base.veh_count_global], sizeof(Veh) * added_o);
+            }
+            for (uint32_t i = 0; i < base.tile_count; i++) {
+                pods += ((after_orig.tiles[i].bit ^ base.tiles[i].bit)
+                    & (BIT_UNK_4000000 | BIT_UNK_8000000)) != 0;
+            }
+            prepare();
+            balance();
+            snap_take(&after_new);
+            compared++;
+            sprintf_s(label, "balance() difficulty %d seed %u", diff, seed);
+            BOOL diff_found = snap_differs(&after_orig, &after_new,
+                mismatches < MAX_DETAIL ? label : NULL);
+            if (!diff_found && base_globals_differ(globals_o, BaseGlobals,
+                mismatches < MAX_DETAIL ? label : NULL)) {
+                diff_found = true;
+            }
+            size_t at;
+            if (!diff_found && added_o > 0 && after_new.veh_count_global == after_orig.veh_count_global
+                && (at = first_diff(added, &Vehs[base.veh_count_global], sizeof(Veh) * added_o))
+                    != (size_t)-1) {
+                if (mismatches < MAX_DETAIL) {
+                    logf("  %s: added Veh[%u] +0x%X differs", label,
+                        (unsigned)(base.veh_count_global + at / sizeof(Veh)), (unsigned)(at % sizeof(Veh)));
+                }
+                diff_found = true;
+            }
+            if (!diff_found && compute_o != *BaseComputeID) {
+                if (mismatches < MAX_DETAIL) {
+                    logf("  %s: BaseComputeID orig %d new %d", label, compute_o, *BaseComputeID);
+                }
+                diff_found = true;
+            }
+            if (diff_found) {
+                mismatches++;
+            }
+        }
+    }
+    snap_restore(&base);
+    memcpy(BaseGlobals, globals_saved, BaseGlobalsSize);
+    *BaseComputeID = compute_saved;
+    *DiffLevelCurrent = diff_saved;
+    VehBattleUnkTgl[0] = draw_saved;
+    snap_free(&base); snap_free(&after_orig); snap_free(&after_new);
+    logf("balance: %d compared (%d colony pods and %d pod tiles placed by the original), "
+        "%d mismatches", compared, units, pods, mismatches);
+    return mismatches;
+}
+
 static DWORD WINAPI regress_watcher(LPVOID) {
     for (;;) {
         Sleep(1000);
@@ -6652,6 +6733,7 @@ void regress_run() {
     if (test_enabled("ptrfix", "strat")) total += run_guarded("strat", test_strat);
     if (test_enabled("ptrfix", "goody_at")) total += run_guarded("goody_at", test_goody_at);
     if (test_enabled("batch24", "can_terraform")) total += run_guarded("can_terraform", test_can_terraform);
+    if (test_enabled("batch25", "balance")) total += run_guarded("balance", test_balance);
     if (test_enabled("enemy_capabilities")) total += run_guarded("enemy_capabilities", test_enemy_capabilities);
     if (test_enabled("social_ai")) total += run_guarded("social_ai", test_social_ai);
     if (test_enabled("Path::sensors") || test_enabled("path_sensors")) total += run_guarded("path_sensors", test_path_sensors);

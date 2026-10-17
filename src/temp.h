@@ -321,6 +321,8 @@ extern func_prune_protos *prune_protos; // prune_protos(faction_id, proto_id_kep
 // batch 24
 typedef int func_can_terraform(int, int, int, BOOL, int);
 extern func_can_terraform *can_terraform_OG;
+// batch 25
+extern func_void *balance_OG;
 extern func_void *base_psych_OG;
 extern func_social_ai *social_ai_OG;
 extern func_path_sensors *Path_sensors_OG; // Path::sensors()

@@ -889,6 +889,168 @@ void __cdecl yearmotize(LPSTR str) {
 }
 
 /*
+Purpose: Even out the factions' starting positions at the start of a game. Each faction's start
+         (its first unit, or the one nearest to it on land if that is at sea) is rated by the
+         distance to the nearest rival on the same continent (or the continent's size if there is
+         none), the good tiles around it and the continent's size. Factions below the best get
+         the difference back: an extra colony pod on harder difficulties (none for aquatic
+         factions) and unity pods and supply pods on the ring two tiles out; free units from the
+         faction's bonuses count against it, a colony pod as three.
+Original Offset: 005B0420
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch25.log
+        and 2026-10-16-sweep-batch25.log)
+*/
+void __cdecl balance() {
+    int start_veh[MaxPlayerNum - 1];
+    int rating[MaxPlayerNum - 1];
+    for (int f = 1; f < MaxPlayerNum; f++) {
+        int veh_id = veh_find(0, 0, f, -1);
+        start_veh[f - 1] = veh_id;
+        if (veh_id >= 0 && map_loc(Vehs[veh_id].x, Vehs[veh_id].y)->region >= MaxRegionLandNum) {
+            start_veh[f - 1] = veh_find(Vehs[veh_id].x, Vehs[veh_id].y, f, veh_id);
+        }
+    }
+    int rating_best = 0;
+    for (int f = 1; f < MaxPlayerNum; f++) {
+        int veh_id = start_veh[f - 1];
+        if (veh_id < 0) {
+            continue;
+        }
+        int x = Vehs[veh_id].x;
+        int y = Vehs[veh_id].y;
+        uint32_t region = map_loc(x, y)->region;
+        int nearest = 9999; // distance to the nearest rival start on the continent
+        for (int g = 1; g < MaxPlayerNum; g++) {
+            int veh_id_g = start_veh[g - 1];
+            if (f != g && veh_id_g >= 0
+                && region == map_loc(Vehs[veh_id_g].x, Vehs[veh_id_g].y)->region) {
+                int dx = abs(x - Vehs[veh_id_g].x);
+                if (!(*MapIsFlat & 1) && dx > (int)*MapLongitude) {
+                    dx = *MapLongitudeBounds - dx;
+                }
+                int dist = vector_dist(dx, y - Vehs[veh_id_g].y) * 3200 / (int)*MapArea;
+                if (dist < nearest) {
+                    nearest = dist;
+                }
+            }
+        }
+        if (nearest < 1000) {
+            nearest = nearest / 5 - 3;
+        } else {
+            nearest = ((int)Continents[region].tile_count + 31) / 32;
+            if (nearest < 1) {
+                nearest = 1;
+            } else if (nearest > 8) {
+                nearest = 8;
+            }
+        }
+        int good = 0;
+        for (int i = 0; i < BaseRadiusTiles; i++) {
+            int x2 = RadiusOffsetX[i] + x;
+            if (!(*MapIsFlat & 1)) {
+                if (x2 < 0) {
+                    x2 += *MapLongitudeBounds;
+                } else if (x2 >= *MapLongitudeBounds) {
+                    x2 -= *MapLongitudeBounds;
+                }
+            }
+            int y2 = RadiusOffsetY[i] + y;
+            if (y2 < 0 || y2 >= *MapLatitudeBounds || x2 < 0 || x2 >= *MapLongitudeBounds) {
+                continue;
+            }
+            Map *tile = map_loc(x2, y2);
+            uint32_t rainfall = (tile->climate >> 3) & 3;
+            uint32_t altitude = tile->climate >> 5;
+            uint32_t rocky = tile->val3 >> 6;
+            if (rainfall) {
+                int above_sea = altitude - 2;
+                if (((above_sea >= 0 && altitude != 2) || tile->bit & BIT_RIVER) && rocky < 2
+                    && (rocky == 1 || above_sea > 1 || rainfall > 1)) {
+                    good++;
+                }
+                if (rocky == 1 && above_sea > 1) {
+                    good++;
+                }
+            }
+        }
+        good /= 2;
+        if (good < 0) {
+            good = 0;
+        } else if (good > 8) {
+            good = 8;
+        }
+        int size = (int)Continents[region].tile_count / 64;
+        if (size < 0) {
+            size = 0;
+        } else if (size > 3) {
+            size = 3;
+        }
+        int total = nearest + good + size;
+        if (total > rating_best) {
+            rating_best = total;
+        }
+        rating[f - 1] = total;
+    }
+    for (int f = 1; f < MaxPlayerNum; f++) {
+        int veh_id = start_veh[f - 1];
+        if (veh_id < 0) {
+            continue;
+        }
+        int x = Vehs[veh_id].x;
+        int y = Vehs[veh_id].y;
+        int ring_start = _rand() % 16;
+        int unity_pods = 0;
+        int extra = rating_best - rating[f - 1];
+        Player *player = &Players[f];
+        for (int i = 0; i < player->faction_bonus_count; i++) {
+            if (player->faction_bonus_id[i] == RULE_UNIT) {
+                extra -= (VehPrototypes[player->faction_bonus_val1[i]].plan == PLAN_COLONIZATION)
+                    ? 3 : 1;
+            }
+        }
+        if (*DiffLevelCurrent > 1
+            && (extra > 2 || 5 - (is_human(f) ? 1 : 0) <= *DiffLevelCurrent)) {
+            extra -= 3;
+            if (!(player->rule_flags & RFLAG_AQUATIC)) {
+                veh_id = veh_init(BSC_COLONY_POD, f, x, y);
+            }
+            Vehs[veh_id].home_base_id = -1; // the start unit's own when no pod was added
+        }
+        if (*DiffLevelCurrent < 2) {
+            extra = (extra + 1) / 2;
+        }
+        int ring = ring_start * 7;
+        for (int i = 0; i < extra; i++) {
+            ring += 7;
+            int k = 9 + ring % 16; // the 16 tiles two out
+            int x2 = RadiusOffsetX[k] + x;
+            if (!(*MapIsFlat & 1)) {
+                if (x2 < 0) {
+                    x2 += *MapLongitudeBounds;
+                } else if (x2 >= *MapLongitudeBounds) {
+                    x2 -= *MapLongitudeBounds;
+                }
+            }
+            int y2 = RadiusOffsetY[k] + y;
+            if (y2 < 0 || y2 >= *MapLatitudeBounds || x2 < 0 || x2 >= *MapLongitudeBounds) {
+                continue;
+            }
+            if (goody_at(x2, y2) && !(map_loc(x2, y2)->bit & (BIT_UNK_4000000 | BIT_UNK_8000000))) {
+                rating[f - 1]--; // a pod already there (the rating isn't used again)
+            }
+            if (unity_pods < 2 && extra - i > 2 && !((i ^ unity_pods) & 1)) {
+                bit_set(x2, y2, BIT_UNK_4000000, true);
+                extra--;
+                unity_pods++;
+            } else {
+                bit_set(x2, y2, BIT_UNK_8000000, true);
+            }
+        }
+    }
+}
+
+/*
 Purpose: Clear and reset scenario game variables.
 Original Offset: 005B38D0
 Return Value: n/a

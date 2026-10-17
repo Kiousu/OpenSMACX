@@ -214,6 +214,7 @@ func_name_proto *name_proto_OG = (func_name_proto *)0x0057E040;
 func_propose_proto *propose_proto_OG = (func_propose_proto *)0x00580860;
 func_prune_protos *prune_protos = (func_prune_protos *)0x0057F4B0;
 func_can_terraform *can_terraform_OG = (func_can_terraform *)0x00565320;
+func_void *balance_OG = (func_void *)0x005B0420;
 func_void *base_psych_OG = (func_void *)0x004EA540;
 func_social_ai *social_ai_OG = (func_social_ai *)0x005B4790;
 func_path_sensors *Path_sensors_OG = (func_path_sensors *)0x0059CCA0;

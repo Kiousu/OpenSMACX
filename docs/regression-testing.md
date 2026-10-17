@@ -1021,3 +1021,28 @@ fungus; a farm without an enricher gets ORDER_FARM again (the order builds the e
 results of one `bonus_at` and one `has_tech` call are unused. map.cpp now includes
 terraforming.h. Boot test: the 676-redirect exe loaded Council.SAV and advanced the turn
 289 -> 290 (38 s) with the game alive.
+
+## Batch 25, 2026-10-16 (Council.SAV and the 14 sweep saves, 676-redirect exe)
+
+`balance` (game.cpp), the start-of-game evening out of the factions' starting positions: each
+start is rated by the distance to the nearest rival on its continent (or the continent's size),
+the good tiles around it and the continent's size, and the factions below the best get an extra
+colony pod (none for aquatic factions; the start unit is made independent instead) and unity and
+supply pods on the ring two tiles out. Trigger group `batch25`: every difficulty level with four
+random streams on each save, comparing the snapshot, the units it appends, the current-base
+globals and `BaseComputeID`.
+
+| function | runs | colony pods added | pod tiles set | mismatches |
+|---|---|---|---|---|
+| balance | 336 (14 saves x 24) | 1,220 | 6,868 | 0 |
+
+The first run had 4 mismatches on sw_aki2152 at difficulty 3: the DLL's `is_human()` returns the
+faction's raw status bit (2 for faction 1), so `5 - is_human(f)` gave 3 where the original's
+normalized flag gives 4 and the human got a colony pod. `balance` now normalizes the flag; the
+same slip in `tech_val` is fixed separately. The test also compares the units appended past the
+snapshot's arrays. Logs: `regression-runs/2026-10-16-council-batch25.log` and
+`regression-runs/2026-10-16-sweep-batch25.log`. Boot tests with the 677-redirect exe: Council.SAV
+advanced the turn 289 -> 290 (38 s) with the game alive, and a Quick Start (Svensgaard, aquatic)
+reached turn 1 with 29 units, the player's pods on the map and the start pod independent.
+`tools/mp/mpsolo.ps1` (host-only network game) is no check here: the vanilla exe also ends with
+no units and a garbage mission year.
