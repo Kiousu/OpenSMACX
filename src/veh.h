@@ -500,6 +500,14 @@ extern LPSTR *Triad;
 extern int *VehCurrentCount;
 extern int *VehFindDist;
 extern BungedDesign *BungList;
+extern int *DesignSuggestAbilities;
+extern int *DesignSuggestCategory;
+extern int *DesignSuggestWeapon;
+extern int *DesignSuggestChassis;
+extern int *DesignSuggestReactor;
+extern int *DesignSuggestArmor;
+extern int *DesignSuggestState;
+extern int *ProtoIDNewDesign;
 extern int *VehDropLiftVehID;
 extern int *VehLiftX;
 extern int *VehLiftY;
@@ -562,6 +570,12 @@ DLLEXPORT BOOL __cdecl is_bunged(uint32_t faction_id, uint32_t chassis_id, uint3
 DLLEXPORT void __cdecl clear_bunglist(uint32_t faction_id);
 DLLEXPORT void __cdecl bung_proto(uint32_t faction_id, int proto_id);
 DLLEXPORT void __cdecl retire_proto(int proto_id, int faction_id);
+DLLEXPORT void __cdecl name_proto(LPSTR name, int proto_id, int faction_id, uint32_t chassis_id,
+                                  uint32_t weapon_id, uint32_t armor_id, uint32_t abilities,
+                                  uint32_t reactor_id);
+DLLEXPORT int __cdecl propose_proto(uint32_t faction_id, uint32_t chassis_id, uint32_t weapon_id,
+                                   uint32_t armor_id, uint32_t abilities, uint32_t reactor_id,
+                                   int category, LPCSTR name);
 DLLEXPORT BOOL __cdecl abil_cond(int ability_id, int chassis_id, int weapon_id, int armor_id);
 DLLEXPORT int __cdecl hex_cost(int proto_id, int faction_id, uint32_t x_src, uint32_t y_src, 
                                uint32_t x_dst, uint32_t y_dst, BOOL toggle);

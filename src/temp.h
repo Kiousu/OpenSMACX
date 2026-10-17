@@ -310,6 +310,14 @@ extern func_diplo2 *mon_killed_faction_OG;
 // batch 22
 extern func_iii *valid_patrol_OG;
 extern func_diplo2 *energy_compute_OG;
+// batch 23
+typedef void func_name_proto(LPSTR, int, int, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t);
+extern func_name_proto *name_proto_OG;
+typedef int func_propose_proto(uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, int,
+    LPCSTR);
+extern func_propose_proto *propose_proto_OG;
+typedef void func_prune_protos(int, int, int);
+extern func_prune_protos *prune_protos; // prune_protos(faction_id, proto_id_kept, unk)
 extern func_void *base_psych_OG;
 extern func_social_ai *social_ai_OG;
 extern func_path_sensors *Path_sensors_OG; // Path::sensors()

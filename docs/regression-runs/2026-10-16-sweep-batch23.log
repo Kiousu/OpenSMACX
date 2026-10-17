@@ -1,0 +1,56 @@
+== sw_aki2120.SAV: OpenSMACX regression run: turn 20, 17 bases, 84 vehs, filter='batch23'
+name_proto: 379213 compared (1737 with a Mk number, slots: 7 of category 10, 0 police; 8 police names trimmed), 0 mismatches
+propose_proto: 11821 compared (2585 rejected or suggested, 9015 new designs, 221 reused, 0 slots retired, 37 with queues updated, 2628 suggestions recorded), 0 mismatches
+TOTAL mismatches: 0 (2078 ms)
+== sw_aki2152.SAV: OpenSMACX regression run: turn 52, 72 bases, 219 vehs, filter='batch23'
+name_proto: 421332 compared (1917 with a Mk number, slots: 7 of category 10, 0 police; 8 police names trimmed), 0 mismatches
+propose_proto: 12006 compared (2618 rejected or suggested, 9083 new designs, 305 reused, 0 slots retired, 88 with queues updated, 2672 suggestions recorded), 0 mismatches
+TOTAL mismatches: 0 (2265 ms)
+== sw_aki2213.SAV: OpenSMACX regression run: turn 113, 300 bases, 1151 vehs, filter='batch23'
+name_proto: 568787 compared (2634 with a Mk number, slots: 8 of category 10, 1 police; 168 police names trimmed), 0 mismatches
+propose_proto: 13199 compared (2774 rejected or suggested, 9518 new designs, 907 reused, 4809 slots retired, 594 with queues updated, 2936 suggestions recorded), 0 mismatches
+TOTAL mismatches: 0 (3719 ms)
+== sw_aki2247.SAV: OpenSMACX regression run: turn 147, 300 bases, 1590 vehs, filter='batch23'
+name_proto: 589890 compared (2724 with a Mk number, slots: 7 of category 10, 0 police; 8 police names trimmed), 0 mismatches
+propose_proto: 13735 compared (2845 rejected or suggested, 9713 new designs, 1177 reused, 5026 slots retired, 930 with queues updated, 3056 suggestions recorded), 0 mismatches
+TOTAL mismatches: 0 (4047 ms)
+== sw_artifacts.SAV: OpenSMACX regression run: turn 74, 142 bases, 384 vehs, filter='batch23'
+name_proto: 442393 compared (2007 with a Mk number, slots: 7 of category 10, 0 police; 8 police names trimmed), 0 mismatches
+propose_proto: 11974 compared (2618 rejected or suggested, 9063 new designs, 293 reused, 1520 slots retired, 89 with queues updated, 2664 suggestions recorded), 0 mismatches
+TOTAL mismatches: 0 (3484 ms)
+== sw_bugged.SAV: OpenSMACX regression run: turn 272, 291 bases, 1637 vehs, filter='batch23'
+name_proto: 547954 compared (2895 with a Mk number, slots: 9 of category 10, 0 police; 0 police names trimmed), 0 mismatches
+propose_proto: 15708 compared (3109 rejected or suggested, 10496 new designs, 2103 reused, 10496 slots retired, 1098 with queues updated, 3496 suggestions recorded), 0 mismatches
+TOTAL mismatches: 0 (4735 ms)
+== sw_cheese.SAV: OpenSMACX regression run: turn 71, 131 bases, 352 vehs, filter='batch23'
+name_proto: 442393 compared (2007 with a Mk number, slots: 7 of category 10, 0 police; 8 police names trimmed), 0 mismatches
+propose_proto: 11974 compared (2618 rejected or suggested, 9063 new designs, 293 reused, 1520 slots retired, 89 with queues updated, 2664 suggestions recorded), 0 mismatches
+TOTAL mismatches: 0 (3500 ms)
+== sw_council.SAV: OpenSMACX regression run: turn 289, 281 bases, 1741 vehs, filter='batch23'
+name_proto: 590081 compared (3309 with a Mk number, slots: 9 of category 10, 0 police; 0 police names trimmed), 0 mismatches
+propose_proto: 16136 compared (3173 rejected or suggested, 10712 new designs, 2251 reused, 10712 slots retired, 972 with queues updated, 3588 suggestions recorded), 0 mismatches
+TOTAL mismatches: 0 (5078 ms)
+== sw_morgan.SAV: OpenSMACX regression run: turn 48, 59 bases, 173 vehs, filter='batch23'
+name_proto: 400279 compared (1801 with a Mk number, slots: 7 of category 10, 0 police; 8 police names trimmed), 0 mismatches
+propose_proto: 11869 compared (2587 rejected or suggested, 9026 new designs, 256 reused, 0 slots retired, 76 with queues updated, 2640 suggestions recorded), 0 mismatches
+TOTAL mismatches: 0 (3094 ms)
+== sw_quake.SAV: OpenSMACX regression run: turn 53, 71 bases, 204 vehs, filter='batch23'
+name_proto: 400279 compared (1801 with a Mk number, slots: 7 of category 10, 0 police; 8 police names trimmed), 0 mismatches
+propose_proto: 11885 compared (2591 rejected or suggested, 9034 new designs, 260 reused, 0 slots retired, 95 with queues updated, 2644 suggestions recorded), 0 mismatches
+TOTAL mismatches: 0 (3172 ms)
+== sw_starcraft.SAV: OpenSMACX regression run: turn 75, 146 bases, 391 vehs, filter='batch23'
+name_proto: 442393 compared (2007 with a Mk number, slots: 7 of category 10, 0 police; 8 police names trimmed), 0 mismatches
+propose_proto: 11974 compared (2618 rejected or suggested, 9064 new designs, 292 reused, 1521 slots retired, 89 with queues updated, 2664 suggestions recorded), 0 mismatches
+TOTAL mismatches: 0 (3406 ms)
+== sw_steam1.SAV: OpenSMACX regression run: turn 32, 20 bases, 81 vehs, filter='batch23'
+name_proto: 400256 compared (1758 with a Mk number, slots: 7 of category 10, 0 police; 0 police names trimmed), 0 mismatches
+propose_proto: 11887 compared (2603 rejected or suggested, 9047 new designs, 237 reused, 0 slots retired, 107 with queues updated, 2644 suggestions recorded), 0 mismatches
+TOTAL mismatches: 0 (2141 ms)
+== sw_steam20.SAV: OpenSMACX regression run: turn 20, 13 bases, 74 vehs, filter='batch23'
+name_proto: 379199 compared (1668 with a Mk number, slots: 7 of category 10, 0 police; 0 police names trimmed), 0 mismatches
+propose_proto: 11853 compared (2593 rejected or suggested, 9030 new designs, 230 reused, 0 slots retired, 41 with queues updated, 2636 suggestions recorded), 0 mismatches
+TOTAL mismatches: 0 (2016 ms)
+== sw_urfl.SAV: OpenSMACX regression run: turn 1, 5 bases, 51 vehs, filter='batch23'
+name_proto: 337106 compared (1531 with a Mk number, slots: 7 of category 10, 0 police; 8 police names trimmed), 0 mismatches
+propose_proto: 11730 compared (2568 rejected or suggested, 8986 new designs, 176 reused, 0 slots retired, 12 with queues updated, 2608 suggestions recorded), 0 mismatches
+TOTAL mismatches: 0 (2828 ms)

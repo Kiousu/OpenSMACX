@@ -931,3 +931,44 @@ energy intake one lower than vanilla). Before batch 14 the patched exe already d
 because the DLL's `base_minerals` leaves something else in that slot; this restores vanilla.
 Boot test: the 673-redirect exe with the corrected DLL loaded Council.SAV and advanced the turn
 289 -> 290 (38 s) with the game alive.
+
+## Batch 23, 2026-10-16 (Council.SAV and the 14 sweep saves, 673-redirect exe)
+
+`name_proto` and `propose_proto` (veh.cpp), the unit design naming and proposal used by the AI's
+`consider_designs` and the design workshop. Trigger group `batch23`. `propose_proto` calls the
+exe's `prune_protos` (0x57F4B0, now a temp.cpp pointer) on both sides.
+
+`name_proto` runs every active prototype under its own parts for its owner (predefined ones for
+every faction), then a grid in four slots per faction (an active design of each parity, an empty
+slot, the Scout Patrol slot): every chassis, plausible weapon (payloads and planet busters only on
+missiles), armor and reactor, once without abilities and once with an ability set from a rotating
+list. The output strings are compared. `propose_proto` runs each AI faction (the player at the
+controls is skipped: `prune_protos` opens popups for them) on every design it can build (same
+parts, typed complete, an extra ability inside and outside the 0x44AE1B mask, each part one step
+off) and on a sample of the part grid with rotating abilities and categories. Every ninth design
+also runs nine variants: the design workshop's suggestion states (open, with the design's
+category, 2, 3); the faction as a second human player (hotseat) who declined a design; Citizen
+difficulty; no expansion; a given name; a name already taken. Compared: the return value, the
+snapshot, `VehPrototypes`, `BungList`, the suggestion globals (0x93FC34..0x93FC58), the
+new-design id (0x68F0F0) and the selection globals `kill()` touches.
+
+| function | Council.SAV | all 14 sweep saves | mismatches |
+|---|---|---|---|
+| name_proto | 590,081 | 6,341,555 | 0 |
+| propose_proto | 16,136 | 177,751 | 0 |
+
+Coverage on Council.SAV: 3,309 names with a Mk number; 10,712 new designs (all into retired
+slots), 2,251 reuses, 3,173 rejections or suggestions, 972 runs that requeued base production. The
+early saves cover new designs in empty slots, and sw_aki2213's police design covers the police
+name trim (168 names). Logs: `regression-runs/2026-10-16-council-batch23.log` and
+`regression-runs/2026-10-16-sweep-batch23.log`.
+
+Names: `DesignSuggestAbilities`/`Category`/`Weapon`/`Chassis`/`Reactor`/`Armor`/`State`
+(0x93FC34..0x93FC54) and `ProtoIDNewDesign` (0x68F0F0) in veh.cpp. Original behaviour kept: for a
+police unit with no unit noun, `name_proto` cuts the trailing space off the main name and then
+clears the alternative name at the main name's new length, so the alternative loses two
+characters; after a Mk renumbering restart it compares the alternative name against slot -1;
+`propose_proto` copies a given name without a length check and compares the design category as an
+unsigned byte; it also scans each base queue once without using the result (omitted).
+Boot test: the 675-redirect exe loaded Council.SAV and advanced the turn 289 -> 290 (38 s) with
+the game alive.

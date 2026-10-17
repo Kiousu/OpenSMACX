@@ -6002,6 +6002,382 @@ static int test_energy_compute() {
     return mismatches;
 }
 
+// ---------------------------------------------------------------- batch 23
+
+static const uint32_t ProtoTestAbilities[] = { 0, ABL_AMPHIBIOUS, ABL_AIR_SUPERIORITY, ABL_ARTILLERY,
+    ABL_POLICE_2X, ABL_TRANCE, ABL_CLEAN_REACTOR | ABL_DEEP_RADAR, ABL_AMPHIBIOUS | ABL_ARTILLERY,
+    ABL_AIR_SUPERIORITY | ABL_ARTILLERY, ABL_SUPER_TERRAFORMER, ABL_DROP_POD | ABL_AMPHIBIOUS,
+    ABL_EMPATHIC | ABL_POLICE_2X, ABL_AAA, ABL_HEAVY_TRANSPORT };
+static const int ProtoTestAbilityCount = (int)(sizeof(ProtoTestAbilities) / sizeof(uint32_t));
+
+// a missile chassis carries a payload or a planet buster, nothing else carries a payload
+static BOOL proto_test_plausible(uint32_t chassis_id, uint32_t weapon_id) {
+    BOOL payload = weapon_id == WPN_PLANET_BUSTER || weapon_id >= WPN_CONVENTIONAL_PAYLOAD;
+    if (Chassis[chassis_id].missile) {
+        return payload;
+    }
+    return weapon_id < WPN_CONVENTIONAL_PAYLOAD;
+}
+
+static int test_name_proto() {
+    char name_o[256], name_n[256];
+    int compared = 0, mismatches = 0, marked = 0, category_10 = 0, police_slots = 0, police = 0;
+    auto check = [&](int proto_id, int faction_id, uint32_t chs, uint32_t wpn, uint32_t arm,
+        uint32_t abl, uint32_t rec) {
+        memset(name_o, 0x5A, sizeof(name_o));
+        memset(name_n, 0x5A, sizeof(name_n));
+        name_proto_OG(name_o, proto_id, faction_id, chs, wpn, arm, abl, rec);
+        name_proto(name_n, proto_id, faction_id, chs, wpn, arm, abl, rec);
+        compared++;
+        if (strstr(name_o, label_get(919))) {
+            marked++;
+        }
+        int8_t off = Weapon[wpn].offense_rating, def = Armor[arm].defense_rating;
+        uint8_t speed = Chassis[chs].speed;
+        if (VehPrototypes[proto_id].ability_flags & ABL_POLICE_2X && Weapon[wpn].mode < 3
+            && ((VehPrototypes[proto_id].unk_1 == 10 && !(*FactionsStatus & (1 << faction_id))
+                && speed > 1) || (off <= speed && def <= speed && off >= 0
+                && Chassis[chs].triad == TRIAD_LAND))) {
+            police++; // the name loses its trailing space instead of getting a unit noun
+        }
+        if (strcmp(name_o, name_n)) {
+            if (mismatches < MAX_DETAIL) {
+                logf("  name_proto(%d, %d, %u, %u, %u, %X, %u): orig \"%s\" new \"%s\"", proto_id,
+                    faction_id, chs, wpn, arm, abl, rec, name_o, name_n);
+            }
+            mismatches++;
+        }
+    };
+    // every active prototype under its own parts, for its owner (predefined ones for everyone)
+    for (int id = 0; id < MaxVehProtoNum; id++) {
+        VehPrototype *p = &VehPrototypes[id];
+        if (!(p->flags & PROTO_ACTIVE)) {
+            continue;
+        }
+        int owner = id / MaxVehProtoFactionNum;
+        for (int f = owner; f < (owner ? owner + 1 : MaxPlayerNum); f++) {
+            check(id, f, p->chassis_id, p->weapon_id, p->armor_id, p->ability_flags, p->reactor_id);
+        }
+    }
+    // a grid of parts in four slots per faction: two active designs of either parity, an empty
+    // slot and a predefined one
+    for (int f = 1; f < MaxPlayerNum; f++) {
+        int slots[4] = { -1, -1, -1, BSC_SCOUT_PATROL };
+        for (int i = 0; i < MaxVehProtoFactionNum; i++) {
+            int id = f * MaxVehProtoFactionNum + i;
+            if (VehPrototypes[id].flags & PROTO_ACTIVE) {
+                if (slots[id & 1] < 0) {
+                    slots[id & 1] = id;
+                }
+            } else if (slots[2] < 0) {
+                slots[2] = id;
+            }
+        }
+        for (int s = 0; s < 4; s++) {
+            int slot = slots[s];
+            if (slot < 0) {
+                continue;
+            }
+            category_10 += VehPrototypes[slot].unk_1 == 10;
+            police_slots += (VehPrototypes[slot].ability_flags & ABL_POLICE_2X) != 0;
+            int k = 0;
+            for (uint32_t chs = 0; chs < MaxChassisNum; chs++) {
+                for (uint32_t wpn = 0; wpn < MaxWeaponNum; wpn++) {
+                    if (!proto_test_plausible(chs, wpn)) {
+                        continue;
+                    }
+                    for (uint32_t arm = 0; arm < MaxArmorNum; arm++) {
+                        for (uint32_t rec = 1; rec <= MaxReactorNum; rec++, k++) {
+                            check(slot, f, chs, wpn, arm, 0, rec);
+                            check(slot, f, chs, wpn, arm,
+                                ProtoTestAbilities[1 + k % (ProtoTestAbilityCount - 1)], rec);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    logf("name_proto: %d compared (%d with a Mk number, slots: %d of category 10, %d police; "
+        "%d police names trimmed), %d mismatches", compared, marked, category_10, police_slots,
+        police, mismatches);
+    return mismatches;
+}
+
+static int test_propose_proto() {
+    // selection globals touched by kill()/veh_kill(), same set as the stack_kill test
+    static int *const extra_globals[] = { (int *)0x0093928C, (int *)0x00939290, (int *)0x008C6B2C,
+        (int *)0x008C6B34, (int *)0x009A64DC };
+    const int extra_count = (int)(sizeof(extra_globals) / sizeof(extra_globals[0]));
+    int extra_saved[5], extra_o[5];
+    for (int i = 0; i < extra_count; i++) {
+        extra_saved[i] = *extra_globals[i];
+    }
+    const size_t bung_size = sizeof(BungedDesign) * MaxPlayerNum * MaxBungedDesignNum;
+    const size_t proto_size = sizeof(VehPrototype) * MaxVehProtoNum;
+    uint8_t *bung_saved = (uint8_t *)malloc(bung_size);
+    uint8_t *bung_orig = (uint8_t *)malloc(bung_size);
+    uint8_t *proto_saved = (uint8_t *)malloc(proto_size);
+    uint8_t *proto_orig = (uint8_t *)malloc(proto_size);
+    memcpy(bung_saved, BungList, bung_size);
+    memcpy(proto_saved, VehPrototypes, proto_size);
+    // DesignSuggestAbilities .. DesignSuggestState
+    uint8_t *const suggest = (uint8_t *)DesignSuggestAbilities;
+    const size_t suggest_size = 0x0093FC58 - 0x0093FC34;
+    uint8_t suggest_saved[0x24], suggest_o[0x24];
+    memcpy(suggest_saved, suggest, suggest_size);
+    int new_design_saved = *ProtoIDNewDesign;
+    uint8_t status_saved = *FactionsStatus;
+    int diff_saved = *DiffLevelCurrent;
+    BOOL expansion_saved = *ExpansionEnabled;
+    BOOL draw_saved = VehBattleUnkTgl[0];
+    GameSnapshot base, after_orig, after_new;
+    snap_alloc(&base); snap_alloc(&after_orig); snap_alloc(&after_new);
+    VehBattleUnkTgl[0] = true; // kill() skips its map redraw while this is set
+    snap_take(&base);
+    struct Design {
+        uint32_t chs, wpn, arm, abl, rec;
+        int category;
+    };
+    int compared = 0, mismatches = 0, rejected = 0, reused = 0, created = 0, retired = 0;
+    int requeued = 0, suggested = 0;
+    char label[128];
+    // variant: 0 as loaded; 1-4 the design workshop's suggestion states (1 open, 1 with the
+    // design's category, 2, 3); 5 the faction is a second human player (hotseat) who declined a
+    // design; 6 Citizen difficulty; 7 no expansion; 8 a given name; 9 a name already taken
+    auto run = [&](uint32_t f, const Design &d, int variant, int bunged_proto) {
+        LPCSTR name = NULL;
+        if (variant == 8) {
+            name = "Proposal";
+        } else if (variant == 9) {
+            for (int i = 0; i < MaxVehProtoFactionNum && !name; i++) {
+                int id = f * MaxVehProtoFactionNum + i;
+                if (((VehPrototype *)proto_saved)[id].flags & PROTO_ACTIVE) {
+                    name = ((VehPrototype *)proto_saved)[id].veh_name;
+                }
+            }
+        }
+        char name_copy[64];
+        if (name) {
+            strcpy_s(name_copy, name); // the slot holding the name may be overwritten
+            name = name_copy;
+        }
+        auto prepare = [&]() {
+            snap_restore(&base);
+            memcpy(BungList, bung_saved, bung_size);
+            memcpy(VehPrototypes, proto_saved, proto_size);
+            memcpy(suggest, suggest_saved, suggest_size);
+            *ProtoIDNewDesign = new_design_saved;
+            *FactionsStatus = status_saved;
+            *DiffLevelCurrent = diff_saved;
+            *ExpansionEnabled = expansion_saved;
+            for (int i = 0; i < extra_count; i++) {
+                *extra_globals[i] = extra_saved[i];
+            }
+            if (variant >= 1 && variant <= 4) {
+                *DesignSuggestState = variant <= 2 ? 1 : variant - 1;
+                *DesignSuggestCategory = variant == 2 ? d.category : -1;
+            } else if (variant == 5) {
+                *FactionsStatus |= (uint8_t)(1 << f);
+                if (bunged_proto >= 0) {
+                    bung_proto(f, bunged_proto);
+                }
+            } else if (variant == 6) {
+                *DiffLevelCurrent = 1;
+            } else if (variant == 7) {
+                *ExpansionEnabled = false;
+            }
+        };
+        prepare();
+        int ret_o = propose_proto_OG(f, d.chs, d.wpn, d.arm, d.abl, d.rec, d.category, name);
+        snap_take(&after_orig);
+        memcpy(bung_orig, BungList, bung_size);
+        memcpy(proto_orig, VehPrototypes, proto_size);
+        memcpy(suggest_o, suggest, suggest_size);
+        int new_design_o = *ProtoIDNewDesign;
+        for (int i = 0; i < extra_count; i++) {
+            extra_o[i] = *extra_globals[i];
+        }
+        prepare();
+        int ret_n = propose_proto(f, d.chs, d.wpn, d.arm, d.abl, d.rec, d.category, name);
+        snap_take(&after_new);
+        compared++;
+        if (ret_o < 0) {
+            rejected++;
+        } else {
+            VehPrototype *was = &((VehPrototype *)proto_saved)[ret_o];
+            VehPrototype *now = &((VehPrototype *)proto_orig)[ret_o];
+            BOOL same_parts = was->chassis_id == now->chassis_id && was->weapon_id == now->weapon_id
+                && was->armor_id == now->armor_id && was->reactor_id == now->reactor_id
+                && was->ability_flags == now->ability_flags;
+            if (was->flags & PROTO_ACTIVE && same_parts) {
+                reused++;
+            } else {
+                created++;
+                retired += (was->flags & PROTO_ACTIVE) != 0;
+            }
+        }
+        if (first_diff(after_orig.bases, base.bases, sizeof(Base) * base.base_count) != (size_t)-1) {
+            requeued++;
+        }
+        if (memcmp(suggest_o, suggest_saved, suggest_size)) {
+            suggested++;
+        }
+        sprintf_s(label, "propose_proto(%u, %u, %u, %u, %X, %u, %d) variant %d", f, d.chs, d.wpn,
+            d.arm, d.abl, d.rec, d.category, variant);
+        BOOL diff = false;
+        if (ret_o != ret_n) {
+            if (mismatches < MAX_DETAIL) {
+                logf("  %s: orig returned %d, new %d", label, ret_o, ret_n);
+            }
+            diff = true;
+        }
+        if (!diff) {
+            diff = snap_differs(&after_orig, &after_new, mismatches < MAX_DETAIL ? label : NULL);
+        }
+        size_t at;
+        if (!diff && (at = first_diff(bung_orig, BungList, bung_size)) != (size_t)-1) {
+            if (mismatches < MAX_DETAIL) {
+                logf("  %s: BungList byte %u differs (orig %02X new %02X)", label, (unsigned)at,
+                    bung_orig[at], ((uint8_t *)BungList)[at]);
+            }
+            diff = true;
+        }
+        if (!diff && (at = first_diff(proto_orig, VehPrototypes, proto_size)) != (size_t)-1) {
+            if (mismatches < MAX_DETAIL) {
+                logf("  %s: VehPrototype[%u] +0x%X differs (orig %02X new %02X)", label,
+                    (unsigned)(at / sizeof(VehPrototype)), (unsigned)(at % sizeof(VehPrototype)),
+                    proto_orig[at], ((uint8_t *)VehPrototypes)[at]);
+            }
+            diff = true;
+        }
+        if (!diff && (at = first_diff(suggest_o, suggest, suggest_size)) != (size_t)-1) {
+            if (mismatches < MAX_DETAIL) {
+                logf("  %s: design suggestion +0x%X differs", label, (unsigned)at);
+            }
+            diff = true;
+        }
+        if (!diff && new_design_o != *ProtoIDNewDesign) {
+            if (mismatches < MAX_DETAIL) {
+                logf("  %s: new design id orig %d new %d", label, new_design_o, *ProtoIDNewDesign);
+            }
+            diff = true;
+        }
+        for (int i = 0; i < extra_count && !diff; i++) {
+            if (extra_o[i] != *extra_globals[i]) {
+                if (mismatches < MAX_DETAIL) {
+                    logf("  %s: selection global %08X differs", label, (unsigned)extra_globals[i]);
+                }
+                diff = true;
+            }
+        }
+        if (diff) {
+            mismatches++;
+        }
+    };
+    static const int categories[] = { -1, -2, 0, 3, 6, 8, 10, 13, 18, 23 };
+    const int category_count = (int)(sizeof(categories) / sizeof(categories[0]));
+    for (uint32_t f = 1; f < MaxPlayerNum; f++) {
+        if ((int)f == *FactionIDCurrent) {
+            continue; // prune_protos() opens popups for the player at the controls
+        }
+        static Design designs[1600];
+        int n = 0;
+        int bunged_proto = -1;
+        // every active design the faction can build: the same parts, as typed complete, with an
+        // extra ability inside and outside the 0x44AE1B mask, and with each part one step off
+        for (int i = 0; i < 2 * MaxVehProtoFactionNum && n < 1000; i++) {
+            int id = i < MaxVehProtoFactionNum ? i : f * MaxVehProtoFactionNum + i - MaxVehProtoFactionNum;
+            VehPrototype *p = &((VehPrototype *)proto_saved)[id];
+            if (!(p->flags & PROTO_ACTIVE)
+                || (id < MaxVehProtoFactionNum && !has_tech(p->preq_tech, f))) {
+                continue;
+            }
+            if (id >= MaxVehProtoFactionNum && bunged_proto < 0) {
+                bunged_proto = id;
+            }
+            Design same = { p->chassis_id, p->weapon_id, p->armor_id, p->ability_flags, p->reactor_id,
+                (uint8_t)p->unk_1 };
+            designs[n++] = same;
+            same.category = -2;
+            designs[n++] = same;
+            Design d = same;
+            d.category = -1;
+            d.abl = same.abl | ABL_AAA;
+            designs[n++] = d;
+            d.abl = same.abl | ABL_DEEP_RADAR;
+            designs[n++] = d;
+            d = same;
+            d.category = -1;
+            if (d.wpn + 1 < MaxWeaponNum && proto_test_plausible(d.chs, d.wpn + 1)) {
+                d.wpn++;
+                designs[n++] = d;
+                d.wpn--;
+            }
+            if (d.arm + 1 < MaxArmorNum) {
+                d.arm++;
+                designs[n++] = d;
+                d.arm--;
+            }
+            if (d.rec < MaxReactorNum) {
+                d.rec++;
+                designs[n++] = d;
+            }
+        }
+        // a sample of the part grid (the faction may lack the techs for some of it)
+        int k = 0;
+        for (uint32_t chs = 0; chs < MaxChassisNum; chs++) {
+            for (uint32_t wpn = 0; wpn < MaxWeaponNum; wpn++) {
+                if (!proto_test_plausible(chs, wpn)) {
+                    continue;
+                }
+                for (uint32_t arm = 0; arm < MaxArmorNum; arm++) {
+                    for (uint32_t rec = 1; rec <= MaxReactorNum; rec++, k++) {
+                        if (k % 11 || n >= 1600) {
+                            continue;
+                        }
+                        Design d = { chs, wpn, arm, ProtoTestAbilities[(k / 11) % ProtoTestAbilityCount],
+                            rec, categories[(k / 11) % category_count] };
+                        designs[n++] = d;
+                    }
+                }
+            }
+        }
+        for (int i = 0; i < n; i++) {
+            run(f, designs[i], 0, bunged_proto);
+            if (i % 9 == 0) {
+                for (int variant = 1; variant <= 9; variant++) {
+                    run(f, designs[i], variant, bunged_proto);
+                }
+            }
+        }
+        // the hotseat human proposes the design it declined, and one it already has
+        if (bunged_proto >= 0) {
+            VehPrototype *p = &((VehPrototype *)proto_saved)[bunged_proto];
+            Design d = { p->chassis_id, p->weapon_id, p->armor_id, p->ability_flags, p->reactor_id, -1 };
+            run(f, d, 5, bunged_proto);
+            run(f, d, 5, -1);
+        }
+    }
+    snap_restore(&base);
+    memcpy(BungList, bung_saved, bung_size);
+    memcpy(VehPrototypes, proto_saved, proto_size);
+    memcpy(suggest, suggest_saved, suggest_size);
+    *ProtoIDNewDesign = new_design_saved;
+    *FactionsStatus = status_saved;
+    *DiffLevelCurrent = diff_saved;
+    *ExpansionEnabled = expansion_saved;
+    for (int i = 0; i < extra_count; i++) {
+        *extra_globals[i] = extra_saved[i];
+    }
+    VehBattleUnkTgl[0] = draw_saved;
+    snap_free(&base); snap_free(&after_orig); snap_free(&after_new);
+    free(bung_saved); free(bung_orig); free(proto_saved); free(proto_orig);
+    logf("propose_proto: %d compared (%d rejected or suggested, %d new designs, %d reused, "
+        "%d slots retired, %d with queues updated, %d suggestions recorded), %d mismatches",
+        compared, rejected, created, reused, retired, requeued, suggested, mismatches);
+    return mismatches;
+}
+
 static DWORD WINAPI regress_watcher(LPVOID) {
     for (;;) {
         Sleep(1000);
@@ -6132,6 +6508,8 @@ void regress_run() {
     if (test_enabled("batch21", "mon_records")) total += run_guarded("mon_records", test_mon_records);
     if (test_enabled("batch22", "valid_patrol")) total += run_guarded("valid_patrol", test_valid_patrol);
     if (test_enabled("batch22", "energy_compute")) total += run_guarded("energy_compute", test_energy_compute);
+    if (test_enabled("batch23", "name_proto")) total += run_guarded("name_proto", test_name_proto);
+    if (test_enabled("batch23", "propose_proto")) total += run_guarded("propose_proto", test_propose_proto);
     if (test_enabled("enemy_capabilities")) total += run_guarded("enemy_capabilities", test_enemy_capabilities);
     if (test_enabled("social_ai")) total += run_guarded("social_ai", test_social_ai);
     if (test_enabled("Path::sensors") || test_enabled("path_sensors")) total += run_guarded("path_sensors", test_path_sensors);

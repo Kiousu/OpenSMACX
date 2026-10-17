@@ -50,6 +50,17 @@ LPSTR *Triad = (LPSTR *)0x0094F1A8; // [3]
 int *VehCurrentCount = (int *)0x009A64C8;
 int *VehFindDist = (int *)0x009B227C; // distance to the unit returned by veh_find()
 BungedDesign *BungList = (BungedDesign *)0x0094B558; // [8][64] ; see is_bunged()
+// design workshop suggestion: the workshop sets DesignSuggestState to 1 (and the category to
+// match, or -1) and runs consider_designs(); propose_proto() records the design it would reuse
+// (state 2) or create (state 3) here instead of making it
+int *DesignSuggestAbilities = (int *)0x0093FC34;
+int *DesignSuggestCategory = (int *)0x0093FC38;
+int *DesignSuggestWeapon = (int *)0x0093FC3C;
+int *DesignSuggestChassis = (int *)0x0093FC40;
+int *DesignSuggestReactor = (int *)0x0093FC44;
+int *DesignSuggestArmor = (int *)0x0093FC50;
+int *DesignSuggestState = (int *)0x0093FC54;
+int *ProtoIDNewDesign = (int *)0x0068F0F0; // first design proposed since tech_achieved() reset it to -1
 int *VehDropLiftVehID = (int *)0x009B2280;
 int *VehLiftX = (int *)0x009B2278;
 int *VehLiftY = (int *)0x009B2284;
@@ -1865,6 +1876,293 @@ void __cdecl clear_bunglist(uint32_t faction_id) {
 }
 
 /*
+Purpose: Mark a unit design name as a later model: append " Mk2" when it has no Mk number at the
+         end, otherwise raise the number (up to 9). Used by name_proto().
+Original Offset: n/a (inlined twice in name_proto)
+Return Value: Is the number already past 8, so it can't be raised? true/false
+Status: Complete
+*/
+static BOOL name_proto_mk(LPSTR name) {
+    LPSTR mk = NULL; // last occurrence of the Mk label
+    do {
+        mk = strstr(mk ? mk + 1 : name, label_get(919));
+        if (!mk) {
+            break;
+        }
+    } while (strstr(mk + 1, label_get(919)));
+    if (!mk || strlen(label_get(919)) + 1 < strlen(mk)) {
+        char num[80];
+        strcat(name, " ");
+        strcat(name, label_get(919));
+        strcat(name, _itoa(2, num, 10));
+        return false;
+    }
+    size_t len = strlen(name);
+    char last = name[len - 1];
+    if (last < '2' || last > '8') {
+        return true;
+    }
+    name[len - 1] = last + 1;
+    return false;
+}
+
+/*
+Purpose: Generate the default name of a unit design. Two candidates are built side by side, each
+         from an ability prefix, the armor, weapon or reactor and one of the chassis' noun forms;
+         the faction id, reactor, weapon or armor parity and the proto slot decide which one is
+         used. A name already taken by a different design gets " Mk 2" or its Mk number raised.
+Original Offset: 0057E040
+Return Value: n/a (the name is written to the name buffer, at least 256 bytes)
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch23.log
+        and 2026-10-16-sweep-batch23.log)
+*/
+void __cdecl name_proto(LPSTR name, int proto_id, int faction_id, uint32_t chassis_id,
+                        uint32_t weapon_id, uint32_t armor_id, uint32_t abilities,
+                        uint32_t reactor_id) {
+    char alt_name[256];
+    *name = 0;
+    for (int i = 0; i < MaxAbilityNum; i++) {
+        if (abilities & (1 << i) && strlen(StringTable->get((int)Ability[i].abbreviation))) {
+            // no prefix for air superiority on an air chassis or for artillery; amphibious only
+            // names a slow (speed 1) unit when it's defensive or artillery
+            if ((i != 5 || Chassis[chassis_id].triad != TRIAD_AIR) && i != 15) { // abil_index()
+                if (i != 3 || Chassis[chassis_id].speed != 1
+                    || Weapon[weapon_id].offense_rating < Armor[armor_id].defense_rating
+                    || (abilities & ABL_ARTILLERY)) {
+                    strcat(name, StringTable->get((int)Ability[i].abbreviation));
+                    strcat(name, " ");
+                    break;
+                }
+            }
+        }
+    }
+    strcpy(alt_name, name);
+    int8_t offense = Weapon[weapon_id].offense_rating;
+    int8_t defense = Armor[armor_id].defense_rating;
+    BOOL large = false; // use the chassis' large noun
+    BOOL not_sea = false;
+    if (Weapon[weapon_id].mode < 3) {
+        int threshold;
+        int lesser;
+        if (offense < defense) {
+            threshold = 6;
+            lesser = offense;
+        } else {
+            threshold = 3;
+            lesser = defense;
+        }
+        uint8_t triad = Chassis[chassis_id].triad;
+        if (triad == TRIAD_SEA) {
+            threshold++;
+        }
+        if (triad == TRIAD_AIR) {
+            threshold += (uint32_t)threshold / 2;
+        }
+        large = threshold < lesser;
+        not_sea = triad != TRIAD_SEA;
+        if (!strlen(StringTable->get((int)Chassis[chassis_id].offsv_lrg_name))
+            || !strlen(StringTable->get((int)Chassis[chassis_id].defsv_lrg_name))) {
+            large = false;
+        }
+    }
+    BOOL no_component = false; // the weapon and armor aren't part of the name
+    BOOL use_alt = ((reactor_id - 1) ^ faction_id) & 1;
+    if ((VehPrototypes[proto_id].unk_1 == 10 && !(*FactionsStatus & (1 << faction_id))
+        && Chassis[chassis_id].speed > 1)
+        || (offense <= Chassis[chassis_id].speed && defense <= Chassis[chassis_id].speed
+            && offense >= 0 && Chassis[chassis_id].triad == TRIAD_LAND)) {
+        if (Weapon[weapon_id].mode < 3) {
+            if (!has_abil(proto_id, ABL_POLICE_2X)) {
+                int label = (offense < 2) ? 146 : 182;
+                strcat(name, label_get(label));
+                strcat(alt_name, label_get(label));
+            } else {
+                if (strlen(name)) {
+                    name[strlen(name) - 1] = 0;
+                }
+                if (strlen(alt_name)) {
+                    alt_name[strlen(name) - 1] = 0; // original measures the already shortened name
+                }
+            }
+            no_component = true;
+            use_alt = Chassis[chassis_id].speed > 1;
+        }
+    }
+    BOOL use_reactor = false; // the faction's matching designs all have weaker reactors
+    if (!no_component) {
+        for (int i = 0; i < 128; i++) {
+            int id = (i < MaxVehProtoFactionNum ? 0 : faction_id * MaxVehProtoFactionNum)
+                + i % MaxVehProtoFactionNum;
+            if (VehPrototypes[id].flags & PROTO_ACTIVE
+                && VehPrototypes[id].plan == VehPrototypes[proto_id].plan
+                && VehPrototypes[id].chassis_id == VehPrototypes[proto_id].chassis_id) {
+                if (VehPrototypes[proto_id].reactor_id <= VehPrototypes[id].reactor_id) {
+                    use_reactor = false;
+                    break;
+                }
+                use_reactor = true;
+            }
+        }
+    }
+    LPSTR reactor_name = (LPSTR)Reactor[reactor_id - 1].name_short;
+    LPSTR alt_part; // string table key of the last part of the alternative name
+    if (offense < defense && Weapon[weapon_id].mode < 3 && offense >= 0
+        && !(abilities & ABL_ARTILLERY)) {
+        // defensive: armor (or reactor) and a defensive chassis noun
+        if (!no_component) {
+            use_alt ^= Armor[armor_id].defense_rating & 1;
+            LPSTR part = use_reactor ? reactor_name : Armor[armor_id].name_short;
+            strcat(name, StringTable->get((int)part));
+            strcat(alt_name, StringTable->get((int)part));
+        }
+        strcat(name, " ");
+        strcat(alt_name, " ");
+        strcat(name, StringTable->get((int)Chassis[chassis_id].defsv_1_name));
+        if (!no_component || !(proto_id & 1)) {
+            alt_part = (!large || not_sea) ? Chassis[chassis_id].defsv_2_name
+                : Chassis[chassis_id].defsv_lrg_name;
+        } else {
+            alt_part = (!large || !not_sea) ? Chassis[chassis_id].defsv_1_name
+                : Chassis[chassis_id].defsv_lrg_name;
+        }
+    } else if (Chassis[chassis_id].triad == TRIAD_AIR && abilities & ABL_AIR_SUPERIORITY
+        && Weapon[weapon_id].mode < 3 && offense >= 0) {
+        // interceptor: weapon (or reactor) and a defensive chassis noun
+        if (!no_component) {
+            LPSTR part = use_reactor ? reactor_name : Weapon[weapon_id].name_short;
+            strcat(name, StringTable->get((int)part));
+            strcat(alt_name, StringTable->get((int)part));
+        }
+        strcat(name, " ");
+        strcat(alt_name, " ");
+        strcat(name, StringTable->get((int)Chassis[chassis_id].defsv_1_name));
+        if (!no_component || !(proto_id & 1)) {
+            alt_part = (!large || not_sea) ? Chassis[chassis_id].defsv_2_name
+                : Chassis[chassis_id].defsv_lrg_name;
+        } else {
+            alt_part = (!large || !not_sea) ? Chassis[chassis_id].defsv_1_name
+                : Chassis[chassis_id].defsv_lrg_name;
+        }
+    } else if (Chassis[chassis_id].missile && offense > 98) {
+        // planet buster: reactor and weapon
+        strcat(name, StringTable->get((int)reactor_name));
+        strcat(alt_name, StringTable->get((int)reactor_name));
+        strcat(name, " ");
+        strcat(alt_name, " ");
+        strcat(name, StringTable->get((int)Weapon[weapon_id].name_short));
+        alt_part = Weapon[weapon_id].name_short;
+    } else if (Chassis[chassis_id].missile
+        && (weapon_id == WPN_TECTONIC_PAYLOAD || weapon_id == WPN_FUNGAL_PAYLOAD)) {
+        // payload missile: weapon, reactor and the chassis noun
+        strcat(name, StringTable->get((int)Weapon[weapon_id].name_short));
+        strcat(alt_name, StringTable->get((int)Weapon[weapon_id].name_short));
+        strcat(name, " ");
+        strcat(alt_name, " ");
+        strcat(name, StringTable->get((int)reactor_name));
+        strcat(alt_name, StringTable->get((int)reactor_name));
+        strcat(name, " ");
+        strcat(alt_name, " ");
+        strcat(name, StringTable->get((int)Chassis[chassis_id].offsv_1_name));
+        alt_part = Chassis[chassis_id].offsv_1_name;
+    } else {
+        uint8_t mode = Weapon[weapon_id].mode;
+        if (mode > 2 && chassis_id) {
+            // non-combat unit off foot: reactor (above fission) and the chassis noun
+            if ((int)reactor_id > 1) {
+                strcat(name, StringTable->get((int)reactor_name));
+                strcat(alt_name, StringTable->get((int)reactor_name));
+                strcat(name, " ");
+                strcat(alt_name, " ");
+            }
+            if ((mode != WPN_MODE_TRANSPORT || chassis_id != CHSI_FOIL)
+                && (mode != WPN_MODE_TERRAFORMER || Chassis[chassis_id].triad != TRIAD_LAND
+                    || !strchr(name, ' '))) {
+                if ((mode == WPN_MODE_COLONIST || mode == WPN_MODE_TERRAFORMER)
+                    && chassis_id == CHSI_FOIL) {
+                    strcat(name, label_get(163));
+                    strcat(alt_name, label_get(163));
+                } else {
+                    strcat(name, StringTable->get((int)Chassis[chassis_id].offsv_1_name));
+                    strcat(alt_name, StringTable->get((int)Chassis[chassis_id].offsv_2_name));
+                }
+                strcat(name, " ");
+                strcat(alt_name, " ");
+            }
+        }
+        if (!no_component) {
+            use_alt ^= Weapon[weapon_id].offense_rating & 1;
+            strcat(name, StringTable->get((int)Weapon[weapon_id].name_short));
+            strcat(alt_name, StringTable->get((int)Weapon[weapon_id].name_short));
+        }
+        if (mode > 2) {
+            alt_part = NULL;
+        } else if (abilities & ABL_ARTILLERY) {
+            strcat(name, " ");
+            strcat(name, label_get(543));
+            strcat(alt_name, " ");
+            alt_part = ((LPSTR *)Labels->strings_ptr)[544];
+        } else if (abilities & ABL_AMPHIBIOUS && Chassis[chassis_id].speed == 1
+            && offense > defense) {
+            strcat(name, " ");
+            strcat(name, label_get(614));
+            strcat(alt_name, " ");
+            alt_part = ((LPSTR *)Labels->strings_ptr)[615];
+        } else {
+            // offensive: weapon and an offensive chassis noun (or the reactor)
+            strcat(name, " ");
+            if (use_reactor) {
+                strcat(name, StringTable->get((int)reactor_name));
+            } else {
+                strcat(name, StringTable->get((int)((!large || !not_sea)
+                    ? Chassis[chassis_id].offsv_1_name : Chassis[chassis_id].offsv_lrg_name)));
+            }
+            strcat(alt_name, " ");
+            if (use_reactor) {
+                alt_part = reactor_name;
+            } else {
+                alt_part = (!large || not_sea) ? Chassis[chassis_id].offsv_2_name
+                    : Chassis[chassis_id].offsv_lrg_name;
+            }
+        }
+    }
+    if (alt_part) {
+        strcat(alt_name, StringTable->get((int)alt_part));
+    }
+    BOOL names_differ = strcmp(name, alt_name) != 0;
+    BOOL stop = false; // the Mk number can't be raised any further
+    for (int i = 0; i < MaxVehProtoNum; i++) {
+        int owner = i / MaxVehProtoFactionNum;
+        if (i != proto_id && (!owner || owner == faction_id)
+            && (VehPrototypes[i].chassis_id != chassis_id
+                || VehPrototypes[i].weapon_id != weapon_id
+                || VehPrototypes[i].armor_id != armor_id
+                || VehPrototypes[i].reactor_id != reactor_id
+                || VehPrototypes[i].ability_flags != abilities)) {
+            if (!stop && !strcmp(name, VehPrototypes[i].veh_name)) {
+                if (names_differ) {
+                    use_alt = true;
+                }
+                if (name_proto_mk(name)) {
+                    stop = true;
+                }
+                i = -1;
+            }
+            // Original compares against the slot before the first after a restart (index -1).
+            if (names_differ && !strcmp(alt_name, VehPrototypes[i].veh_name)) {
+                use_alt = false;
+                if (name_proto_mk(alt_name)) {
+                    stop = true;
+                }
+                i = -1;
+            }
+        }
+    }
+    if (use_alt) {
+        strcpy(name, alt_name);
+    }
+}
+
+/*
 Purpose: Check against faction's available tech for best available reactor.
 Original Offset: 0057EFA0
 Return Value: Best reactor available (1-4)
@@ -2074,6 +2372,241 @@ void __cdecl retire_proto(int proto_id, int faction_id) {
         }
         VehPrototypes[proto_id].flags &= ~PROTO_ACTIVE;
     }
+}
+
+/*
+Purpose: Get the combat value propose_proto() rates a weapon at: its offense rating, or for psi the
+         psi factor against the faction's strongest known enemy armor. Without the expansion the
+         resonance weapons and the string disruptor count as 1.
+Original Offset: n/a (inlined twice in propose_proto)
+Return Value: Weapon value
+Status: Complete
+*/
+static int propose_proto_offense(uint32_t faction_id, uint32_t weapon_id) {
+    if (!*ExpansionEnabled && (weapon_id == WPN_RESONANCE_LASER || weapon_id == WPN_RESONANCE_BOLT
+        || weapon_id == WPN_STRING_DISRUPTOR)) {
+        return 1;
+    }
+    if (Weapon[weapon_id].offense_rating < 0) {
+        return psi_factor(PlayersData[faction_id].enemy_best_armor_value
+            * (int)Rules->psi_combat_ratio_atk[TRIAD_LAND]
+            / (int)Rules->psi_combat_ratio_def[TRIAD_LAND], faction_id, true, false);
+    }
+    return Weapon[weapon_id].offense_rating;
+}
+
+/*
+Purpose: Get the combat value propose_proto() rates an armor at: its defense rating, or for psi the
+         psi factor against the faction's strongest known enemy weapon. Without the expansion the
+         armors past id 9 count as 1.
+Original Offset: n/a (inlined twice in propose_proto)
+Return Value: Armor value
+Status: Complete
+*/
+static int propose_proto_defense(uint32_t faction_id, uint32_t armor_id) {
+    if (!*ExpansionEnabled && (int)armor_id > 9) {
+        return 1;
+    }
+    if (Armor[armor_id].defense_rating < 0) {
+        return psi_factor(PlayersData[faction_id].enemy_best_weapon_value
+            * (int)Rules->psi_combat_ratio_def[TRIAD_LAND]
+            / (int)Rules->psi_combat_ratio_atk[TRIAD_LAND], faction_id, false, false);
+    }
+    return Armor[armor_id].defense_rating;
+}
+
+/*
+Purpose: Propose a unit design for a faction. An existing design with the same parts is reused
+         (made current again); otherwise the design goes into the best free slot of the faction's
+         64: an empty slot, an obsolete design with no units, or a little used one, which is retired
+         first. The new prototype is named (name_proto() unless a name is given), the faction's
+         prototypes are pruned and every queued obsolete design of the same category in its bases
+         is replaced by it. While the design workshop asks consider_designs() for a suggestion
+         (DesignSuggestState set) nothing is created; the matching or new design is recorded in
+         the DesignSuggest globals instead. A category of -2 marks the design as typed complete.
+Original Offset: 00580860
+Return Value: Prototype id, or -1 if rejected, already owned by a human player or only suggested
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch23.log
+        and 2026-10-16-sweep-batch23.log)
+*/
+int __cdecl propose_proto(uint32_t faction_id, uint32_t chassis_id, uint32_t weapon_id,
+                          uint32_t armor_id, uint32_t abilities, uint32_t reactor_id,
+                          int category, LPCSTR name) {
+    if (!*DesignSuggestState) {
+        if (is_bunged(faction_id, chassis_id, weapon_id, armor_id, abilities, reactor_id)) {
+            return -1;
+        }
+    } else if (*DesignSuggestCategory >= 0 && *DesignSuggestCategory != category) {
+        return -1;
+    }
+    if (Chassis[chassis_id].speed == 1 && Armor[armor_id].defense_rating == 1
+        && Weapon[weapon_id].offense_rating == 1 && !*DesignSuggestState) {
+        return BSC_SCOUT_PATROL;
+    }
+    int offense = propose_proto_offense(faction_id, weapon_id);
+    int defense = propose_proto_defense(faction_id, armor_id);
+    uint8_t faction_bit = (uint8_t)(1 << faction_id);
+    BOOL is_human_faction = *FactionsStatus & faction_bit;
+    int score_best = 0;
+    int proto_id_best = -1;
+    for (int i = 0; i < 128; i++) {
+        int proto_id = (i < MaxVehProtoFactionNum ? 0 : faction_id * MaxVehProtoFactionNum)
+            + i % MaxVehProtoFactionNum;
+        VehPrototype *proto = &VehPrototypes[proto_id];
+        uint8_t active = PlayersData[faction_id].proto_id_active[proto_id];
+        uint8_t queued = PlayersData[faction_id].proto_id_queue[proto_id];
+        int score;
+        if (proto_id >= MaxVehProtoFactionNum && proto->flags & PROTO_ACTIVE
+            && proto->obsolete_factions & faction_bit && !active && !queued) {
+            // unused obsolete design, best of the same category
+            score = ((int)(uint8_t)proto->unk_1 != category) ? 0x1000 : 0x2000;
+        } else if (!(proto->flags & PROTO_ACTIVE)) {
+            if (proto_id < MaxVehProtoFactionNum) {
+                continue;
+            }
+            score = 0x800; // empty slot
+        } else {
+            if (proto_id < MaxVehProtoFactionNum && !has_tech(proto->preq_tech, faction_id)) {
+                continue;
+            }
+            if (proto->chassis_id == chassis_id) {
+                if (proto->weapon_id == weapon_id && proto->armor_id == armor_id
+                    && proto->ability_flags == abilities && proto->reactor_id == reactor_id
+                    && !*DesignSuggestState && is_human_faction) {
+                    return -1;
+                }
+                if (proto->weapon_id == weapon_id && proto->armor_id == armor_id
+                    && !((proto->ability_flags ^ abilities) & 0x44AE1B)
+                    && ((proto->ability_flags & abilities) == proto->ability_flags
+                        || !is_human_faction)
+                    && proto->reactor_id == reactor_id) {
+                    // reuse the existing design
+                    if (category == -2) {
+                        proto->flags |= PROTO_TYPED_COMPLETE;
+                    }
+                    if (*DesignSuggestState && *DesignSuggestState <= 2) {
+                        *DesignSuggestAbilities = abilities;
+                        *DesignSuggestWeapon = weapon_id;
+                        *DesignSuggestArmor = armor_id;
+                        *DesignSuggestChassis = chassis_id;
+                        *DesignSuggestReactor = reactor_id;
+                        *DesignSuggestState = 2;
+                    }
+                    proto->obsolete_factions &= ~faction_bit;
+                    return proto_id;
+                }
+            }
+            if (proto_id < MaxVehProtoFactionNum) {
+                continue;
+            }
+            if (proto->obsolete_factions & faction_bit && !active) {
+                score = 0x400; // obsolete design with only queued units
+            } else {
+                if (proto->chassis_id == chassis_id && proto->reactor_id == reactor_id
+                    && !((proto->ability_flags ^ abilities) & 0x48841A)) {
+                    // an AI faction keeps a design that's close enough and stronger
+                    int proto_offense = propose_proto_offense(faction_id, proto->weapon_id);
+                    int proto_defense = propose_proto_defense(faction_id, proto->armor_id);
+                    int high = (proto_offense > proto_defense) ? proto_offense : proto_defense;
+                    int high_tie = high + (proto_offense == proto_defense);
+                    if (offense < high && abs(offense - proto_offense) < 2 && defense < high_tie
+                        && abs(defense - proto_defense) < 2 && !is_human_faction
+                        && strcmp(Players[faction_id].filename, "UNIV")) {
+                        return proto_id;
+                    }
+                }
+                if ((int)(uint8_t)proto->unk_1 != category && (active || queued)) {
+                    continue;
+                }
+                score = active ? 0x40 : 0x240;
+                if (proto->obsolete_factions & faction_bit) {
+                    score |= 0x100;
+                }
+                if (!queued) {
+                    score |= 0x80;
+                }
+                int used = proto->cost * active + queued;
+                score -= (used > 63) ? 63 : used;
+            }
+        }
+        if (score > score_best) {
+            score_best = score;
+            proto_id_best = proto_id;
+        }
+    }
+    if (proto_id_best < 0) {
+        return -1;
+    }
+    if (*DesignSuggestState) {
+        if (*DesignSuggestState <= 2) {
+            *DesignSuggestWeapon = weapon_id;
+            *DesignSuggestArmor = armor_id;
+            *DesignSuggestChassis = chassis_id;
+            *DesignSuggestAbilities = abilities;
+            *DesignSuggestReactor = reactor_id;
+            *DesignSuggestCategory = category;
+            *DesignSuggestState = 3;
+        }
+        return -1;
+    }
+    VehPrototype *proto = &VehPrototypes[proto_id_best];
+    BOOL was_empty = !(proto->flags & PROTO_ACTIVE);
+    if (!was_empty && !*IsMultiplayerNet) {
+        retire_proto(proto_id_best, faction_id);
+    }
+    make_proto(proto_id_best, chassis_id, weapon_id, armor_id, abilities, reactor_id);
+    if (category == -2) {
+        proto->flags |= PROTO_TYPED_COMPLETE;
+    }
+    if (*DiffLevelCurrent <= 1) {
+        proto->flags |= PROTO_TYPED_COMPLETE;
+    }
+    if (was_empty) {
+        proto->flags |= 0x40;
+    }
+    proto->flags |= 0x80;
+    if (category >= 0) {
+        proto->unk_1 = (int8_t)category;
+        if (category == 10) {
+            proto->plan = 3;
+        }
+    }
+    if (name) {
+        // no length check: the original copies any name in full
+        strcpy(proto->veh_name, name);
+        for (int i = 0; i < MaxVehProtoNum; i++) {
+            int owner = i / MaxVehProtoFactionNum;
+            if (i != proto_id_best && (!owner || owner == (int)faction_id)
+                && !strcmp(proto->veh_name, VehPrototypes[i].veh_name)) {
+                strcat(proto->veh_name, "*");
+                i = -1;
+            }
+        }
+    } else {
+        char proto_name[256];
+        name_proto(proto_name, proto_id_best, faction_id, chassis_id, weapon_id, armor_id,
+            abilities, reactor_id);
+        strncpy(proto->veh_name, proto_name, 32);
+        proto->veh_name[31] = 0;
+        proto->flags &= ~PROTO_CUSTOM_NAME_SET;
+    }
+    prune_protos(faction_id, proto_id_best, 0);
+    // The original first looks for a queued obsolete design of the category and drops the result.
+    for (int base_id = 0; base_id < *BaseCurrentCount; base_id++) {
+        if (Bases[base_id].faction_id_current == faction_id) {
+            for (int i = 0; i <= (int)Bases[base_id].queue_size; i++) {
+                int queued_id = Bases[base_id].queue_production_id[i];
+                if (queued_id >= 0 && VehPrototypes[queued_id].obsolete_factions & faction_bit
+                    && VehPrototypes[queued_id].unk_1 == proto->unk_1) {
+                    Bases[base_id].queue_production_id[i] = proto_id_best;
+                }
+            }
+        }
+    }
+    if (*ProtoIDNewDesign < 0) {
+        *ProtoIDNewDesign = proto_id_best;
+    }
+    return proto_id_best;
 }
 
 /*
