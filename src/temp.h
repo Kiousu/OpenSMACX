@@ -328,6 +328,10 @@ typedef BOOL func_upgrade_proto(int, int, int, BOOL);
 extern func_upgrade_proto *upgrade_prototype_OG;
 typedef int __fastcall func_net_receive(void *This, void *edx_unused);
 extern func_net_receive *NetDaemon_receive; // NetDaemon::receive(): non-zero while messages wait
+// batch 27
+typedef int func_veh_init(int, uint32_t, int, int);
+extern func_veh_init *veh_init_OG;
+extern func_void *alien_start_OG;
 extern func_void *base_psych_OG;
 extern func_social_ai *social_ai_OG;
 extern func_path_sensors *Path_sensors_OG; // Path::sensors()
@@ -444,8 +448,6 @@ extern int *MapWinVehIDSelected; // Console::iUnit, the unit selected in the map
 extern BOOL *MapWinUnitNotViewMode; // Console field after the owner (Thinker: fUnitNotViewMode)
 extern int *MapWinUnkFlag; // Console field +0x23BE4, checked by pick_top_veh()
 extern int *VehUpgradeUnk; // zeroed by upgrade_any_prototypes(), set by upgrade_prototype()
-typedef int func_veh_init(int, uint32_t, int, int);
-extern func_veh_init *veh_init; // veh_init(proto_id, faction_id, x, y)
 extern func_win_redraw *MapWin_clear_terrain; // MapWin::clear_terrain() on ConsoleVar
 extern func_i *tech_selection; // tech_selection(faction_id): pick the next research goal (dialog for humans)
 typedef int func_tech_pick(int, int, int, LPCSTR);

@@ -713,3 +713,6 @@
 0x001B0420	?balance@@YAXXZ
 # --- batch 26: prototype upgrades
 0x000EFE80	?upgrade_prototype@@YAHHHHH@Z
+# --- batch 27: unit creation, alien start
+0x001C03D0	?veh_init@@YAHHIHH@Z
+0x00188F90	?alien_start@@YAXXZ

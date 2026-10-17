@@ -1095,3 +1095,45 @@ run showed 2 mismatches that came from the test: it did not restore `VehPrototyp
 Original behaviour kept: the popup text lists the ability abbreviations with no separator.
 Boot test: the 678-redirect exe loaded Council.SAV and advanced the turn 289 -> 290 (38 s) with
 the game alive.
+
+## Batch 27, 2026-10-17 (Council.SAV and the 14 sweep saves, 678-redirect exe)
+
+`veh_init` (veh.cpp), which creates every unit: it was a temp.cpp pointer into the exe and is now
+`veh_init_OG` for the harness. It homes the unit to a base of its faction on the tile (an alien
+artifact instead becomes an objective when artifacts are scenario objectives), places it and
+reveals the tiles around it, then may assign a land combat unit or probe in the region of the
+faction's target location to the target (`VSTATE_UNK_40000`, quota from the faction's bases in
+the region, capped for a naval region plan) or leave a better attacker than defender out at
+random (`VSTATE_UNK_20000`). `alien_start` (game.cpp), called by `config_game` when a SMACX game
+is set up: if the player's faction is neither alien nor FUNGBOY, every computer alien or FUNGBOY
+faction in a single player game is removed (bases and units killed, alive bit cleared, flags and
+difficulty set to -1).
+
+Trigger group `batch27` (filter with the names `veh_init alien_start`: the group name also matches
+`batch2`). `veh_init`: every faction, every active basic and faction prototype, on up to four of
+its bases, its target tile, six tiles of the target's region and six tiles across the map; as
+loaded and with the target counters reset as the AI strategy pass leaves them, plus the scenario
+artifact rule for alien artifacts and a full unit table. Compared: the return value, the
+snapshot, the new unit, `BaseComputeID` and the position in the random stream. `spot_all` hands
+first contacts to `encounter` (a diplomacy dialog with the player) and alien sightings to
+`interlude`; both are stubbed with a recorder and the recorded calls are compared. Without the
+stubs the first sweep stopped on sw_aki2152 with Cha Dawn's first contact open inside the test.
+`alien_start`: each faction as the player at turn 0, and for the loaded player as loaded (turn >
+0), hotseat/PBEM, network, no expansion and every faction human. `popp` is stubbed (`base_kill`
+can report a foiled energy market corner); compared: the snapshot, the Secret Project table,
+both status bytes, the replay record `base_kill` appends to, the current-base globals,
+`stringTemp` and the selection globals `veh_kill` renumbers.
+
+| function | Council.SAV | 14 sweep saves | mismatches |
+|---|---|---|---|
+| veh_init | 10,615 | 74,246 | 0 |
+| alien_start | 12 | 168 | 0 |
+
+By the original over the sweep saves: 31,268 units homed, 1,068 objectives, 1,531 assigned to
+the target, 49 left out at random (sw_steam1/sw_steam20 only), 9,769 contact/interlude calls;
+`alien_start` removed 1,532 bases. Logs:
+`regression-runs/2026-10-17-council-batch27.log` and `regression-runs/2026-10-17-sweep-batch27.log`.
+Original behaviour kept: the vendetta check compares the faction's own base count in the region,
+so the first faction at vendetta is taken. Boot tests with the 680-redirect exe: Council.SAV
+advanced the turn 289 -> 290 (38 s) with the game alive; a Quick Start (Svensgaard) reached
+planetfall with FUNGBOY removed by `alien_start`, as the 678-redirect exe (exe code) also does.

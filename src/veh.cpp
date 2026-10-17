@@ -4063,6 +4063,116 @@ void __cdecl veh_clear(uint32_t veh_id, int proto_id, uint32_t faction_id) {
 }
 
 /*
+Purpose: Create a unit of the specified prototype for a faction on the given tile. It is homed to a
+         base of the same faction on that tile (an alien artifact is instead marked as an objective
+         when artifacts are scenario objectives), placed and lets the faction see the tiles around
+         it. A land combat unit or probe created on land in the region of the faction's target
+         location then may be assigned to the target (VSTATE_UNK_40000, counted in unk_71 up to a
+         quota set by the faction's bases in the region; unk_72 flag 1 = a defender was assigned,
+         flag 2 = a probe) or, if a better attacker than defender, left out at random
+         (VSTATE_UNK_20000). With a faction at vendetta, a unit farther from the target than from
+         that faction's nearest base in the region is left alone.
+Original Offset: 005C03D0
+Return Value: Unit id or -1 if there is no room for another unit
+Status: Complete (verified vs original: docs/regression-runs/2026-10-17-council-batch27.log
+        and 2026-10-17-sweep-batch27.log)
+*/
+int __cdecl veh_init(int proto_id, uint32_t faction_id, int x, int y) {
+    int veh_id = *VehCurrentCount;
+    if (veh_id >= MaxVehNum) {
+        return -1;
+    }
+    (*VehCurrentCount)++;
+    log_say("Adding Vehicle (v,who,v2)", veh_id, faction_id, proto_id);
+    if (VehPrototypes[proto_id].plan < PLAN_COLONIZATION) {
+        PlayersData[faction_id].total_mil_veh++;
+    }
+    PlayersData[faction_id].proto_id_active[proto_id]++;
+    veh_clear(veh_id, proto_id, faction_id);
+    int base_id = base_find(x, y);
+    if (VehPrototypes[proto_id].plan == PLAN_ALIEN_ARTIFACT) {
+        if (*GameState & STATE_SCN_VICT_ALL_ARTIFACTS_OBJ_UNIT) {
+            Vehs[veh_id].flags |= VFLAG_IS_OBJECTIVE;
+        }
+    } else if (base_id >= 0 && Bases[base_id].faction_id_current == faction_id) {
+        Vehs[veh_id].home_base_id = (int16_t)base_id;
+        if (*BaseComputeID == base_id) {
+            *BaseComputeID = -1;
+        }
+    }
+    veh_drop(veh_id, x, y);
+    spot_all(veh_id, 1);
+    PlayerData *player = &PlayersData[faction_id];
+    if (player->x_target < 0 || is_ocean(x, y)) {
+        return veh_id;
+    }
+    uint8_t plan = VehPrototypes[proto_id].plan;
+    if (plan > PLAN_DEFENSIVE && plan != PLAN_INFO_WARFARE) {
+        return veh_id;
+    }
+    uint32_t region = map_loc(x, y)->region;
+    if (region_at(player->x_target, player->y_target) != region) {
+        return veh_id;
+    }
+    // first faction at vendetta (the comparison is with this faction's own base count)
+    int enemy_id = -1;
+    int enemy_bases = 0;
+    for (int i = 1; i < MaxPlayerNum; i++) {
+        if (i != (int)faction_id && player->diplo_treaties[i] & DTREATY_VENDETTA
+            && player->region_total_bases[region] > enemy_bases) {
+            enemy_bases = player->region_total_bases[region];
+            enemy_id = i;
+        }
+    }
+    if (enemy_id >= 0) {
+        base_find(x, y, enemy_id, region, -1, -1);
+        if (vector_dist(x, y, player->x_target, player->y_target) > *BaseFindDist) {
+            return veh_id;
+        }
+    }
+    int quota = player->region_total_bases[region] * 2 / 3;
+    quota = (quota < 3) ? 3 : ((quota > 8) ? 8 : quota);
+    if (player->region_base_plan[region] == PLAN_NAVAL_TRANSPORT) {
+        int naval_quota = player->unk_70 * 2 / 0x400000;
+        if (quota >= naval_quota) {
+            quota = naval_quota;
+        }
+    }
+    if (player->unk_71 - (int)bit_count(player->unk_72) >= quota) {
+        return veh_id;
+    }
+    int weapon = weap_strat(VehPrototypes[proto_id].weapon_id, faction_id);
+    int armor = arm_strat(VehPrototypes[proto_id].armor_id, faction_id);
+    if (Chassis[VehPrototypes[proto_id].chassis_id].triad != TRIAD_LAND
+        || has_abil(proto_id, ABL_DROP_POD)) {
+        return veh_id;
+    }
+    if (plan == PLAN_INFO_WARFARE) {
+        if (!(player->unk_72 & 2)) {
+            Vehs[veh_id].state |= VSTATE_UNK_40000;
+            player->unk_71++;
+            player->unk_72 |= 2;
+        }
+        return veh_id;
+    }
+    if (weapon < armor) {
+        if (player->unk_72 & 1 || player->region_base_plan[region] == PLAN_NAVAL_TRANSPORT) {
+            return veh_id;
+        }
+    } else if (player->region_base_plan[region] != PLAN_NAVAL_TRANSPORT
+        && !rnd(quota + 2, NULL)) { // quota is not capped here: the region plan isn't naval
+        Vehs[veh_id].state |= VSTATE_UNK_20000;
+        return veh_id;
+    }
+    Vehs[veh_id].state |= VSTATE_UNK_40000;
+    player->unk_71++;
+    if (weapon < armor) {
+        player->unk_72 |= 1;
+    }
+    return veh_id;
+}
+
+/*
 Purpose: Find the unit closest to the specified tile, optionally restricted to one faction and
          skipping one unit id. The distance to it is stored in VehFindDist. Ties go to the unit with
          the highest id.

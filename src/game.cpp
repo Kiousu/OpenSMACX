@@ -832,6 +832,52 @@ void __cdecl allocate_energy(uint32_t faction_id) {
 }
 
 /*
+Purpose: When a new SMACX game is set up and the player's faction is neither an alien faction nor
+         FUNGBOY, remove every computer controlled alien or FUNGBOY faction from a single player
+         game: its bases and units are destroyed, it no longer counts as alive and its flags and
+         difficulty level are set to -1. The uppercased faction file names are left in stringTemp.
+Original Offset: 00588F90
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-17-council-batch27.log
+        and 2026-10-17-sweep-batch27.log)
+*/
+void __cdecl alien_start() {
+    if (*TurnCurrentNum || !*ExpansionEnabled || is_alien_faction(*FactionIDCurrent)) {
+        return;
+    }
+    strcpy(stringTemp->str, Players[*FactionIDCurrent].filename);
+    CharUpperA(stringTemp->str);
+    if (!strcmp(stringTemp->str, "FUNGBOY")) {
+        return;
+    }
+    for (uint32_t faction_id = 1; faction_id < MaxPlayerNum; faction_id++) {
+        if (*FactionsStatus & (1 << faction_id) || *IsMultiplayerPBEM || *IsMultiplayerNet) {
+            continue;
+        }
+        strcpy(stringTemp->str, Players[faction_id].filename);
+        CharUpperA(stringTemp->str);
+        if (!is_alien_faction(faction_id) && strcmp(stringTemp->str, "FUNGBOY")) {
+            continue;
+        }
+        FactionsStatus[0] &= ~(1 << faction_id);
+        FactionsStatus[1] &= ~(1 << faction_id);
+        for (int base_id = *BaseCurrentCount - 1; base_id >= 0; base_id--) {
+            if (Bases[base_id].faction_id_current == faction_id) {
+                base_kill(base_id);
+            }
+        }
+        for (int veh_id = *VehCurrentCount - 1; veh_id >= 0; veh_id--) {
+            if (veh_id < *VehCurrentCount && Vehs[veh_id].faction_id == faction_id) {
+                veh_kill(veh_id);
+            }
+        }
+        PlayersData[faction_id].current_num_bases = 0;
+        PlayersData[faction_id].flags = 0xFFFFFFFF;
+        PlayersData[faction_id].diff_level = -1;
+    }
+}
+
+/*
 Purpose: Handle creation of pop-up message on Planetfall.
 Original Offset: 00589180
 Return Value: n/a

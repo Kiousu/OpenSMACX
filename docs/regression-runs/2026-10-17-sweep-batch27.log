@@ -1,0 +1,56 @@
+== sw_aki2120.SAV: OpenSMACX regression run: turn 20, 17 bases, 84 vehs, filter='veh_init alien_start'
+veh_init: 3412 compared (by the original: 1148 homed, 65 objectives, 0 assigned to the target, 0 left out, 0 contact/interlude calls), 0 mismatches
+alien_start: 12 compared (6 bases removed by the original), 0 mismatches
+TOTAL mismatches: 0 (1391 ms)
+== sw_aki2152.SAV: OpenSMACX regression run: turn 52, 72 bases, 219 vehs, filter='veh_init alien_start'
+veh_init: 4117 compared (by the original: 1752 homed, 76 objectives, 0 assigned to the target, 0 left out, 253 contact/interlude calls), 0 mismatches
+alien_start: 12 compared (84 bases removed by the original), 0 mismatches
+TOTAL mismatches: 0 (1516 ms)
+== sw_aki2213.SAV: OpenSMACX regression run: turn 113, 300 bases, 1151 vehs, filter='veh_init alien_start'
+veh_init: 6371 compared (by the original: 2652 homed, 90 objectives, 292 assigned to the target, 0 left out, 1370 contact/interlude calls), 0 mismatches
+alien_start: 12 compared (318 bases removed by the original), 0 mismatches
+TOTAL mismatches: 0 (8687 ms)
+== sw_aki2247.SAV: OpenSMACX regression run: turn 147, 300 bases, 1590 vehs, filter='veh_init alien_start'
+veh_init: 7815 compared (by the original: 3316 homed, 90 objectives, 300 assigned to the target, 0 left out, 2475 contact/interlude calls), 0 mismatches
+alien_start: 12 compared (252 bases removed by the original), 0 mismatches
+TOTAL mismatches: 0 (5703 ms)
+== sw_artifacts.SAV: OpenSMACX regression run: turn 74, 142 bases, 384 vehs, filter='veh_init alien_start'
+veh_init: 4209 compared (by the original: 1778 homed, 76 objectives, 0 assigned to the target, 0 left out, 622 contact/interlude calls), 0 mismatches
+alien_start: 12 compared (114 bases removed by the original), 0 mismatches
+TOTAL mismatches: 0 (3703 ms)
+== sw_bugged.SAV: OpenSMACX regression run: turn 272, 291 bases, 1637 vehs, filter='veh_init alien_start'
+veh_init: 10460 compared (by the original: 5164 homed, 79 objectives, 266 assigned to the target, 0 left out, 1636 contact/interlude calls), 0 mismatches
+alien_start: 12 compared (292 bases removed by the original), 0 mismatches
+TOTAL mismatches: 0 (6937 ms)
+== sw_cheese.SAV: OpenSMACX regression run: turn 71, 131 bases, 352 vehs, filter='veh_init alien_start'
+veh_init: 4209 compared (by the original: 1778 homed, 76 objectives, 0 assigned to the target, 0 left out, 622 contact/interlude calls), 0 mismatches
+alien_start: 12 compared (114 bases removed by the original), 0 mismatches
+TOTAL mismatches: 0 (3688 ms)
+== sw_council.SAV: OpenSMACX regression run: turn 289, 281 bases, 1741 vehs, filter='veh_init alien_start'
+veh_init: 10615 compared (by the original: 5204 homed, 78 objectives, 378 assigned to the target, 0 left out, 986 contact/interlude calls), 0 mismatches
+alien_start: 12 compared (88 bases removed by the original), 0 mismatches
+TOTAL mismatches: 0 (19375 ms)
+== sw_morgan.SAV: OpenSMACX regression run: turn 48, 59 bases, 173 vehs, filter='veh_init alien_start'
+veh_init: 4169 compared (by the original: 1758 homed, 76 objectives, 0 assigned to the target, 0 left out, 618 contact/interlude calls), 0 mismatches
+alien_start: 12 compared (54 bases removed by the original), 0 mismatches
+TOTAL mismatches: 0 (2641 ms)
+== sw_quake.SAV: OpenSMACX regression run: turn 53, 71 bases, 204 vehs, filter='veh_init alien_start'
+veh_init: 4169 compared (by the original: 1758 homed, 76 objectives, 0 assigned to the target, 0 left out, 618 contact/interlude calls), 0 mismatches
+alien_start: 12 compared (72 bases removed by the original), 0 mismatches
+TOTAL mismatches: 0 (3110 ms)
+== sw_starcraft.SAV: OpenSMACX regression run: turn 75, 146 bases, 391 vehs, filter='veh_init alien_start'
+veh_init: 4209 compared (by the original: 1778 homed, 76 objectives, 0 assigned to the target, 0 left out, 569 contact/interlude calls), 0 mismatches
+alien_start: 12 compared (114 bases removed by the original), 0 mismatches
+TOTAL mismatches: 0 (2734 ms)
+== sw_steam1.SAV: OpenSMACX regression run: turn 32, 20 bases, 81 vehs, filter='veh_init alien_start'
+veh_init: 4017 compared (by the original: 1488 homed, 82 objectives, 165 assigned to the target, 25 left out, 0 contact/interlude calls), 0 mismatches
+alien_start: 12 compared (12 bases removed by the original), 0 mismatches
+TOTAL mismatches: 0 (1000 ms)
+== sw_steam20.SAV: OpenSMACX regression run: turn 20, 13 bases, 74 vehs, filter='veh_init alien_start'
+veh_init: 3638 compared (by the original: 1140 homed, 75 objectives, 130 assigned to the target, 24 left out, 0 contact/interlude calls), 0 mismatches
+alien_start: 12 compared (6 bases removed by the original), 0 mismatches
+TOTAL mismatches: 0 (1016 ms)
+== sw_urfl.SAV: OpenSMACX regression run: turn 1, 5 bases, 51 vehs, filter='veh_init alien_start'
+veh_init: 2836 compared (by the original: 554 homed, 53 objectives, 0 assigned to the target, 0 left out, 0 contact/interlude calls), 0 mismatches
+alien_start: 12 compared (6 bases removed by the original), 0 mismatches
+TOTAL mismatches: 0 (1015 ms)

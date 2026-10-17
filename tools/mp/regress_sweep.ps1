@@ -30,17 +30,17 @@ foreach ($save in $Saves) {
     if (-not (Alive $id)) { L "$save : game not running, stopping"; break }
     Remove-Item "$G\opensmacx_regress.txt", "$G\opensmacx_regress.log" -ErrorAction SilentlyContinue
     if ($first) {
-        Click $id 835 512; Start-Sleep 2                  # main menu: Load Game
+        Click $id 835 512; Start-Sleep 1                  # main menu: Load Game
     } else {
-        Key $id "^l"; Start-Sleep 2                       # in game: Ctrl+L
+        Key $id "^l"; Start-Sleep 1                       # in game: Ctrl+L
         if ($Saves.IndexOf($save) -eq 1) { & $UI -Action shot -Out "$Out\sweep_loaddlg.png" -ProcId $id | Out-Null }
     }
-    Click $id 520 494; Start-Sleep -Milliseconds 400      # filename field
-    Key $id "{END}{BACKSPACE 40}$save"; Start-Sleep -Milliseconds 400
+    Click $id 520 494; Start-Sleep -Milliseconds 200      # filename field
+    Key $id "{END}{BACKSPACE 40}$save"; Start-Sleep -Milliseconds 200
     Click $id 445 521                                     # OK
-    Start-Sleep 4                                         # load + summary popup
-    Click $id 356 478; Start-Sleep 2                      # summary OK
-    if ($first) { Start-Sleep 3; $first = $false }
+    Start-Sleep 2                                         # load + summary popup
+    Click $id 356 478; Start-Sleep 1                      # summary OK
+    if ($first) { Start-Sleep 1; $first = $false }
     if (-not (Alive $id)) { L "$save : game died while loading"; break }
     & $UI -Action shot -Out "$Out\$($save -replace '\.SAV$','').png" -ProcId $id | Out-Null
     Set-Content "$G\opensmacx_regress.txt" $Tests -Encoding ASCII

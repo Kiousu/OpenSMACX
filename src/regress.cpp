@@ -6829,6 +6829,353 @@ static int test_upgrade_prototype() {
     return mismatches;
 }
 
+// ---------------------------------------------------------------- batch 27
+
+/*
+Tiles to create one faction's units on: a few of its bases (homing), its target tile and tiles of
+the target's region (assignment to the target), and a spread over the whole map.
+*/
+static int veh_init_tiles(int faction_id, int (*tiles)[2], int max) {
+    int n = 0;
+    for (int base_id = 0; base_id < *BaseCurrentCount && n < 4; base_id++) {
+        if (Bases[base_id].faction_id_current == faction_id) {
+            tiles[n][0] = Bases[base_id].x;
+            tiles[n][1] = Bases[base_id].y;
+            n++;
+        }
+    }
+    PlayerData *player = &PlayersData[faction_id];
+    if (player->x_target >= 0) {
+        tiles[n][0] = player->x_target;
+        tiles[n][1] = player->y_target;
+        n++;
+        uint32_t region = region_at(player->x_target, player->y_target);
+        int matches = 0;
+        for (uint32_t i = 0; i < *MapArea; i++) {
+            matches += (*MapTiles)[i].region == region;
+        }
+        for (int k = 0; k < 6 && matches && n < max; k++) {
+            int want = k * matches / 6;
+            int seen = 0;
+            for (uint32_t i = 0; i < *MapArea; i++) {
+                if ((*MapTiles)[i].region == region && seen++ == want) {
+                    tiles[n][1] = i / *MapLongitude;
+                    tiles[n][0] = (i % *MapLongitude) * 2 + (tiles[n][1] & 1);
+                    n++;
+                    break;
+                }
+            }
+        }
+    }
+    for (int k = 0; k < 6 && n < max; k++) {
+        sample_tile(k, 6, &tiles[n][0], &tiles[n][1]);
+        n++;
+    }
+    return n;
+}
+
+// spot_all() hands first contacts to encounter() (diplomacy dialogs with the player) and the
+// player's first alien sightings to interlude(): record those calls instead of making them
+struct SpotCall { int fn, args[6]; };
+static SpotCall SpotCalls[32];
+static int SpotCallCount;
+static void spot_call_record(int fn, int a0, int a1, int a2, int a3, int a4, int a5) {
+    if (SpotCallCount < 32) {
+        SpotCall c = { fn, { a0, a1, a2, a3, a4, a5 } };
+        SpotCalls[SpotCallCount] = c;
+    }
+    SpotCallCount++;
+}
+static void __cdecl encounter_recorder(int a0, int a1, int a2, int a3, int a4, int a5) {
+    spot_call_record(1, a0, a1, a2, a3, a4, a5);
+}
+static void __cdecl interlude_recorder(int a0, int a1, int a2, int a3) {
+    spot_call_record(2, a0, a1, a2, a3, 0, 0);
+}
+
+static int test_veh_init() {
+    JmpStub encounter_stub(0x0055E370, (void *)encounter_recorder);
+    JmpStub interlude_stub(0x005230E0, (void *)interlude_recorder);
+    if (!encounter_stub.ok || !interlude_stub.ok) {
+        return 1;
+    }
+    SpotCall calls_o[32];
+    int call_count_o = 0, encounters = 0;
+    GameSnapshot base, after_orig, after_new;
+    snap_alloc(&base); snap_alloc(&after_orig); snap_alloc(&after_new);
+    snap_take(&base);
+    const int count = base.veh_count_global;
+    if (count >= MaxVehNum) {
+        logf("veh_init: unit table full, skipped");
+        snap_free(&base); snap_free(&after_orig); snap_free(&after_new);
+        return 0;
+    }
+    Veh slot_saved = Vehs[count]; // the slot the new unit goes into
+    Veh slot_o;
+    int compute_saved = *BaseComputeID;
+    int compared = 0, mismatches = 0, homed = 0, objectives = 0, assigned = 0, left_out = 0;
+    char label[96];
+    // variant 0: as loaded; 1: the faction's target counters as reset by the AI strategy pass;
+    // 2: artifacts are scenario objectives (alien artifacts only)
+    auto run = [&](BOOL orig, int proto_id, int f, int x, int y, int variant, int *ret, int *rand_next) {
+        snap_restore(&base);
+        Vehs[count] = slot_saved;
+        *BaseComputeID = compute_saved;
+        if (variant == 1) {
+            PlayersData[f].unk_71 = 0;
+            PlayersData[f].unk_72 = 0;
+        } else if (variant == 2) {
+            *GameState |= STATE_SCN_VICT_ALL_ARTIFACTS_OBJ_UNIT;
+        } else if (variant == 3) {
+            *VehCurrentCount = MaxVehNum;
+        }
+        reseed((uint32_t)(proto_id * 131 + x * 7 + y + variant));
+        SpotCallCount = 0;
+        *ret = orig ? veh_init_OG(proto_id, f, x, y) : veh_init(proto_id, f, x, y);
+        *rand_next = _rand(); // same position in the random stream?
+    };
+    static int tiles[32][2];
+    for (int f = 0; f < MaxPlayerNum; f++) {
+        int tile_count = veh_init_tiles(f, tiles, 32);
+        for (int i = 0; i < 2 * MaxVehProtoFactionNum; i++) {
+            if (!f && i >= MaxVehProtoFactionNum) {
+                break;
+            }
+            int proto_id = i < MaxVehProtoFactionNum ? i : f * MaxVehProtoFactionNum + i - MaxVehProtoFactionNum;
+            if (!(VehPrototypes[proto_id].flags & PROTO_ACTIVE)) {
+                continue;
+            }
+            int variants = VehPrototypes[proto_id].plan == PLAN_ALIEN_ARTIFACT ? 3 : 2;
+            for (int t = 0; t < tile_count; t++) {
+                int x = tiles[t][0], y = tiles[t][1];
+                for (int v = 0; v < variants; v++) {
+                    if (v == 2 && *GameState & STATE_SCN_VICT_ALL_ARTIFACTS_OBJ_UNIT) {
+                        continue;
+                    }
+                    int ret_o, ret_n, rand_o, rand_n;
+                    REGRESS_CTX("veh_init(%d, %d, %d, %d) variant %d", proto_id, f, x, y, v);
+                    run(true, proto_id, f, x, y, v, &ret_o, &rand_o);
+                    snap_take(&after_orig);
+                    slot_o = Vehs[count];
+                    int compute_o = *BaseComputeID;
+                    call_count_o = SpotCallCount;
+                    memcpy(calls_o, SpotCalls, sizeof(calls_o));
+                    encounters += call_count_o;
+                    run(false, proto_id, f, x, y, v, &ret_n, &rand_n);
+                    snap_take(&after_new);
+                    compared++;
+                    if (ret_o >= 0) {
+                        homed += slot_o.home_base_id >= 0;
+                        objectives += (slot_o.flags & VFLAG_IS_OBJECTIVE) != 0;
+                        assigned += (slot_o.state & VSTATE_UNK_40000) != 0;
+                        left_out += (slot_o.state & VSTATE_UNK_20000) != 0;
+                    }
+                    sprintf_s(label, "veh_init(%d, %d, %d, %d) variant %d", proto_id, f, x, y, v);
+                    BOOL diff = false;
+                    int recorded = call_count_o < 32 ? call_count_o : 32;
+                    if (ret_o != ret_n || rand_o != rand_n || compute_o != *BaseComputeID
+                        || call_count_o != SpotCallCount
+                        || memcmp(calls_o, SpotCalls, sizeof(SpotCall) * recorded)) {
+                        if (mismatches < MAX_DETAIL) {
+                            logf("  %s: orig %d rand %d compute %d contacts %d; new %d rand %d "
+                                "compute %d contacts %d", label, ret_o, rand_o, compute_o,
+                                call_count_o, ret_n, rand_n, *BaseComputeID, SpotCallCount);
+                        }
+                        diff = true;
+                    }
+                    if (!diff) {
+                        diff = snap_differs(&after_orig, &after_new,
+                            mismatches < MAX_DETAIL ? label : NULL);
+                    }
+                    size_t at;
+                    if (!diff && ret_o >= 0
+                        && (at = first_diff(&slot_o, &Vehs[count], sizeof(Veh))) != (size_t)-1) {
+                        if (mismatches < MAX_DETAIL) {
+                            logf("  %s: new Veh +0x%X differs (orig %02X new %02X)", label, (unsigned)at,
+                                ((uint8_t *)&slot_o)[at], ((uint8_t *)&Vehs[count])[at]);
+                        }
+                        diff = true;
+                    }
+                    if (diff) {
+                        mismatches++;
+                    }
+                }
+            }
+        }
+    }
+    // a full unit table
+    {
+        int ret_o, ret_n, rand_o, rand_n;
+        run(true, 0, 1, 0, 0, 3, &ret_o, &rand_o);
+        snap_take(&after_orig);
+        run(false, 0, 1, 0, 0, 3, &ret_n, &rand_n);
+        snap_take(&after_new);
+        compared++;
+        if (ret_o != ret_n || rand_o != rand_n
+            || snap_differs(&after_orig, &after_new, "veh_init() full table")) {
+            logf("  veh_init() full table: orig %d new %d", ret_o, ret_n);
+            mismatches++;
+        }
+    }
+    snap_restore(&base);
+    Vehs[count] = slot_saved;
+    *BaseComputeID = compute_saved;
+    snap_free(&base); snap_free(&after_orig); snap_free(&after_new);
+    logf("veh_init: %d compared (by the original: %d homed, %d objectives, %d assigned to the "
+        "target, %d left out, %d contact/interlude calls), %d mismatches", compared, homed,
+        objectives, assigned, left_out, encounters, mismatches);
+    return mismatches;
+}
+
+static int test_alien_start() {
+    JmpStub popp_stub(0x0048C0A0, (void *)popp_recorder); // base_kill can report a foiled corner
+    if (!popp_stub.ok) {
+        return 1;
+    }
+    // selection globals touched by veh_kill(), same set as the stack_kill test
+    static int *const extra_globals[] = { (int *)0x0093928C, (int *)0x00939290, (int *)0x008C6B2C,
+        (int *)0x008C6B34, (int *)0x009A64DC };
+    const int extra_count = (int)(sizeof(extra_globals) / sizeof(extra_globals[0]));
+    int extra_saved[5], extra_o[5];
+    for (int i = 0; i < extra_count; i++) {
+        extra_saved[i] = *extra_globals[i];
+    }
+    // base_kill() appends to the replay record (8 byte entries at 0x950324, offset 0x9469F8)
+    int *const replay_offset = (int *)0x009469F8;
+    uint8_t *const replay = (uint8_t *)0x00950324;
+    int replay_saved = *replay_offset;
+    static uint8_t replay_o[0x800];
+    int sp_saved[MaxSecretProjectNum], sp_o[MaxSecretProjectNum];
+    memcpy(sp_saved, SecretProjectTable, sizeof(sp_saved));
+    uint8_t globals_saved[BaseGlobalsSize], globals_o[BaseGlobalsSize];
+    memcpy(globals_saved, BaseGlobals, BaseGlobalsSize);
+    static uint8_t temp_saved[sizeof(char1032)], temp_o[sizeof(char1032)];
+    memcpy(temp_saved, stringTemp, sizeof(char1032));
+    uint8_t status_saved[2] = { FactionsStatus[0], FactionsStatus[1] };
+    int turn_saved = *TurnCurrentNum;
+    int current_saved = *FactionIDCurrent;
+    int compute_saved = *BaseComputeID;
+    BOOL pbem_saved = *IsMultiplayerPBEM;
+    BOOL net_saved = *IsMultiplayerNet;
+    BOOL expansion_saved = *ExpansionEnabled;
+    BOOL draw_saved = VehBattleUnkTgl[0];
+    GameSnapshot base, after_orig, after_new;
+    snap_alloc(&base); snap_alloc(&after_orig); snap_alloc(&after_new);
+    snap_take(&base);
+    int compared = 0, mismatches = 0, removed = 0;
+    char label[96];
+    // variant 0: new game (turn 0), each faction as the player; 1: as loaded (turn > 0);
+    // 2: hotseat/PBEM; 3: network game; 4: SMAC (no expansion); 5: every faction human
+    auto prepare = [&](int player, int variant) {
+        snap_restore(&base);
+        memcpy(SecretProjectTable, sp_saved, sizeof(sp_saved));
+        memcpy(BaseGlobals, globals_saved, BaseGlobalsSize);
+        memcpy(stringTemp, temp_saved, sizeof(char1032));
+        for (int i = 0; i < extra_count; i++) {
+            *extra_globals[i] = extra_saved[i];
+        }
+        *replay_offset = replay_saved;
+        *BaseComputeID = compute_saved;
+        *TurnCurrentNum = variant == 1 ? turn_saved : 0;
+        *FactionIDCurrent = player;
+        FactionsStatus[0] = variant == 1 ? status_saved[0]
+            : (uint8_t)((status_saved[0] & 1) | (variant == 5 ? 0xFE : 1 << player));
+        FactionsStatus[1] = status_saved[1];
+        *IsMultiplayerPBEM = variant == 2;
+        *IsMultiplayerNet = variant == 3;
+        *ExpansionEnabled = variant != 4;
+        VehBattleUnkTgl[0] = true; // kill() skips its map redraw while this is set
+        PoppAnswer = 0;
+        PoppCount = 0;
+    };
+    for (int player = 1; player < MaxPlayerNum; player++) {
+        for (int v = 0; v < 6; v++) {
+            if (v && player != current_saved) {
+                continue;
+            }
+            REGRESS_CTX("alien_start() player %d variant %d", player, v);
+            prepare(player, v);
+            alien_start_OG();
+            snap_take(&after_orig);
+            memcpy(sp_o, SecretProjectTable, sizeof(sp_o));
+            memcpy(globals_o, BaseGlobals, BaseGlobalsSize);
+            memcpy(temp_o, stringTemp, sizeof(char1032));
+            for (int i = 0; i < extra_count; i++) {
+                extra_o[i] = *extra_globals[i];
+            }
+            uint8_t status_o[2] = { FactionsStatus[0], FactionsStatus[1] };
+            int replay_end_o = *replay_offset;
+            int replay_len = replay_end_o - replay_saved;
+            if (replay_len > 0 && replay_len <= (int)sizeof(replay_o)) {
+                memcpy(replay_o, replay + replay_saved, replay_len);
+            }
+            int popp_o = PoppCount;
+            int compute_o = *BaseComputeID;
+            removed += base.base_count_global - after_orig.base_count_global;
+            prepare(player, v);
+            alien_start();
+            snap_take(&after_new);
+            compared++;
+            sprintf_s(label, "alien_start() player %d variant %d", player, v);
+            BOOL diff = snap_differs(&after_orig, &after_new, mismatches < MAX_DETAIL ? label : NULL);
+            if (!diff && (memcmp(sp_o, SecretProjectTable, sizeof(sp_o))
+                || memcmp(status_o, FactionsStatus, 2) || popp_o != PoppCount
+                || compute_o != *BaseComputeID || replay_end_o != *replay_offset
+                || (replay_len > 0 && replay_len <= (int)sizeof(replay_o)
+                    && memcmp(replay_o, replay + replay_saved, replay_len)))) {
+                if (mismatches < MAX_DETAIL) {
+                    logf("  %s: projects/status/popups/replay differ (status %02X%02X/%02X%02X "
+                        "popp %d/%d replay %d/%d)", label, status_o[0], status_o[1],
+                        FactionsStatus[0], FactionsStatus[1], popp_o, PoppCount, replay_end_o,
+                        *replay_offset);
+                }
+                diff = true;
+            }
+            if (!diff && base_globals_differ(globals_o, BaseGlobals, mismatches < MAX_DETAIL ? label : NULL)) {
+                diff = true;
+            }
+            if (!diff && memcmp(temp_o, stringTemp, sizeof(char1032))) {
+                if (mismatches < MAX_DETAIL) {
+                    logf("  %s: stringTemp orig '%s' new '%s'", label, (char *)temp_o, stringTemp->str);
+                }
+                diff = true;
+            }
+            for (int i = 0; i < extra_count && !diff; i++) {
+                if (extra_o[i] != *extra_globals[i]) {
+                    if (mismatches < MAX_DETAIL) {
+                        logf("  %s: selection global %08X differs", label, (unsigned)extra_globals[i]);
+                    }
+                    diff = true;
+                }
+            }
+            if (diff) {
+                mismatches++;
+            }
+        }
+    }
+    snap_restore(&base);
+    memcpy(SecretProjectTable, sp_saved, sizeof(sp_saved));
+    memcpy(BaseGlobals, globals_saved, BaseGlobalsSize);
+    memcpy(stringTemp, temp_saved, sizeof(char1032));
+    for (int i = 0; i < extra_count; i++) {
+        *extra_globals[i] = extra_saved[i];
+    }
+    *replay_offset = replay_saved;
+    *BaseComputeID = compute_saved;
+    *TurnCurrentNum = turn_saved;
+    *FactionIDCurrent = current_saved;
+    FactionsStatus[0] = status_saved[0];
+    FactionsStatus[1] = status_saved[1];
+    *IsMultiplayerPBEM = pbem_saved;
+    *IsMultiplayerNet = net_saved;
+    *ExpansionEnabled = expansion_saved;
+    VehBattleUnkTgl[0] = draw_saved;
+    snap_free(&base); snap_free(&after_orig); snap_free(&after_new);
+    logf("alien_start: %d compared (%d bases removed by the original), %d mismatches", compared,
+        removed, mismatches);
+    return mismatches;
+}
+
 static DWORD WINAPI regress_watcher(LPVOID) {
     for (;;) {
         Sleep(1000);
@@ -6967,6 +7314,8 @@ void regress_run() {
     if (test_enabled("batch25", "balance")) total += run_guarded("balance", test_balance);
     if (test_enabled("ishuman", "tech_val")) total += run_guarded("tech_val", test_tech_val);
     if (test_enabled("batch26", "upgrade_prototype")) total += run_guarded("upgrade_prototype", test_upgrade_prototype);
+    if (test_enabled("batch27", "veh_init")) total += run_guarded("veh_init", test_veh_init);
+    if (test_enabled("batch27", "alien_start")) total += run_guarded("alien_start", test_alien_start);
     if (test_enabled("enemy_capabilities")) total += run_guarded("enemy_capabilities", test_enemy_capabilities);
     if (test_enabled("social_ai")) total += run_guarded("social_ai", test_social_ai);
     if (test_enabled("Path::sensors") || test_enabled("path_sensors")) total += run_guarded("path_sensors", test_path_sensors);

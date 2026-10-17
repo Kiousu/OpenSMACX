@@ -471,6 +471,7 @@ constexpr int MaxOrderNum = 30;
 constexpr int MaxPlanNum = 15;
 constexpr int MaxTriadNum = 3;
 constexpr int MaxBungedDesignNum = 64; // rejected designs kept per faction
+constexpr int MaxVehNum = 2048; // Vehs[2048] is the fake unit used by the interface
 
 struct BungedDesign { // unit design combination a faction has rejected; see is_bunged()
     int ability_flags;
@@ -623,6 +624,7 @@ DLLEXPORT void __cdecl sleep(uint32_t veh_id);
 DLLEXPORT void __cdecl veh_demote(int veh_id);
 DLLEXPORT void __cdecl veh_promote(int veh_id);
 DLLEXPORT void __cdecl veh_clear(uint32_t veh_id, int proto_id, uint32_t faction_id);
+DLLEXPORT int __cdecl veh_init(int proto_id, uint32_t faction_id, int x, int y);
 DLLEXPORT BOOL __cdecl can_arty(uint32_t proto_id, BOOL sea_triad_retn);
 DLLEXPORT uint32_t __cdecl morale_veh(uint32_t veh_id, BOOL check_drone_riot, 
                                       int faction_id_vs_native);
