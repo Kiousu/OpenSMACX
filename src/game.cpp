@@ -114,6 +114,58 @@ void __cdecl mon_tech_discovered(int faction_id, int tech_id) {
 }
 
 /*
+Purpose: Let every fungal tower spread fungus: the tower's own tile and, one turn in five, a random
+         neighbour turn to fungus, losing any roads, mines, farms and the like, and every faction
+         sees the change. Towers are marked as having moved, get their morale refreshed and
+         reveal their surroundings.
+Original Offset: 00522F00
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch19.log)
+*/
+void __cdecl do_fungal_towers() {
+    const uint32_t cleared = BIT_ROAD | BIT_MAGTUBE | BIT_MINE | BIT_SOLAR_TIDAL | BIT_FARM
+        | BIT_SOIL_ENRICHER | BIT_FOREST;
+    for (int veh_id = *VehCurrentCount - 1; veh_id >= 0; veh_id--) {
+        Veh *veh = &Vehs[veh_id];
+        if (veh->proto_id != BSC_FUNGAL_TOWER) {
+            continue;
+        }
+        veh->state |= VSTATE_UNK_4;
+        int x = veh->x;
+        int y = veh->y;
+        if (!(_rand() % 5)) {
+            int dir = _rand() & 7;
+            int x_spread = x + RadiusOffsetX[dir + 1];
+            if (!*MapIsFlat) {
+                if (x_spread < 0) {
+                    x_spread += *MapLongitudeBounds;
+                } else if (x_spread >= (int)*MapLongitudeBounds) {
+                    x_spread -= *MapLongitudeBounds;
+                }
+            }
+            int y_spread = y + RadiusOffsetY[dir + 1];
+            if (y_spread >= 0 && y_spread < (int)*MapLatitudeBounds && x_spread >= 0
+                && x_spread < (int)*MapLongitudeBounds) {
+                bit_set(x_spread, y_spread, BIT_FUNGUS, true);
+                bit_set(x_spread, y_spread, cleared, false);
+                for (uint32_t faction_id = 1; faction_id < MaxPlayerNum; faction_id++) {
+                    synch_bit(x_spread, y_spread, faction_id);
+                }
+                draw_tile(x_spread, y_spread, 2);
+            }
+        }
+        bit_set(x, y, BIT_FUNGUS, true);
+        bit_set(x, y, cleared, false);
+        for (uint32_t faction_id = 1; faction_id < MaxPlayerNum; faction_id++) {
+            synch_bit(x, y, faction_id);
+        }
+        draw_tile(x, y, 2);
+        veh->morale = (uint8_t)morale_alien(veh_id, 0);
+        spot_all(veh_id, 1);
+    }
+}
+
+/*
 Purpose: Start-of-turn upkeep for a faction's units: reset their per-turn counters and flags, count
          down timed sentry/hold orders, lift the "needs cover" flag at a base, bunker or airbase,
          hand fungal towers to the natives, and repair damage. Units that didn't move repair one

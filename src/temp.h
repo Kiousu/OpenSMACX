@@ -282,6 +282,12 @@ extern func5 *repair_phase_OG;
 extern func5 *allocate_energy_OG;
 extern func_i *energy_limit; // energy_limit(faction_id): always 10 in this build
 extern func5 *social_select; // social_select(faction_id): the social engineering screen
+// batch 19
+extern func_xy *spot_all; // spot_all(veh_id, radius): reveal around a unit
+extern func_void *set_dirty_OG;
+extern func_void *clear_dirty_OG;
+extern func_xy *world_UNK1_OG;
+extern func_void *do_fungal_towers_OG;
 extern func_void *base_psych_OG;
 extern func_social_ai *social_ai_OG;
 extern func_path_sensors *Path_sensors_OG; // Path::sensors()

@@ -808,3 +808,23 @@ riots and spare specialists (Thinker's notes call this out too); `repair_phase` 
 repair unit help land units that can themselves carry cargo.
 Boot test: the 653-redirect exe loaded Council.SAV and advanced the turn 289 -> 290 (38 s) with
 the game alive.
+
+## Batch 19, 2026-10-16 (Council.SAV, 653-redirect exe)
+
+`set_dirty`, `clear_dirty` and `world_UNK1` (map.cpp), `do_fungal_towers` (game.cpp). Trigger
+group `batch19`, three tests. The redraw-flag pair runs from a map with half its tiles unflagged
+and no refresh pending; `world_UNK1` runs on every tile, comparing the tile and the draw state;
+`do_fungal_towers` runs as loaded and with every native unit plus every 40th other unit turned
+into a fungal tower under three seeds of the exe's generator.
+
+| function | inputs | compared | mismatches |
+|---|---|---|---|
+| set_dirty, clear_dirty | one run each | 2 | 0 |
+| world_UNK1 | every tile | 8,192 | 0 |
+| do_fungal_towers | 4 variants (152 towers) | 4 | 0 |
+
+Log: `regression-runs/2026-10-16-council-batch19.log`. Notes: `world_UNK1` makes a tile one step
+wetter (rainy stays rainy); `clear_dirty` sets the same per-tile redraw flag as `set_dirty`,
+only without the whole-map refresh bit. `spot_all` (0x5B6260) is now an exe pointer.
+Boot test: the 657-redirect exe loaded Council.SAV and advanced the turn 289 -> 290 (38 s) with
+the game alive.

@@ -680,3 +680,8 @@
 # --- batch 18: unit repair and AI energy allocation
 0x00126030	?repair_phase@@YAXI@Z
 0x001267B0	?allocate_energy@@YAXI@Z
+# --- batch 19: map redraw flags, rainfall step, fungal towers
+0x00192A80	?set_dirty@@YAXXZ
+0x00192AF0	?clear_dirty@@YAXXZ
+0x001C4410	?world_UNK1@@YAXII@Z
+0x00122F00	?do_fungal_towers@@YAXXZ

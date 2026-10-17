@@ -1547,6 +1547,36 @@ void __cdecl abstract_set(uint32_t x, uint32_t y, uint8_t region) {
 }
 
 /*
+Purpose: Flag every map tile for redraw and note that the whole map needs refreshing.
+Original Offset: 00592A80
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch19.log)
+*/
+void __cdecl set_dirty() {
+    for (int y = 0; y < (int)*MapLatitudeBounds; y++) {
+        for (int x = y & 1; x < (int)*MapLongitudeBounds; x += 2) {
+            map_loc(x, y)->bit2 |= BIT2_UNK_400000;
+        }
+    }
+    *UnkBitfield1 |= 4;
+}
+
+/*
+Purpose: Flag every map tile for redraw. Despite the name it marks the tiles the same way
+         set_dirty() does, without the whole-map refresh flag.
+Original Offset: 00592AF0
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch19.log)
+*/
+void __cdecl clear_dirty() {
+    for (int y = 0; y < (int)*MapLatitudeBounds; y++) {
+        for (int x = y & 1; x < (int)*MapLongitudeBounds; x += 2) {
+            map_loc(x, y)->bit2 |= BIT2_UNK_400000;
+        }
+    }
+}
+
+/*
 Purpose: Quickly check for unit related zone of control conflicts. If a ZOC conflict is found, store
          the coordinates of the tile inside ZOC pointers.
 Original Offset: 00593830
@@ -2285,6 +2315,17 @@ void __cdecl world_temperature() {
         }
         do_all_non_input();
     }
+}
+
+/*
+Purpose: Make a tile one step wetter (arid to moist, moist to rainy; rainy stays rainy).
+Original Offset: 005C4410
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch19.log)
+*/
+void __cdecl world_UNK1(uint32_t x, uint32_t y) {
+    uint32_t rainfall = ((map_loc(x, y)->climate & (RAINFALL_RAINY | RAINFALL_MOIST)) >> 3) + 1;
+    climate_set(x, y, (uint8_t)(rainfall < 3 ? rainfall : 2));
 }
 
 /*

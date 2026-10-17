@@ -5515,6 +5515,111 @@ static int test_allocate_energy() {
     return mismatches;
 }
 
+// ---------------------------------------------------------------- batch 19
+
+static int test_map_dirty() {
+    GameSnapshot base, after_orig, after_new;
+    snap_alloc(&base); snap_alloc(&after_orig); snap_alloc(&after_new);
+    snap_take(&base);
+    int compared = 0, mismatches = 0;
+    for (int which = 0; which < 2; which++) {
+        // set_dirty, clear_dirty, starting from half the tiles unflagged and no refresh pending
+        auto prepare = [&]() {
+            snap_restore(&base);
+            for (uint32_t i = 0; i < base.tile_count; i += 2) {
+                (*MapTiles)[i].bit2 &= ~BIT2_UNK_400000;
+            }
+            *UnkBitfield1 &= ~4;
+        };
+        prepare();
+        (which ? clear_dirty_OG : set_dirty_OG)();
+        snap_take(&after_orig);
+        prepare();
+        (which ? clear_dirty : set_dirty)();
+        snap_take(&after_new);
+        compared++;
+        if (snap_differs(&after_orig, &after_new, mismatches < MAX_DETAIL
+            ? (which ? "clear_dirty" : "set_dirty") : NULL)) {
+            mismatches++;
+        }
+    }
+    snap_restore(&base);
+    snap_free(&base); snap_free(&after_orig); snap_free(&after_new);
+    logf("set_dirty/clear_dirty: %d compared, %d mismatches", compared, mismatches);
+    return mismatches;
+}
+
+static int test_world_UNK1() {
+    uint32_t draw_saved = *UnkBitfield1;
+    int compared = 0, mismatches = 0;
+    for (int y = 0; y < (int)*MapLatitudeBounds; y++) {
+        for (int x = y & 1; x < (int)*MapLongitudeBounds; x += 2) {
+            Map *tile = map_loc(x, y);
+            Map saved = *tile, after_o;
+            *UnkBitfield1 = draw_saved & ~1;
+            world_UNK1_OG(x, y);
+            after_o = *tile;
+            uint32_t draw_o = *UnkBitfield1;
+            *tile = saved;
+            *UnkBitfield1 = draw_saved & ~1;
+            world_UNK1(x, y);
+            compared++;
+            if (memcmp(&after_o, tile, sizeof(Map)) || draw_o != *UnkBitfield1) {
+                if (mismatches < MAX_DETAIL) {
+                    logf("  world_UNK1(%u, %u): climate orig %02X new %02X", x, y, after_o.climate,
+                        tile->climate);
+                }
+                mismatches++;
+            }
+            *tile = saved;
+        }
+    }
+    *UnkBitfield1 = draw_saved;
+    logf("world_UNK1: %d compared, %d mismatches", compared, mismatches);
+    return mismatches;
+}
+
+static int test_do_fungal_towers() {
+    GameSnapshot base, after_orig, after_new;
+    snap_alloc(&base); snap_alloc(&after_orig); snap_alloc(&after_new);
+    snap_take(&base);
+    int compared = 0, mismatches = 0, towers = 0;
+    char label[64];
+    for (int variant = 0; variant < 4; variant++) {
+        // as loaded, then every native unit (and every 40th other unit) turned into a fungal tower
+        // under three seeds
+        auto prepare = [&]() {
+            snap_restore(&base);
+            reseed(variant * 31 + 5);
+            if (variant) {
+                for (int v = 0; v < *VehCurrentCount; v++) {
+                    if (Vehs[v].faction_id == 0 || v % 40 == 0) {
+                        Vehs[v].proto_id = BSC_FUNGAL_TOWER;
+                    }
+                }
+            }
+        };
+        prepare();
+        for (int v = 0; v < *VehCurrentCount; v++) {
+            towers += Vehs[v].proto_id == BSC_FUNGAL_TOWER;
+        }
+        do_fungal_towers_OG();
+        snap_take(&after_orig);
+        prepare();
+        do_fungal_towers();
+        snap_take(&after_new);
+        compared++;
+        sprintf_s(label, "do_fungal_towers variant %d", variant);
+        if (snap_differs(&after_orig, &after_new, mismatches < MAX_DETAIL ? label : NULL)) {
+            mismatches++;
+        }
+    }
+    snap_restore(&base);
+    snap_free(&base); snap_free(&after_orig); snap_free(&after_new);
+    logf("do_fungal_towers: %d compared (%d towers), %d mismatches", compared, towers, mismatches);
+    return mismatches;
+}
+
 static DWORD WINAPI regress_watcher(LPVOID) {
     for (;;) {
         Sleep(1000);
@@ -5638,6 +5743,9 @@ void regress_run() {
     if (test_enabled("batch17", "alien_base")) total += run_guarded("alien_base", test_alien_base);
     if (test_enabled("batch18", "repair_phase")) total += run_guarded("repair_phase", test_repair_phase);
     if (test_enabled("batch18", "allocate_energy")) total += run_guarded("allocate_energy", test_allocate_energy);
+    if (test_enabled("batch19", "map_dirty")) total += run_guarded("map_dirty", test_map_dirty);
+    if (test_enabled("batch19", "world_UNK1")) total += run_guarded("world_UNK1", test_world_UNK1);
+    if (test_enabled("batch19", "do_fungal_towers")) total += run_guarded("do_fungal_towers", test_do_fungal_towers);
     if (test_enabled("enemy_capabilities")) total += run_guarded("enemy_capabilities", test_enemy_capabilities);
     if (test_enabled("social_ai")) total += run_guarded("social_ai", test_social_ai);
     if (test_enabled("Path::sensors") || test_enabled("path_sensors")) total += run_guarded("path_sensors", test_path_sensors);
