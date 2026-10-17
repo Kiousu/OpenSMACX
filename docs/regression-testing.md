@@ -1000,3 +1000,24 @@ expansion flag set at the main menu for the vanilla exe too, so no SMAC-mode run
 Logs: `regression-runs/2026-10-16-council-ptrfix.log` and
 `regression-runs/2026-10-16-council-ptrfix-before.log`. Boot test: the 675-redirect exe with the
 corrected DLL loaded Council.SAV and advanced the turn 289 -> 290 (34 s) with the game alive.
+
+## Batch 24, 2026-10-16 (Council.SAV and the 14 sweep saves, 675-redirect exe)
+
+`can_terraform` (map.cpp), the terraforming order the AI's formers and the governor (with the
+base-work flag) pick for a tile. Trigger group `batch24`. It runs every tile for every faction
+with and without the base-work flag and no base, and the 21 tiles around every base for its
+owner with that base, comparing the order returned.
+
+| function | Council.SAV | all 14 sweep saves | mismatches |
+|---|---|---|---|
+| can_terraform | 142,874 | 2,354,992 | 0 |
+
+Every order the function can return comes up (Council.SAV: 20,345 farms, 2,058 mines, 845 solar
+collectors, 3,068 forests, 12,690 fungus removals, 17,506 raised sea floors; sw_aki2213 has the
+only fungus plantings, 6, and 255 bases with a need flag). Logs:
+`regression-runs/2026-10-16-council-batch24.log` and `regression-runs/2026-10-16-sweep-batch24.log`.
+Original behaviour kept: removing land fungus checks the sea fungus removal tech, as for sea
+fungus; a farm without an enricher gets ORDER_FARM again (the order builds the enricher); the
+results of one `bonus_at` and one `has_tech` call are unused. map.cpp now includes
+terraforming.h. Boot test: the 676-redirect exe loaded Council.SAV and advanced the turn
+289 -> 290 (38 s) with the game alive.

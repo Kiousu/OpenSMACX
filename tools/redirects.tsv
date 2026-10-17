@@ -707,3 +707,5 @@
 # --- batch 23: unit design proposal and naming
 0x0017E040	?name_proto@@YAXPADHHIIIII@Z
 0x00180860	?propose_proto@@YAHIIIIIIHPBD@Z
+# --- batch 24: AI terraforming choice
+0x00165320	?can_terraform@@YAHHHHHH@Z

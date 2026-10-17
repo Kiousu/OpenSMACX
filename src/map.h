@@ -311,6 +311,7 @@ DLLEXPORT void __cdecl site_set(uint32_t x, uint32_t y, int site);
 DLLEXPORT uint32_t __cdecl site_at(int x, int y, int unk);
 DLLEXPORT int __cdecl world_site(int x, int y, uint32_t sea);
 DLLEXPORT BOOL __cdecl good_sensor(uint32_t faction_id, int x, int y);
+DLLEXPORT int __cdecl can_terraform(int faction_id, int x, int y, BOOL is_base_work, int base_id);
 DLLEXPORT void __cdecl reset_territory();
 DLLEXPORT void __cdecl set_dirty();
 DLLEXPORT void __cdecl clear_dirty();

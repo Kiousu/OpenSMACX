@@ -26,6 +26,7 @@
 #include "random.h"
 #include "strings.h"
 #include "technology.h"
+#include "terraforming.h"
 #include "veh.h"
 
 int *MapLongitudeBounds = (int *)0x00949870;
@@ -478,6 +479,319 @@ BOOL __cdecl good_sensor(uint32_t faction_id, int x, int y) {
     }
     return (tile->val3 & 0xC0) > 0x40 || !(tile->climate & 0x18)
         || ((bit & BIT_FUNGUS) && (tile->climate & 0xE0) >= ALT_BIT_OCEAN_SHELF);
+}
+
+/*
+Purpose: Pick the terraforming order an AI former (or the governor, with is_base_work set) should
+         carry out on a tile, for the faction and optionally for the base whose radius it's in.
+         Ocean: remove sea fungus, raise the sea floor, a kelp farm, a mining platform or a tidal
+         harness by the base's needs; land: remove fungus, then a solar collector, mine or farm
+         (soil enricher) weighing rainfall, rockiness, elevation, bonuses and the base's needs, and
+         finally a forest or, for an AI, fungus when the tile's value stays below what those yield.
+         Tiles in the territory of a faction without a pact are left alone.
+Original Offset: 00565320
+Return Value: Order (ORDER_FARM, ORDER_MINE, ORDER_SOLAR_COLLECTOR, ORDER_PLANT_FOREST,
+              ORDER_REMOVE_FUNGUS, ORDER_PLANT_FUNGUS, ORDER_TERRAFORM_UP) or 0 for nothing
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch24.log
+        and 2026-10-16-sweep-batch24.log)
+*/
+int __cdecl can_terraform(int faction_id, int x, int y, BOOL is_base_work, int base_id) {
+    Map *tile = map_loc(x, y);
+    if (tile->bit & BIT_BASE_IN_TILE && (tile->val2 & 0xF) < 8) {
+        return 0;
+    }
+    uint32_t bit = tile->bit;
+    BOOL fungus = bit & BIT_FUNGUS && (tile->climate & 0xE0) >= ALT_BIT_OCEAN_SHELF;
+    uint32_t mine = bit & BIT_MINE;
+    uint32_t solar = bit & BIT_SOLAR_TIDAL;
+    uint32_t farm = bit & BIT_FARM;
+    // a condenser, echelon mirror or borehole, or the volcano's crater
+    BOOL major = (bit & (BIT_CONDENSER | BIT_ECH_MIRROR | BIT_THERMAL_BORE))
+        || ((tile->bit2 & (BIT2_UNK_80000000 | BIT2_VOLCANO)) == BIT2_VOLCANO
+            && !(tile->bit2 & 0xFF000000));
+    PlayerData *player = &PlayersData[faction_id];
+    int fungus_yield = player->tech_fungus_energy + player->tech_fungus_mineral
+        + player->tech_fungus_nutrient;
+    int forest_yield = ResourceInfo[RSCINFO_FOREST_SQ].energy
+        + ResourceInfo[RSCINFO_FOREST_SQ].minerals + ResourceInfo[RSCINFO_FOREST_SQ].nutrients;
+    if (base_id >= 0) {
+        if (has_fac_built(FAC_TREE_FARM, base_id)) {
+            forest_yield++;
+        }
+        if (has_fac_built(FAC_HYBRID_FOREST, base_id)) {
+            forest_yield += 2;
+        }
+    }
+    BOOL human = *FactionsStatus & (1 << faction_id);
+    if (player->ai_growth && !player->ai_power && !player->ai_wealth && !player->ai_tech
+        && player->ai_fight < 0 && !human) {
+        forest_yield++; // a builder AI likes forests
+    }
+    uint8_t climate = tile->climate;
+    uint32_t altitude = climate & 0xE0;
+    if (altitude < ALT_BIT_SHORE_LINE) {
+        if (fungus) {
+            if (fungus_yield > 3 || (human && !(*GameMorePreferences & 8))) {
+                return 0;
+            }
+            return has_tech(Terraforming[TERRA_REMOVE_FUNGUS].preq_tech_sea, faction_id)
+                ? ORDER_REMOVE_FUNGUS : 0;
+        }
+        if (altitude < ALT_BIT_OCEAN_SHELF) {
+            return terrain_avail(TERRA_RAISE_LAND, true, faction_id) ? ORDER_TERRAFORM_UP : 0;
+        }
+        if (tile->bit & BIT_THERMAL_BORE) {
+            return 0;
+        }
+        if (!farm && has_tech(Terraforming[TERRA_FARM].preq_tech_sea, faction_id)) {
+            return ORDER_FARM;
+        }
+        if (!solar && !mine && !major) {
+            bonus_at(x, y, 0); // result unused in the original
+            if (base_id >= 0) {
+                uint32_t state = Bases[base_id].state;
+                if (state & BSTATE_UNK_2000
+                    && has_tech(Terraforming[TERRA_MINE].preq_tech_sea, faction_id)) {
+                    return ORDER_MINE;
+                }
+                if (state & BSTATE_UNK_1000
+                    && has_tech(Terraforming[TERRA_SOLAR_TIDAL].preq_tech_sea, faction_id)) {
+                    return ORDER_SOLAR_COLLECTOR;
+                }
+                if ((state & BSTATE_UNK_4000 || Bases[base_id].nutrient_surplus < 2)
+                    && has_tech(Terraforming[TERRA_SOLAR_TIDAL].preq_tech_sea, faction_id)
+                    && Rules->tgl_nutrient_effect_with_mine < 0) {
+                    return ORDER_SOLAR_COLLECTOR;
+                }
+                // weigh the base's sea mines against its tidal harnesses
+                int harnesses = 0;
+                int mines = Rules->tgl_nutrient_effect_with_mine < 0;
+                for (int i = 0; i < BaseRadiusTiles; i++) {
+                    int x2 = RadiusOffsetX[i] + Bases[base_id].x;
+                    if (!(*MapIsFlat & 1)) {
+                        if (x2 < 0) {
+                            x2 += *MapLongitudeBounds;
+                        } else if (x2 >= *MapLongitudeBounds) {
+                            x2 -= *MapLongitudeBounds;
+                        }
+                    }
+                    int y2 = RadiusOffsetY[i] + Bases[base_id].y;
+                    if (y2 >= 0 && y2 < *MapLatitudeBounds && x2 >= 0 && x2 < *MapLongitudeBounds
+                        && (map_loc(x2, y2)->climate & 0xE0) < ALT_BIT_SHORE_LINE) {
+                        uint32_t bit2 = map_loc(x2, y2)->bit;
+                        if (bit2 & BIT_MINE) {
+                            mines++;
+                        }
+                        if (bit2 & BIT_SOLAR_TIDAL) {
+                            harnesses++;
+                        }
+                    }
+                }
+                if (harnesses < !has_tech(Terraforming[TERRA_MINE].preq_tech_sea, faction_id) + mines
+                    && has_tech(Terraforming[TERRA_SOLAR_TIDAL].preq_tech_sea, faction_id)) {
+                    return ORDER_SOLAR_COLLECTOR;
+                }
+            }
+            if (has_tech(Terraforming[TERRA_MINE].preq_tech_sea, faction_id)
+                && (Rules->tgl_nutrient_effect_with_mine >= 0
+                    || (base_id >= 0 && Bases[base_id].nutrient_surplus > 1
+                        && !(Bases[base_id].state & BSTATE_UNK_4000)))) {
+                return ORDER_MINE;
+            }
+        }
+        if (farm && !(bit & BIT_SOIL_ENRICHER)
+            && has_tech(Terraforming[TERRA_SOIL_ENR].preq_tech_sea, faction_id)) {
+            return ORDER_FARM; // a farmed tile gets the enricher
+        }
+        return 0;
+    }
+    int rainfall = (climate & 0x18) >> 3;
+    uint32_t rocky = tile->val3 >> 6;
+    int order = 0;
+    int crop = crop_yield(faction_id, -1, x, y, false);
+    int elevation = (climate >> 5) - 2;
+    if (elevation < 0) {
+        elevation = 0;
+    }
+    int bonus = bonus_at(x, y, 0);
+    int value = elevation + rainfall + 1 + rocky; // what the tile is worth as it is
+    int value_kept = value;
+    if (has_tech(Terraforming[TERRA_SOIL_ENR].preq_tech, faction_id) && farm) {
+        value_kept++;
+    }
+    int owner = whose_territory(faction_id, x, y, NULL, false);
+    if (owner >= 0 && owner != faction_id
+        && !(PlayersData[faction_id].diplo_treaties[owner] & DTREATY_PACT)) {
+        return 0;
+    }
+    if (fungus) {
+        if (base_id >= 0 && Bases[base_id].eco_damage / 2 + value_kept <= fungus_yield) {
+            return 0;
+        }
+        if (human && !(*GameMorePreferences & 8)) {
+            return 0;
+        }
+        // the original checks the sea fungus tech here too
+        return has_tech(Terraforming[TERRA_REMOVE_FUNGUS].preq_tech_sea, faction_id)
+            ? ORDER_REMOVE_FUNGUS : 0;
+    }
+    if (tile->bit & BIT_MONOLITH) {
+        return 0;
+    }
+    if (bit & BIT_FOREST && value_kept <= forest_yield) {
+        return 0;
+    }
+    BOOL mine_tech = has_tech(Terraforming[TERRA_MINE].preq_tech, faction_id);
+    BOOL solar_tech = has_tech(Terraforming[TERRA_SOLAR_TIDAL].preq_tech, faction_id);
+    has_tech(Terraforming[TERRA_FARM].preq_tech, faction_id); // result unused in the original
+    if (!mine && !solar && !major) {
+        if (solar_tech && elevation && ((((int)rocky == 1 || elevation > 1)
+            && crop >= (farm ? 2 : 1)) || is_base_work)) {
+            order = ORDER_SOLAR_COLLECTOR;
+        }
+        BOOL farm_check = !mine_tech; // the original's label at 0x565B14
+        if (mine_tech) {
+            if (bonus == 2 || rocky == 2) {
+                order = ORDER_MINE;
+            }
+            // the original's branches at 0x565AA2..0x565AF5
+            BOOL rolling_check = false;
+            BOOL skip = false; // on to the farm check, past the base work rule
+            if (bonus != 2 && rocky == 2) {
+                rolling_check = true;
+            } else if (bonus != 2 || rocky != 2) {
+                int crop_kept = !farm + crop;
+                if (Rules->tgl_nutrient_effect_with_mine >= 0 || crop_kept < 2) {
+                    rolling_check = true;
+                } else if (rocky || crop_kept < 3) {
+                    skip = true;
+                    farm_check = true;
+                }
+            }
+            if (!skip) {
+                if (rolling_check) {
+                    if (rocky == 1 && !elevation) {
+                        order = ORDER_MINE;
+                    }
+                    if (bonus == 3) {
+                        order = ORDER_MINE;
+                    }
+                }
+                if (is_base_work) {
+                    if (farm && !order) {
+                        order = ORDER_MINE;
+                    }
+                    farm_check = true;
+                }
+            }
+        }
+        if (farm_check && is_base_work && farm && !order && elevation && solar_tech) {
+            order = ORDER_SOLAR_COLLECTOR;
+        }
+        if (base_id >= 0) {
+            uint32_t state = Bases[base_id].state;
+            if (state & BSTATE_UNK_1000 && solar_tech && elevation
+                && ((farm ? 2 : 1) <= crop || elevation > 1)) {
+                order = ORDER_SOLAR_COLLECTOR;
+            }
+            if (state & BSTATE_UNK_2000 && mine_tech) {
+                if ((farm ? 3 : 2) <= crop) {
+                    order = ORDER_MINE;
+                }
+                if (((rocky != 1 && rocky) || bonus == 2
+                    || (rainfall && rocky < 2 && elevation < 2)) && (farm || crop > 1)) {
+                    order = ORDER_MINE;
+                }
+            }
+        }
+    }
+    if (has_tech(Terraforming[TERRA_FARM].preq_tech, faction_id) && !farm && rocky < 2) {
+        Map *now = map_loc(x, y);
+        if (!(now->bit & BIT_THERMAL_BORE) && (now->bit2 & (BIT2_UNK_80000000 | BIT2_VOLCANO)) != BIT2_VOLCANO
+            && !(now->bit & BIT_ECH_MIRROR) && (crop < 2
+                || has_tech(Rules->tech_three_nutrients_sqr, faction_id) || bonus == 1)) {
+            if (solar || mine) {
+                order = ORDER_FARM;
+            }
+            if (base_id >= 0 && Bases[base_id].state & BSTATE_UNK_4000) {
+                order = ORDER_FARM;
+            } else if (order == ORDER_SOLAR_COLLECTOR && crop < 2) {
+                order = ORDER_FARM;
+            } else if (!order) {
+                order = ORDER_FARM;
+            }
+            if (rainfall <= 1) {
+                order = ORDER_FARM;
+            }
+        }
+    }
+    if (has_tech(Terraforming[TERRA_SOIL_ENR].preq_tech, faction_id) && farm
+        && !(bit & BIT_SOIL_ENRICHER)) {
+        BOOL enrich;
+        if (crop < 2 || (crop == 2 && !has_tech(Rules->tech_three_nutrients_sqr, faction_id))) {
+            enrich = !order && (is_base_work || crop > 1);
+        } else {
+            if (solar || mine) {
+                order = ORDER_FARM;
+            }
+            if (base_id >= 0 && Bases[base_id].state & BSTATE_UNK_4000) {
+                enrich = true;
+            } else {
+                enrich = !order && (is_base_work || crop > 1);
+            }
+        }
+        if (enrich) {
+            order = ORDER_FARM; // a farmed tile gets the enricher
+        }
+    }
+    if (has_tech(Terraforming[TERRA_SOIL_ENR].preq_tech, faction_id) && farm) {
+        value++;
+    }
+    if (base_id >= 0) {
+        uint32_t state = Bases[base_id].state;
+        if (state & BSTATE_UNK_4000) {
+            if (rainfall > 1) {
+                value++;
+            }
+            if (!rainfall) {
+                value--;
+            }
+        }
+        if (state & BSTATE_UNK_1000) {
+            if (elevation > 1) {
+                value++;
+            }
+            if (!elevation) {
+                value--;
+            }
+        }
+        if (state & BSTATE_UNK_2000 && !rocky) {
+            value--;
+        }
+        if (!(state & (BSTATE_UNK_2000 | BSTATE_UNK_4000)) && solar) {
+            value++;
+        }
+    }
+    if (rainfall && elevation && rocky == 1 && *TurnCurrentNum < 50) {
+        value++;
+    }
+    int result = order;
+    if (has_tech(Terraforming[TERRA_FOREST].preq_tech, faction_id) && rocky < 2 && !mine
+        && !(bit & BIT_FOREST) && (!farm || (!elevation && rainfall < 2 && !human)) && !major
+        && (map_loc(x, y)->bit2 & (BIT2_UNK_80000000 | BIT2_VOLCANO)) != BIT2_VOLCANO
+        && value < forest_yield
+        && (!human || (faction_id == *FactionIDCurrent && *GamePreferences & 0x1000000))) {
+        result = ORDER_PLANT_FOREST;
+    }
+    if (has_tech(Terraforming[TERRA_PLANT_FUNGUS].preq_tech, faction_id) && !human) {
+        if (rocky == 2) {
+            value += (mine != 0) + 1;
+        }
+        if (!major && value + 1 < fungus_yield) {
+            result = ORDER_PLANT_FUNGUS;
+        }
+    }
+    return result;
 }
 
 /*

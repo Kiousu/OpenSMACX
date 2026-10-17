@@ -318,6 +318,9 @@ typedef int func_propose_proto(uint32_t, uint32_t, uint32_t, uint32_t, uint32_t,
 extern func_propose_proto *propose_proto_OG;
 typedef void func_prune_protos(int, int, int);
 extern func_prune_protos *prune_protos; // prune_protos(faction_id, proto_id_kept, unk)
+// batch 24
+typedef int func_can_terraform(int, int, int, BOOL, int);
+extern func_can_terraform *can_terraform_OG;
 extern func_void *base_psych_OG;
 extern func_social_ai *social_ai_OG;
 extern func_path_sensors *Path_sensors_OG; // Path::sensors()

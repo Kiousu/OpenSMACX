@@ -1,0 +1,42 @@
+== Council.SAV: OpenSMACX regression run: turn 289, 281 bases, 1741 vehs, filter='batch24'
+can_terraform: 142874 compared (orders by the original: none 86362, farm 20345, mine 2058, solar 845, forest 3068, remove fungus 12690, plant fungus 0, raise 17506; 19 bases with a need flag), 0 mismatches
+TOTAL mismatches: 0 (875 ms)
+== sw_aki2120.SAV: OpenSMACX regression run: turn 20, 17 bases, 84 vehs, filter='batch24'
+can_terraform: 131786 compared (orders by the original: none 33634, farm 43636, mine 6918, solar 3128, forest 12272, remove fungus 32198, plant fungus 0, raise 0; 14 bases with a need flag), 0 mismatches
+TOTAL mismatches: 0 (93 ms)
+== sw_aki2152.SAV: OpenSMACX regression run: turn 52, 72 bases, 219 vehs, filter='batch24'
+can_terraform: 134096 compared (orders by the original: none 30925, farm 39280, mine 8458, solar 4681, forest 16868, remove fungus 33884, plant fungus 0, raise 0; 54 bases with a need flag), 0 mismatches
+TOTAL mismatches: 0 (141 ms)
+== sw_aki2213.SAV: OpenSMACX regression run: turn 113, 300 bases, 1151 vehs, filter='batch24'
+can_terraform: 143672 compared (orders by the original: none 71932, farm 30872, mine 3826, solar 2398, forest 5814, remove fungus 21706, plant fungus 6, raise 7118; 255 bases with a need flag), 0 mismatches
+TOTAL mismatches: 0 (532 ms)
+== sw_aki2247.SAV: OpenSMACX regression run: turn 147, 300 bases, 1590 vehs, filter='batch24'
+can_terraform: 143672 compared (orders by the original: none 64002, farm 33810, mine 3586, solar 2232, forest 4622, remove fungus 23974, plant fungus 0, raise 11446; 224 bases with a need flag), 0 mismatches
+TOTAL mismatches: 0 (687 ms)
+== sw_artifacts.SAV: OpenSMACX regression run: turn 74, 142 bases, 384 vehs, filter='batch24'
+can_terraform: 210764 compared (orders by the original: none 71075, farm 67362, mine 6724, solar 5617, forest 11414, remove fungus 42886, plant fungus 0, raise 5686; 20 bases with a need flag), 0 mismatches
+TOTAL mismatches: 0 (312 ms)
+== sw_bugged.SAV: OpenSMACX regression run: turn 272, 291 bases, 1637 vehs, filter='batch24'
+can_terraform: 143294 compared (orders by the original: none 81278, farm 22905, mine 2340, solar 1015, forest 3800, remove fungus 14182, plant fungus 0, raise 17774; 18 bases with a need flag), 0 mismatches
+TOTAL mismatches: 0 (797 ms)
+== sw_cheese.SAV: OpenSMACX regression run: turn 71, 131 bases, 352 vehs, filter='batch24'
+can_terraform: 210302 compared (orders by the original: none 70487, farm 67458, mine 6716, solar 5639, forest 11568, remove fungus 42748, plant fungus 0, raise 5686; 17 bases with a need flag), 0 mismatches
+TOTAL mismatches: 0 (313 ms)
+== sw_morgan.SAV: OpenSMACX regression run: turn 48, 59 bases, 173 vehs, filter='batch24'
+can_terraform: 207278 compared (orders by the original: none 72200, farm 68168, mine 6818, solar 5804, forest 11682, remove fungus 42606, plant fungus 0, raise 0; 6 bases with a need flag), 0 mismatches
+TOTAL mismatches: 0 (188 ms)
+== sw_quake.SAV: OpenSMACX regression run: turn 53, 71 bases, 204 vehs, filter='batch24'
+can_terraform: 207782 compared (orders by the original: none 72707, farm 67378, mine 6828, solar 5795, forest 12346, remove fungus 42728, plant fungus 0, raise 0; 9 bases with a need flag), 0 mismatches
+TOTAL mismatches: 0 (203 ms)
+== sw_starcraft.SAV: OpenSMACX regression run: turn 75, 146 bases, 391 vehs, filter='batch24'
+can_terraform: 210932 compared (orders by the original: none 73287, farm 66978, mine 6456, solar 5353, forest 10960, remove fungus 42212, plant fungus 0, raise 5686; 17 bases with a need flag), 0 mismatches
+TOTAL mismatches: 0 (313 ms)
+== sw_steam1.SAV: OpenSMACX regression run: turn 32, 20 bases, 81 vehs, filter='batch24'
+can_terraform: 131912 compared (orders by the original: none 36663, farm 42522, mine 7300, solar 3449, forest 13232, remove fungus 28746, plant fungus 0, raise 0; 17 bases with a need flag), 0 mismatches
+TOTAL mismatches: 0 (94 ms)
+== sw_steam20.SAV: OpenSMACX regression run: turn 20, 13 bases, 74 vehs, filter='batch24'
+can_terraform: 131618 compared (orders by the original: none 36471, farm 42586, mine 7408, solar 3513, forest 13360, remove fungus 28280, plant fungus 0, raise 0; 12 bases with a need flag), 0 mismatches
+TOTAL mismatches: 0 (78 ms)
+== sw_urfl.SAV: OpenSMACX regression run: turn 1, 5 bases, 51 vehs, filter='batch24'
+can_terraform: 205010 compared (orders by the original: none 66672, farm 70014, mine 7546, solar 6252, forest 13000, remove fungus 41526, plant fungus 0, raise 0; 0 bases with a need flag), 0 mismatches
+TOTAL mismatches: 0 (109 ms)

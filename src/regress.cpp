@@ -6459,6 +6459,64 @@ static int test_goody_at() {
     return mismatches;
 }
 
+// ---------------------------------------------------------------- batch 24
+
+static int test_can_terraform() {
+    int compared = 0, mismatches = 0;
+    int orders[32] = {};
+    int need_states = 0;
+    auto check = [&](int f, int x, int y, BOOL base_work, int base_id) {
+        int a = can_terraform_OG(f, x, y, base_work, base_id);
+        int b = can_terraform(f, x, y, base_work, base_id);
+        compared++;
+        orders[(a >= 0 && a < 32) ? a : 31]++;
+        if (a != b) {
+            if (mismatches < MAX_DETAIL) {
+                logf("  can_terraform(%d, %d, %d, %d, %d): orig %d new %d", f, x, y, base_work,
+                    base_id, a, b);
+            }
+            mismatches++;
+        }
+    };
+    // every tile for every faction, without a base
+    for (int f = 0; f < MaxPlayerNum; f++) {
+        for (int y = 0; y < *MapLatitudeBounds; y++) {
+            for (int x = y & 1; x < *MapLongitudeBounds; x += 2) {
+                check(f, x, y, false, -1);
+                check(f, x, y, true, -1);
+            }
+        }
+    }
+    // the tiles around every base, for its owner
+    for (int base_id = 0; base_id < *BaseCurrentCount; base_id++) {
+        int f = Bases[base_id].faction_id_current;
+        need_states += (Bases[base_id].state & (BSTATE_UNK_1000 | BSTATE_UNK_2000
+            | BSTATE_UNK_4000)) != 0;
+        for (int i = 0; i < BaseRadiusTiles; i++) {
+            int x = RadiusOffsetX[i] + Bases[base_id].x;
+            if (!(*MapIsFlat & 1)) {
+                if (x < 0) {
+                    x += *MapLongitudeBounds;
+                } else if (x >= *MapLongitudeBounds) {
+                    x -= *MapLongitudeBounds;
+                }
+            }
+            int y = RadiusOffsetY[i] + Bases[base_id].y;
+            if (x < 0 || y < 0 || x >= *MapLongitudeBounds || y >= *MapLatitudeBounds) {
+                continue;
+            }
+            check(f, x, y, false, base_id);
+            check(f, x, y, true, base_id);
+        }
+    }
+    logf("can_terraform: %d compared (orders by the original: none %d, farm %d, mine %d, solar %d, "
+        "forest %d, remove fungus %d, plant fungus %d, raise %d; %d bases with a need flag), "
+        "%d mismatches", compared, orders[0], orders[ORDER_FARM], orders[ORDER_MINE],
+        orders[ORDER_SOLAR_COLLECTOR], orders[ORDER_PLANT_FOREST], orders[ORDER_REMOVE_FUNGUS],
+        orders[ORDER_PLANT_FUNGUS], orders[ORDER_TERRAFORM_UP], need_states, mismatches);
+    return mismatches;
+}
+
 static DWORD WINAPI regress_watcher(LPVOID) {
     for (;;) {
         Sleep(1000);
@@ -6593,6 +6651,7 @@ void regress_run() {
     if (test_enabled("batch23", "propose_proto")) total += run_guarded("propose_proto", test_propose_proto);
     if (test_enabled("ptrfix", "strat")) total += run_guarded("strat", test_strat);
     if (test_enabled("ptrfix", "goody_at")) total += run_guarded("goody_at", test_goody_at);
+    if (test_enabled("batch24", "can_terraform")) total += run_guarded("can_terraform", test_can_terraform);
     if (test_enabled("enemy_capabilities")) total += run_guarded("enemy_capabilities", test_enemy_capabilities);
     if (test_enabled("social_ai")) total += run_guarded("social_ai", test_social_ai);
     if (test_enabled("Path::sensors") || test_enabled("path_sensors")) total += run_guarded("path_sensors", test_path_sensors);
