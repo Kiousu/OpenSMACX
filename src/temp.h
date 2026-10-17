@@ -242,6 +242,35 @@ extern func_void *base_energy_OG;
 // batch 15
 extern func_rand *base_growth_OG;
 extern func_void *base_doctors_OG;
+// batch 16
+typedef LPSTR func_s_i(int);
+typedef LPSTR func_s_ii(int, int);
+extern func_s_i *get_name_OG;
+extern func_s_i *get_title_OG;
+extern func_s_i *get_adjective_leader_OG;
+extern func_s_i *get_adjective_insult_leader_OG;
+extern func_s_i *get_adjective_faction_OG;
+extern func_s_i *get_adjective_insult_faction_OG;
+extern func_s_i *get_insult_leader_OG;
+extern func_s_i *get_pact_OG;
+extern func_s_i *get_pacts_OG;
+extern func_s_ii *get_pacts_2_OG;
+extern func_s_ii *get_pact_hood_OG;
+extern func_s_ii *get_his_her_OG;
+extern func_s_ii *get_him_her_OG;
+extern func_s_ii *get_he_she_OG;
+extern func_s_ii *get_phrase_OG;
+extern func_s_ii *get_noun_phrase_OG;
+extern func_i *mandate_color_OG;
+typedef BOOL func_in_box(int, int, int, int, int, int);
+extern func_in_box *in_box_OG;
+typedef BOOL func_in_box_2(int, int, RECT *);
+extern func_in_box_2 *in_box_2_OG;
+extern func_void *clear_OG;
+extern func_void *space_OG;
+extern func_b *base_compute_OG;
+typedef int func_generators(uint32_t, int *);
+extern func_generators *generators_OG;
 extern func_void *base_psych_OG;
 extern func_social_ai *social_ai_OG;
 extern func_path_sensors *Path_sensors_OG; // Path::sensors()
@@ -367,7 +396,6 @@ extern func_win_redraw *MapWin_clear_terrain; // MapWin::clear_terrain() on Cons
 extern func_i *tech_selection; // tech_selection(faction_id): pick the next research goal (dialog for humans)
 typedef int func_tech_pick(int, int, int, LPCSTR);
 extern func_tech_pick *tech_pick; // tech_pick(faction_id, unk, faction_id_from, label)
-extern func5 *base_compute; // base_compute(force): recompute the current base
 extern int *SkipTechScreenA; // Thinker's names: non-zero skips the tech popups
 extern int *SkipTechScreenB;
 extern int *NetUpkeepState; // 1 while a network game runs its upkeep

@@ -20,6 +20,9 @@
 #include "faction.h"
 #include "alpha.h"
 #include "base.h"
+#include "general.h"
+#include "text.h"
+#include "strings.h"
 #include "council.h"
 #include "game.h"
 #include "map.h"
@@ -28,6 +31,7 @@
 #include "veh.h"
 
 Player *Players = (Player *)0x00946A50;
+char *PronounBuffer = (char *)0x00945838; // get_his_her() and friends write here
 PlayerData *PlayersData = (PlayerData *)0x0096C9E0;
 FactionArt *FactionsArt = (FactionArt *)0x0078E978;
 RulesSocialCategory *SocialCategories = (RulesSocialCategory *)0x0094B000;
@@ -138,6 +142,264 @@ Status: Complete
 LPSTR __cdecl get_noun(uint32_t faction_id) {
     parse_set(Players[faction_id].noun_gender, Players[faction_id].is_noun_plural);
     return Players[faction_id].noun_faction;
+}
+
+/*
+Purpose: Get the faction leader's name, setting the parse gender to the leader's.
+Original Offset: 00559060
+Return Value: Leader name
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch16.log)
+*/
+LPSTR __cdecl get_name(int faction_id) {
+    parse_set(Players[faction_id].is_leader_female, false);
+    return Players[faction_id].name_leader;
+}
+
+/*
+Purpose: Get the faction leader's title, setting the parse gender to the leader's.
+Original Offset: 005590A0
+Return Value: Leader title
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch16.log)
+*/
+LPSTR __cdecl get_title(int faction_id) {
+    parse_set(Players[faction_id].is_leader_female, false);
+    return Players[faction_id].title_leader;
+}
+
+/*
+Purpose: Get the adjective describing the faction leader.
+Original Offset: 005590E0
+Return Value: Leader adjective
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch16.log)
+*/
+LPSTR __cdecl get_adjective_leader(int faction_id) {
+    return Players[faction_id].adj_leader;
+}
+
+/*
+Purpose: Get the insulting adjective for the faction leader.
+Original Offset: 00559100
+Return Value: Insulting leader adjective
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch16.log)
+*/
+LPSTR __cdecl get_adjective_insult_leader(int faction_id) {
+    return Players[faction_id].adj_insult_leader;
+}
+
+/*
+Purpose: Get the adjective describing the faction.
+Original Offset: 00559120
+Return Value: Faction adjective
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch16.log)
+*/
+LPSTR __cdecl get_adjective_faction(int faction_id) {
+    return Players[faction_id].adj_faction;
+}
+
+/*
+Purpose: Get the insulting adjective for the faction.
+Original Offset: 00559140
+Return Value: Insulting faction adjective
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch16.log)
+*/
+LPSTR __cdecl get_adjective_insult_faction(int faction_id) {
+    return Players[faction_id].adj_insult_faction;
+}
+
+/*
+Purpose: Get the insult for the faction leader, setting the parse gender to the leader's.
+Original Offset: 00559160
+Return Value: Leader insult
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch16.log)
+*/
+LPSTR __cdecl get_insult_leader(int faction_id) {
+    parse_set(Players[faction_id].is_leader_female, false);
+    return Players[faction_id].insult_leader;
+}
+
+/*
+Purpose: Get a label from the label table (labels.txt) through the string table.
+Original Offset: n/a
+Return Value: Label text
+Status: Complete
+*/
+static LPSTR label_text(int label_id) {
+    return StringTable->get((int)((LPSTR *)Labels->strings_ptr)[label_id]);
+}
+
+/*
+Purpose: Get a label from the 2 forms that follow label_id (male and female leader).
+Original Offset: n/a
+Return Value: Label text
+Status: Complete
+*/
+static LPSTR label_gendered(int faction_id, int label_id) {
+    return label_text(label_id + (Players[faction_id].is_leader_female != 0));
+}
+
+/*
+Purpose: Get the word for a pact with the faction ("brotherhood"/"sisterhood"), singular.
+Original Offset: 0058F9D0
+Return Value: Pact word
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch16.log)
+*/
+LPSTR __cdecl get_pact(int faction_id) {
+    parse_set(Players[faction_id].is_leader_female, false);
+    return label_gendered(faction_id, 201);
+}
+
+/*
+Purpose: Get the word for a pact with the faction, plural.
+Original Offset: 0058FA20
+Return Value: Pact word
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch16.log)
+*/
+LPSTR __cdecl get_pacts(int faction_id) {
+    parse_set(Players[faction_id].is_leader_female, true);
+    return label_gendered(faction_id, 203);
+}
+
+/*
+Purpose: Get the plural word for a pact between two factions: the female form only when both
+         leaders are female.
+Original Offset: 0058FA70
+Return Value: Pact word
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch16.log)
+*/
+LPSTR __cdecl get_pacts_2(int faction_id, int faction_id_2) {
+    BOOL both = Players[faction_id].is_leader_female && Players[faction_id_2].is_leader_female;
+    parse_set(both, true);
+    return label_text(both ? 204 : 203);
+}
+
+/*
+Purpose: Get the word for the bond of a pact between two factions, the female form only when both
+         leaders are female.
+Original Offset: 0058FB00
+Return Value: Pact word
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch16.log)
+*/
+LPSTR __cdecl get_pact_hood(int faction_id, int faction_id_2) {
+    parse_set(0, false);
+    BOOL both = Players[faction_id].is_leader_female && Players[faction_id_2].is_leader_female;
+    return label_text(both ? 206 : 205);
+}
+
+/*
+Purpose: Copy a gendered pronoun label for the faction leader into the pronoun buffer, with the
+         first letter (capitalize 1) or all letters (any other non-zero) upper case.
+Original Offset: n/a
+Return Value: Pronoun buffer
+Status: Complete
+*/
+static LPSTR leader_pronoun(int faction_id, int label_id, int capitalize) {
+    LPSTR label = label_gendered(faction_id, label_id);
+    strcpy_s(PronounBuffer, strlen(label) + 1, label); // unbounded, as in the original
+    if (capitalize == 1) {
+        char first[2] = { PronounBuffer[0], 0 };
+        CharUpperA(first);
+        PronounBuffer[0] = first[0];
+    } else if (capitalize) {
+        CharUpperA(PronounBuffer);
+    }
+    return PronounBuffer;
+}
+
+/*
+Purpose: Get the possessive pronoun of the faction leader ("his"/"her").
+Original Offset: 0058FBC0
+Return Value: Pronoun
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch16.log)
+*/
+LPSTR __cdecl get_his_her(int faction_id, int capitalize) {
+    return leader_pronoun(faction_id, 207, capitalize);
+}
+
+/*
+Purpose: Get the object pronoun of the faction leader ("him"/"her").
+Original Offset: 0058FC50
+Return Value: Pronoun
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch16.log)
+*/
+LPSTR __cdecl get_him_her(int faction_id, int capitalize) {
+    return leader_pronoun(faction_id, 199, capitalize);
+}
+
+/*
+Purpose: Get the subject pronoun of the faction leader ("he"/"she").
+Original Offset: 0058FCE0
+Return Value: Pronoun
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch16.log)
+*/
+LPSTR __cdecl get_he_she(int faction_id, int capitalize) {
+    return leader_pronoun(faction_id, 209, capitalize);
+}
+
+/*
+Purpose: Open the faction's definition file at its own section (or, failing that, the section
+         named after the file), warning when neither exists.
+Original Offset: n/a (inlined in get_phrase and get_noun_phrase)
+Return Value: Was there an error? true/false
+Status: Complete
+*/
+static BOOL faction_text_open(int faction_id) {
+    LPSTR filename = Players[faction_id].filename;
+    if (text_open(filename, Players[faction_id].search_key) && text_open(filename, filename)) {
+        parse_says(0, Players[faction_id].search_key, -1, -1);
+        parse_says(1, filename, -1, -1);
+        X_pop("PLAYERFILE", 0);
+        return true;
+    }
+    return false;
+}
+
+/*
+Purpose: Get one of the faction's phrases: line phrase_id of its definition section after the
+         nine header lines.
+Original Offset: 0058F810
+Return Value: Phrase in the text buffer (the empty base string if the file is missing)
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch16.log)
+*/
+LPSTR __cdecl get_phrase(int faction_id, int phrase_id) {
+    if (faction_text_open(faction_id)) {
+        return StringTable->get(0);
+    }
+    for (int i = phrase_id + 9; i > 0; i--) {
+        text_get();
+    }
+    return *TextBufferGetPtr;
+}
+
+/*
+Purpose: Get one of the faction's noun phrases: like get_phrase(), but the line holds the noun and
+         its grammar ("F"/"N" for female/neuter, a second character "2" for plural), which set the
+         parse gender and plurality.
+Original Offset: 0058F8B0
+Return Value: Noun in the text buffer (the empty base string if the file is missing)
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch16.log)
+*/
+LPSTR __cdecl get_noun_phrase(int faction_id, int phrase_id) {
+    if (faction_text_open(faction_id)) {
+        return StringTable->get(0);
+    }
+    for (int i = phrase_id + 9; i > 0; i--) {
+        text_get();
+    }
+    char noun[256];
+    LPSTR item = text_item();
+    strcpy_s(noun, strlen(item) + 1, item); // unbounded, as in the original
+    LPSTR grammar = text_item();
+    char gender = grammar[0];
+    *GenderDefault = 0;
+    if (gender == 'F' || gender == 'f') {
+        *GenderDefault = 1;
+    }
+    if (gender == 'N' || gender == 'n') {
+        *GenderDefault = 2;
+    }
+    *PluralityDefault = grammar[1] == '2';
+    strcpy_s(*TextBufferGetPtr, strlen(noun) + 1, noun);
+    return *TextBufferGetPtr;
 }
 
 /*

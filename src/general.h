@@ -30,6 +30,7 @@ struct Filefind {
 
 extern uint32_t ScenEditorUndoPosition;
 extern int *GenderDefault;
+extern int *MandateColors;
 extern BOOL *PluralityDefault;
 
 DLLEXPORT void __cdecl purge_trailing(LPSTR input);
@@ -37,6 +38,11 @@ DLLEXPORT void __cdecl purge_leading(LPSTR input);
 DLLEXPORT void __cdecl purge_spaces(LPSTR input);
 DLLEXPORT void __cdecl kill_lf(LPSTR str);
 DLLEXPORT void __cdecl kill_nl(LPSTR str);
+DLLEXPORT int __cdecl mandate_color(int mandate);
+DLLEXPORT BOOL __cdecl in_box(int x, int y, int left, int top, int width, int height);
+DLLEXPORT BOOL __cdecl in_box_2(int x, int y, RECT *rect);
+DLLEXPORT void __cdecl clear();
+DLLEXPORT void __cdecl space();
 DLLEXPORT void __cdecl add_lf(LPSTR str);
 DLLEXPORT int __cdecl range(int input, int min, int max);
 DLLEXPORT LPVOID __cdecl mem_get_old(size_t size);

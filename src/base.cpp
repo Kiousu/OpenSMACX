@@ -2537,6 +2537,24 @@ void __cdecl base_energy() {
 }
 
 /*
+Purpose: Recompute the current base's support, yields, nutrients, minerals and energy, unless they
+         are already up to date for this base and no refresh is forced.
+Original Offset: 004EC3B0
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch16.log)
+*/
+void __cdecl base_compute(BOOL update_prev) {
+    if (update_prev || *BaseComputeID != *BaseIDCurrentSelected) {
+        *BaseComputeID = *BaseIDCurrentSelected;
+        base_support();
+        base_yield();
+        base_nutrient();
+        base_minerals();
+        base_energy();
+    }
+}
+
+/*
 Purpose: Check what facility (if any) a base needs for additional population growth. Stand alone
          function unused in original game and likely optimized out.
 Original Offset: 004EEF80
@@ -3434,6 +3452,36 @@ Status: Complete
 */
 int __cdecl base_project(uint32_t project_id) {
     return *(&SecretProject->human_genome_project + project_id);
+}
+
+/*
+Purpose: Count an alien faction's subspace generators that are big enough to work, optionally
+         counting the ones in bases still too small.
+Original Offset: 005247B0
+Return Value: Working generators (0 for non-alien factions)
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch16.log)
+*/
+int __cdecl generators(uint32_t faction_id, int *inactive) {
+    if (inactive) {
+        *inactive = 0;
+    }
+    if (!(Players[faction_id].rule_flags & RFLAG_ALIEN)) {
+        return 0;
+    }
+    int active = 0;
+    for (int base_id = 0; base_id < *BaseCurrentCount; base_id++) {
+        if (Bases[base_id].faction_id_current == faction_id
+            && has_fac_built(FAC_SUBSPACE_GENERATOR, base_id)) {
+            if (Bases[base_id].population_size < (int)Rules->size_base_subspace_gen) {
+                if (inactive) {
+                    (*inactive)++;
+                }
+            } else {
+                active++;
+            }
+        }
+    }
+    return active;
 }
 
 /*

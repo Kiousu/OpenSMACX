@@ -731,3 +731,32 @@ specialists without the obsolescence check `base_yield` applies. Not promoted: `
 whose Ghidra output didn't settle its types.
 Boot test: the 626-redirect exe loaded Council.SAV and advanced the turn 289 -> 290 (38 s) with
 the game alive.
+
+## Batch 16, 2026-10-16 (Council.SAV, 626-redirect exe)
+
+Twenty-three small functions. faction.cpp: the leader and faction name getters (`get_name`,
+`get_title`, `get_adjective_leader`, `get_adjective_insult_leader`, `get_adjective_faction`,
+`get_adjective_insult_faction`, `get_insult_leader`), the pact words (`get_pact`, `get_pacts`,
+`get_pacts_2`, `get_pact_hood`), the leader pronouns (`get_his_her`, `get_him_her`,
+`get_he_she`) and the faction-file readers `get_phrase` and `get_noun_phrase`. general.cpp:
+`mandate_color`, `in_box`, `in_box_2`, `clear` and `space`. base.cpp: `base_compute` (until now
+an exe pointer) and `generators`. Trigger group `batch16`, four tests. The string getters are
+compared on the returned pointer, its text and the parse gender and plurality they leave, for
+every faction with leaders as loaded and with the raw female flag forced to 1 and 2; the
+pronouns in all capitalization modes; the pair functions for every faction pair; the file
+readers for the first four phrases of every faction in play. `base_compute` runs on every other
+base, already computed or not, forced or not.
+
+| test | compared | mismatches |
+|---|---|---|
+| faction_strings | 936 | 0 |
+| small_helpers (mandate colors, 312 box points, clear/space buffers) | 324 | 0 |
+| generators (every faction, with and without the inactive count, 3 variants) | 48 | 0 |
+| base_compute | 564 | 0 |
+
+Log: `regression-runs/2026-10-16-council-batch16.log`. Notes: 0x945838 is `PronounBuffer`,
+0x8C6DE4 `MandateColors` (every other int), labels 199-210 are the gendered pact and pronoun
+words. The getters store the leader's raw female flag as the parse gender, so a value other than
+0 or 1 passes through.
+Boot test: the 649-redirect exe loaded Council.SAV and advanced the turn 289 -> 290 (34 s) with
+the game alive.

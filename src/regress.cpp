@@ -4918,6 +4918,277 @@ static int test_base_doctors() {
     return mismatches;
 }
 
+// ---------------------------------------------------------------- batch 16
+
+// compare a string-returning call: same pointer, same text, same parse gender and plurality
+struct StrResult {
+    LPSTR ptr;
+    char text[256];
+    int gender;
+    BOOL plural;
+    void take(LPSTR p) {
+        ptr = p;
+        strncpy_s(text, p ? p : "(null)", _TRUNCATE);
+        gender = *GenderDefault;
+        plural = *PluralityDefault;
+    }
+};
+
+static BOOL str_result_differs(const StrResult &a, const StrResult &b, const char *label) {
+    if (a.ptr == b.ptr && !strcmp(a.text, b.text) && a.gender == b.gender && a.plural == b.plural) {
+        return false;
+    }
+    if (label) {
+        logf("  %s: orig %p \"%s\" g%d p%d, new %p \"%s\" g%d p%d", label, a.ptr, a.text, a.gender,
+            a.plural, b.ptr, b.text, b.gender, b.plural);
+    }
+    return true;
+}
+
+static int test_faction_strings() {
+    int compared = 0, mismatches = 0;
+    char label[80];
+    int female_saved[MaxPlayerNum];
+    for (int f = 0; f < MaxPlayerNum; f++) {
+        female_saved[f] = Players[f].is_leader_female;
+    }
+    int gender_saved = *GenderDefault;
+    BOOL plural_saved = *PluralityDefault;
+    struct { const char *name; func_s_i *orig; func_s_i *repl; } singles[] = {
+        { "get_name", get_name_OG, get_name },
+        { "get_title", get_title_OG, get_title },
+        { "get_adjective_leader", get_adjective_leader_OG, get_adjective_leader },
+        { "get_adjective_insult_leader", get_adjective_insult_leader_OG, get_adjective_insult_leader },
+        { "get_adjective_faction", get_adjective_faction_OG, get_adjective_faction },
+        { "get_adjective_insult_faction", get_adjective_insult_faction_OG, get_adjective_insult_faction },
+        { "get_insult_leader", get_insult_leader_OG, get_insult_leader },
+        { "get_pact", get_pact_OG, get_pact },
+        { "get_pacts", get_pacts_OG, get_pacts },
+    };
+    struct { const char *name; func_s_ii *orig; func_s_ii *repl; BOOL pair; } doubles[] = {
+        { "get_pacts_2", get_pacts_2_OG, get_pacts_2, true },
+        { "get_pact_hood", get_pact_hood_OG, get_pact_hood, true },
+        { "get_his_her", get_his_her_OG, get_his_her, false },
+        { "get_him_her", get_him_her_OG, get_him_her, false },
+        { "get_he_she", get_he_she_OG, get_he_she, false },
+    };
+    StrResult r_o, r_n;
+    for (int variant = 0; variant < 3; variant++) {
+        // leaders as loaded, all female (raw value 1), all with a raw value of 2
+        for (int f = 0; f < MaxPlayerNum; f++) {
+            Players[f].is_leader_female = variant ? variant : female_saved[f];
+        }
+        for (int f = 0; f < MaxPlayerNum; f++) {
+            for (auto &s : singles) {
+                *GenderDefault = 9; *PluralityDefault = 9;
+                r_o.take(s.orig(f));
+                *GenderDefault = 9; *PluralityDefault = 9;
+                r_n.take(s.repl(f));
+                compared++;
+                sprintf_s(label, "%s(%d) variant %d", s.name, f, variant);
+                mismatches += str_result_differs(r_o, r_n, mismatches < MAX_DETAIL ? label : NULL);
+            }
+            for (auto &d : doubles) {
+                for (int k = 0; k < (d.pair ? MaxPlayerNum : 4); k++) {
+                    // the second argument is another faction or the capitalization mode
+                    *GenderDefault = 9; *PluralityDefault = 9;
+                    r_o.take(d.orig(f, k));
+                    *GenderDefault = 9; *PluralityDefault = 9;
+                    r_n.take(d.repl(f, k));
+                    compared++;
+                    sprintf_s(label, "%s(%d, %d) variant %d", d.name, f, k, variant);
+                    mismatches += str_result_differs(r_o, r_n, mismatches < MAX_DETAIL ? label : NULL);
+                }
+            }
+        }
+    }
+    for (int f = 0; f < MaxPlayerNum; f++) {
+        Players[f].is_leader_female = female_saved[f];
+    }
+    // the faction files: only factions in play, whose files are known to exist
+    for (int f = 1; f < MaxPlayerNum; f++) {
+        if (!is_alive(f) || !Players[f].filename[0]) {
+            continue;
+        }
+        for (int phrase = 0; phrase < 4; phrase++) {
+            *GenderDefault = 9; *PluralityDefault = 9;
+            r_o.take(get_phrase_OG(f, phrase));
+            *GenderDefault = 9; *PluralityDefault = 9;
+            r_n.take(get_phrase(f, phrase));
+            compared++;
+            sprintf_s(label, "get_phrase(%d, %d)", f, phrase);
+            mismatches += str_result_differs(r_o, r_n, mismatches < MAX_DETAIL ? label : NULL);
+            *GenderDefault = 9; *PluralityDefault = 9;
+            r_o.take(get_noun_phrase_OG(f, phrase));
+            *GenderDefault = 9; *PluralityDefault = 9;
+            r_n.take(get_noun_phrase(f, phrase));
+            compared++;
+            sprintf_s(label, "get_noun_phrase(%d, %d)", f, phrase);
+            mismatches += str_result_differs(r_o, r_n, mismatches < MAX_DETAIL ? label : NULL);
+        }
+    }
+    *GenderDefault = gender_saved;
+    *PluralityDefault = plural_saved;
+    logf("faction strings: %d compared, %d mismatches", compared, mismatches);
+    return mismatches;
+}
+
+static int test_small_helpers() {
+    int compared = 0, mismatches = 0;
+    for (int m = -2; m < 6; m++) {
+        int a = mandate_color_OG(m), b = mandate_color(m);
+        compared++;
+        if (a != b) {
+            if (mismatches < MAX_DETAIL) {
+                logf("  mandate_color(%d): orig %d new %d", m, a, b);
+            }
+            mismatches++;
+        }
+    }
+    RECT rect = { 3, -2, 9, 5 };
+    for (int x = -1; x < 12; x++) {
+        for (int y = -4; y < 8; y++) {
+            BOOL a = in_box_OG(x, y, 3, -2, 6, 7), b = in_box(x, y, 3, -2, 6, 7);
+            BOOL c = in_box_2_OG(x, y, &rect), d = in_box_2(x, y, &rect);
+            compared += 2;
+            if ((a != 0) != (b != 0) || (c != 0) != (d != 0)) {
+                if (mismatches < MAX_DETAIL) {
+                    logf("  in_box(%d, %d): orig %d/%d new %d/%d", x, y, a, c, b, d);
+                }
+                mismatches++;
+            }
+        }
+    }
+    char saved[sizeof(stringTemp->str)], after_o[sizeof(stringTemp->str)];
+    memcpy(saved, stringTemp->str, sizeof(saved));
+    for (int k = 0; k < 4; k++) {
+        // clear, then space on an empty, a short and a long buffer
+        const char *seeds[] = { "", "", "abc", "the quick brown fox" };
+        func_void *orig = k ? space_OG : clear_OG;
+        func_void *repl = k ? space : clear;
+        memset(stringTemp->str, 'x', sizeof(saved) - 1);
+        stringTemp->str[sizeof(saved) - 1] = 0;
+        if (k) {
+            strcpy_s(stringTemp->str, seeds[k]);
+        }
+        orig();
+        memcpy(after_o, stringTemp->str, sizeof(after_o));
+        memset(stringTemp->str, 'x', sizeof(saved) - 1);
+        stringTemp->str[sizeof(saved) - 1] = 0;
+        if (k) {
+            strcpy_s(stringTemp->str, seeds[k]);
+        }
+        repl();
+        compared++;
+        size_t d = first_diff((uint8_t *)after_o, (uint8_t *)stringTemp->str, sizeof(after_o));
+        if (d != (size_t)-1) {
+            if (mismatches < MAX_DETAIL) {
+                logf("  %s seed %d: buffer byte %u differs", k ? "space" : "clear", k, (unsigned)d);
+            }
+            mismatches++;
+        }
+    }
+    memcpy(stringTemp->str, saved, sizeof(saved));
+    logf("small helpers: %d compared, %d mismatches", compared, mismatches);
+    return mismatches;
+}
+
+static int test_generators() {
+    GameSnapshot base;
+    snap_alloc(&base);
+    snap_take(&base);
+    uint32_t size_saved = Rules->size_base_subspace_gen;
+    int compared = 0, mismatches = 0, working = 0;
+    char label[64];
+    for (int variant = 0; variant < 3; variant++) {
+        // as loaded; a generator in every third base; the same with the size rule at 1
+        snap_restore(&base);
+        Rules->size_base_subspace_gen = variant == 2 ? 1 : size_saved;
+        if (variant) {
+            for (int i = 0; i < *BaseCurrentCount; i += 3) {
+                set_fac(i, FAC_SUBSPACE_GENERATOR);
+            }
+        }
+        for (uint32_t f = 0; f < MaxPlayerNum; f++) {
+            for (int with = 0; with < 2; with++) {
+                int in_o = -5, in_n = -5;
+                int a = generators_OG(f, with ? &in_o : NULL);
+                int b = generators(f, with ? &in_n : NULL);
+                compared++;
+                working += a;
+                if (a != b || in_o != in_n) {
+                    if (mismatches < MAX_DETAIL) {
+                        sprintf_s(label, "generators(%u, %d) variant %d", f, with, variant);
+                        logf("  %s: orig %d (%d) new %d (%d)", label, a, in_o, b, in_n);
+                    }
+                    mismatches++;
+                }
+            }
+        }
+    }
+    snap_restore(&base);
+    Rules->size_base_subspace_gen = size_saved;
+    snap_free(&base);
+    logf("generators: %d compared (%d working generators counted by the original), %d mismatches",
+        compared, working, mismatches);
+    return mismatches;
+}
+
+static int test_base_compute() {
+    GameSnapshot base, after_orig, after_new;
+    snap_alloc(&base); snap_alloc(&after_orig); snap_alloc(&after_new);
+    snap_take(&base);
+    uint8_t globals_saved[BaseGlobalsSize], globals_o[BaseGlobalsSize], globals_n[BaseGlobalsSize];
+    memcpy(globals_saved, BaseGlobals, BaseGlobalsSize);
+    int selected_saved = *BaseIDCurrentSelected;
+    int compute_saved = *BaseComputeID;
+    int compared = 0, mismatches = 0;
+    char label[80];
+    for (int base_id = 0; base_id < base.base_count; base_id += 2) {
+        for (int variant = 0; variant < 4; variant++) {
+            // already computed or not, forced or not
+            auto prepare = [&]() {
+                snap_restore(&base);
+                memcpy(BaseGlobals, globals_saved, BaseGlobalsSize);
+                set_base(base_id);
+                *BaseComputeID = (variant & 1) ? base_id : -1;
+                Bases[base_id].population_size++; // so a recompute shows
+            };
+            prepare();
+            base_compute_OG(variant >= 2);
+            snap_take(&after_orig);
+            memcpy(globals_o, BaseGlobals, BaseGlobalsSize);
+            int compute_o = *BaseComputeID;
+            prepare();
+            base_compute(variant >= 2);
+            snap_take(&after_new);
+            memcpy(globals_n, BaseGlobals, BaseGlobalsSize);
+            int compute_n = *BaseComputeID;
+            compared++;
+            sprintf_s(label, "base_compute(%d) variant %d", base_id, variant);
+            BOOL detail = mismatches < MAX_DETAIL;
+            BOOL diff = compute_o != compute_n;
+            if (diff && detail) {
+                logf("  %s: computed base orig %d new %d", label, compute_o, compute_n);
+            }
+            if (!diff) {
+                diff = base_globals_differ(globals_o, globals_n, detail ? label : NULL)
+                    || snap_differs(&after_orig, &after_new, detail ? label : NULL);
+            }
+            if (diff) {
+                mismatches++;
+            }
+        }
+    }
+    snap_restore(&base);
+    memcpy(BaseGlobals, globals_saved, BaseGlobalsSize);
+    *BaseIDCurrentSelected = selected_saved;
+    *BaseComputeID = compute_saved;
+    snap_free(&base); snap_free(&after_orig); snap_free(&after_new);
+    logf("base_compute: %d compared, %d mismatches", compared, mismatches);
+    return mismatches;
+}
+
 static DWORD WINAPI regress_watcher(LPVOID) {
     for (;;) {
         Sleep(1000);
@@ -5033,6 +5304,10 @@ void regress_run() {
     if (test_enabled("batch14", "base_energy")) total += run_guarded("base_energy", test_base_energy);
     if (test_enabled("batch15", "base_growth")) total += run_guarded("base_growth", test_base_growth);
     if (test_enabled("batch15", "base_doctors")) total += run_guarded("base_doctors", test_base_doctors);
+    if (test_enabled("batch16", "faction_strings")) total += run_guarded("faction_strings", test_faction_strings);
+    if (test_enabled("batch16", "small_helpers")) total += run_guarded("small_helpers", test_small_helpers);
+    if (test_enabled("batch16", "generators")) total += run_guarded("generators", test_generators);
+    if (test_enabled("batch16", "base_compute")) total += run_guarded("base_compute", test_base_compute);
     if (test_enabled("enemy_capabilities")) total += run_guarded("enemy_capabilities", test_enemy_capabilities);
     if (test_enabled("social_ai")) total += run_guarded("social_ai", test_social_ai);
     if (test_enabled("Path::sensors") || test_enabled("path_sensors")) total += run_guarded("path_sensors", test_path_sensors);

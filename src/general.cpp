@@ -27,6 +27,7 @@
 uint32_t ScenEditorUndoPosition = 1; // 0x00690D7C
 int *GenderDefault = (int *)0x009BBFEC;
 BOOL *PluralityDefault = (BOOL *)0x009BBFF0;
+int *MandateColors = (int *)0x008C6DE4; // energy mandate colors, every other int; see mandate_color()
 
 /*
 Purpose: Trim the trailing spaces in-line from the end of the string.
@@ -189,6 +190,67 @@ Status: Complete
 void __cdecl parse_set(int gender, BOOL plurality) {
     *GenderDefault = gender;
     *PluralityDefault = plurality;
+}
+
+/*
+Purpose: Get the interface color for an energy mandate (0-2, anything else the fourth color).
+Original Offset: 0050E820
+Return Value: Color value
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch16.log)
+*/
+int __cdecl mandate_color(int mandate) {
+    switch (mandate) {
+    case 0:
+        return MandateColors[0];
+    case 1:
+        return MandateColors[2];
+    case 2:
+        return MandateColors[4];
+    default:
+        return MandateColors[6];
+    }
+}
+
+/*
+Purpose: Check whether a point lies in the box with the given corner, width and height.
+Original Offset: 005FA7A0
+Return Value: Is the point inside? true/false
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch16.log)
+*/
+BOOL __cdecl in_box(int x, int y, int left, int top, int width, int height) {
+    return x >= left && x < left + width && y >= top && y < top + height;
+}
+
+/*
+Purpose: Check whether a point lies inside the rectangle (right and bottom edges excluded).
+Original Offset: 005FA7E0
+Return Value: Is the point inside? true/false
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch16.log)
+*/
+BOOL __cdecl in_box_2(int x, int y, RECT *rect) {
+    return x >= rect->left && x < rect->right && y >= rect->top && y < rect->bottom;
+}
+
+/*
+Purpose: Empty the temporary string buffer.
+Original Offset: 00500120
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch16.log)
+*/
+void __cdecl clear() {
+    stringTemp->str[0] = 0;
+}
+
+/*
+Purpose: Append a space to the temporary string buffer.
+Original Offset: 005A58B0
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-batch16.log)
+*/
+void __cdecl space() {
+    size_t len = strlen(stringTemp->str); // unbounded, as in the original
+    stringTemp->str[len] = ' ';
+    stringTemp->str[len + 1] = 0;
 }
 
 /*

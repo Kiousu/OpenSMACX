@@ -650,3 +650,27 @@
 # --- batch 15: base growth and riot doctors
 0x000EF1C0	?base_growth@@YAHXZ
 0x000F5F30	?base_doctors@@YAXXZ
+# --- batch 16: faction name and grammar strings, small helpers
+0x00159060	?get_name@@YAPADH@Z
+0x001590A0	?get_title@@YAPADH@Z
+0x001590E0	?get_adjective_leader@@YAPADH@Z
+0x00159100	?get_adjective_insult_leader@@YAPADH@Z
+0x00159120	?get_adjective_faction@@YAPADH@Z
+0x00159140	?get_adjective_insult_faction@@YAPADH@Z
+0x00159160	?get_insult_leader@@YAPADH@Z
+0x0018F810	?get_phrase@@YAPADHH@Z
+0x0018F8B0	?get_noun_phrase@@YAPADHH@Z
+0x0018F9D0	?get_pact@@YAPADH@Z
+0x0018FA20	?get_pacts@@YAPADH@Z
+0x0018FA70	?get_pacts_2@@YAPADHH@Z
+0x0018FB00	?get_pact_hood@@YAPADHH@Z
+0x0018FBC0	?get_his_her@@YAPADHH@Z
+0x0018FC50	?get_him_her@@YAPADHH@Z
+0x0018FCE0	?get_he_she@@YAPADHH@Z
+0x0010E820	?mandate_color@@YAHH@Z
+0x001FA7A0	?in_box@@YAHHHHHHH@Z
+0x001FA7E0	?in_box_2@@YAHHHPAUtagRECT@@@Z
+0x00100120	?clear@@YAXXZ
+0x001A58B0	?space@@YAXXZ
+0x000EC3B0	?base_compute@@YAXH@Z
+0x001247B0	?generators@@YAHIPAH@Z
