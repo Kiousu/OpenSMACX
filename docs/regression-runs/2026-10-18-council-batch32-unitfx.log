@@ -1,0 +1,68 @@
+Batch 32 unitfx (worktree, fix round 2), 2026-10-18: 759-redirect exe (755 + action_oblit,
+action_tectonic, action_fungal, action_give; the last three as Kiousu chose), harness DLL,
+input-free run, groups 'unitfx unitact', Council.SAV.
+
+OpenSMACX regression run: turn 289, 281 bases, 1741 vehs, filter='unitfx unitact'
+survey: map 128x128, SP owners: SAC 83 LV 0 HGP 21 CI 0 VW 35 PTS 17
+survey: faction 1 Consciousness human diff 2 bases 35 units 390 away 6 | SE talent 0 police 1 econ 3 eff 6 | rules talent 0 drone 0 | staple 0 punish 0 brood 28 rec 30 holo 2 paradise 0 assim 8
+survey: faction 2 Pirates      AI diff 3 bases 79 units 409 away 18 | SE talent 0 police 0 econ 0 eff -1 | rules talent 0 drone 0 | staple 0 punish 0 brood 0 rec 58 holo 21 paradise 0 assim 16
+survey: faction 3 Drones       AI diff 3 bases 77 units 505 away 6 | SE talent 0 police 0 econ 0 eff 2 | rules talent 0 drone 0 | staple 0 punish 0 brood 0 rec 62 holo 17 paradise 0 assim 22
+survey: faction 4 Angels       AI diff 3 bases 68 units 365 away 14 | SE talent 0 police -1 econ 3 eff 5 | rules talent 0 drone 0 | staple 0 punish 1 brood 0 rec 42 holo 19 paradise 0 assim 19
+survey: faction 6 Caretakers   AI diff 3 bases 3 units 3 away 0 | SE talent 0 police 0 econ 2 eff -2 | rules talent 0 drone 0 | staple 0 punish 0 brood 0 rec 1 holo 1 paradise 0 assim 0
+survey: faction 7 Usurpers     AI diff 3 bases 19 units 62 away 2 | SE talent 0 police 0 econ 2 eff -2 | rules talent 0 drone 0 | staple 0 punish 0 brood 0 rec 13 holo 1 paradise 0 assim 2
+action_feature: 2 compared (1 with a notice), 0 mismatches
+action_patrol: 5724 compared (4636 changed state, 4020 left a patrol order), 0 mismatches
+action: 2280 compared (1064 returned true, 1064 with a call), 0 mismatches
+action_gate: 952 compared (952 changed state), 0 mismatches
+action_staple: 1491 compared (1491 with calls, bases left stapled 747), 0 mismatches
+action_destruct: 206 compared (539 units destroyed by the DLL), 0 mismatches
+action_oblit: 2820 compared (2820 notices, 940 atrocities), 0 mismatches
+  shipped game vs intended, action_tectonic(44, 70, 44) variant 0: TectonicDetonationCount differs
+  shipped game vs intended, action_tectonic(44, 70, 44) variant 1: parse slot 1: orig 'Prime Function' 1/0 new 'Foreman' 0/0
+  shipped game vs intended, action_tectonic(44, 70, 44) variant 2: TectonicDetonationCount differs
+  shipped game vs intended, action_tectonic(44, 70, 44) variant 3: orig returned 0 after 4 calls, new 0 after 3 calls
+  shipped game vs intended, action_tectonic(44, 70, 44) variant 4: orig returned 0 after 4 calls, new 0 after 3 calls
+  shipped game vs intended, action_tectonic(44, 70, 44) variant 5: PlayerData[4] +0x364 differs (orig 02 new 01)
+  shipped game vs intended, action_tectonic(44, 70, 44) variant 6: TectonicDetonationCount differs
+  shipped game vs intended, action_tectonic(44, 71, 49) variant 0: TectonicDetonationCount differs
+  shipped game vs intended, action_tectonic(44, 71, 49) variant 1: TectonicDetonationCount differs
+  shipped game vs intended, action_tectonic(44, 71, 49) variant 2: TectonicDetonationCount differs
+  shipped game vs intended, action_tectonic(44, 71, 49) variant 3: TectonicDetonationCount differs
+  shipped game vs intended, action_tectonic(44, 71, 49) variant 4: TectonicDetonationCount differs
+action_tectonic: 536 compared (536 changed state, 536 with calls; the DLL detonated 385 times and showed the target's owner 62 notices), 0 mismatches
+action_tectonic: the shipped game differs from the intended in 254 of 536 (freed slot read 126, territory owner asked again 128; detonation count elsewhere 129, notices or calls 120, map or units 41); the unit after a unit in the table is another faction's in 554 of 1740 slots, has another reactor in 472
+action_tectonic variant 0: 82 cases, the shipped game differs in 26 (freed slot 26, territory owner again 0), detonated 82 times as shipped and 82 as intended
+action_tectonic variant 1: 82 cases, the shipped game differs in 26 (freed slot 26, territory owner again 0), detonated 82 times as shipped and 82 as intended
+action_tectonic variant 2: 82 cases, the shipped game differs in 26 (freed slot 26, territory owner again 0), detonated 82 times as shipped and 82 as intended
+action_tectonic variant 3: 82 cases, the shipped game differs in 52 (freed slot 12, territory owner again 40), detonated 33 times as shipped and 33 as intended
+action_tectonic variant 4: 82 cases, the shipped game differs in 53 (freed slot 14, territory owner again 39), detonated 40 times as shipped and 40 as intended
+action_tectonic variant 5: 82 cases, the shipped game differs in 52 (freed slot 12, territory owner again 40), detonated 33 times as shipped and 33 as intended
+action_tectonic variant 6: 44 cases, the shipped game differs in 19 (freed slot 10, territory owner again 9), detonated 36 times as shipped and 33 as intended
+  shipped game vs intended, action_fungal(22, 66, 46) variant 1: orig returned 0 after 6 calls, new 0 after 9 calls
+  shipped game vs intended, action_fungal(22, 66, 46) variant 3: orig returned 0 after 4 calls, new 0 after 3 calls
+  shipped game vs intended, action_fungal(22, 66, 46) variant 4: orig returned 0 after 4 calls, new 0 after 3 calls
+  shipped game vs intended, action_fungal(22, 66, 46) variant 5: PlayerData[3] +0x364 differs (orig 00 new 01)
+  shipped game vs intended, action_fungal(22, 66, 46) variant 6: orig returned 0 after 4 calls, new 0 after 2 calls
+  shipped game vs intended, action_fungal(22, 71, 15) variant 1: orig returned 0 after 8 calls, new 0 after 5 calls
+  shipped game vs intended, action_fungal(22, 71, 15) variant 2: orig returned 0 after 7 calls, new 0 after 4 calls
+  shipped game vs intended, action_fungal(44, 70, 44) variant 0: orig returned 0 after 12 calls, new 0 after 7 calls
+  shipped game vs intended, action_fungal(44, 70, 44) variant 1: orig returned 0 after 21 calls, new 0 after 10 calls
+  shipped game vs intended, action_fungal(44, 70, 44) variant 2: orig returned 0 after 11 calls, new 0 after 5 calls
+  shipped game vs intended, action_fungal(44, 70, 44) variant 3: orig returned 0 after 4 calls, new 0 after 3 calls
+  shipped game vs intended, action_fungal(44, 70, 44) variant 4: orig returned 0 after 4 calls, new 0 after 3 calls
+action_fungal: 1213 compared (1213 changed state, 1213 with calls; the DLL detonated 906 times and showed the target's owner 123 notices), 0 mismatches
+action_fungal: the shipped game differs from the intended in 564 of 1213 (freed slot read 300, territory owner asked again 264; detonation count elsewhere 0, notices or calls 501, map or units 358); the unit after a unit in the table is another faction's in 554 of 1740 slots, has another reactor in 472
+action_fungal variant 0: 161 cases, the shipped game differs in 50 (freed slot 50, territory owner again 0), detonated 161 times as shipped and 161 as intended
+action_fungal variant 1: 161 cases, the shipped game differs in 62 (freed slot 62, territory owner again 0), detonated 161 times as shipped and 161 as intended
+action_fungal variant 2: 161 cases, the shipped game differs in 55 (freed slot 55, territory owner again 0), detonated 161 times as shipped and 161 as intended
+action_fungal variant 3: 161 cases, the shipped game differs in 100 (freed slot 24, territory owner again 76), detonated 72 times as shipped and 72 as intended
+action_fungal variant 4: 161 cases, the shipped game differs in 99 (freed slot 25, territory owner again 74), detonated 78 times as shipped and 78 as intended
+action_fungal variant 5: 161 cases, the shipped game differs in 100 (freed slot 24, territory owner again 76), detonated 72 times as shipped and 72 as intended
+action_fungal variant 6: 86 cases, the shipped game differs in 48 (freed slot 10, territory owner again 38), detonated 58 times as shipped and 40 as intended
+action_fungal variant 7: 161 cases, the shipped game differs in 50 (freed slot 50, territory owner again 0), detonated 161 times as shipped and 161 as intended
+action_give: 3985 compared over 71 units (10 carrying others; 3985 with calls, 3983 given away, 2460 new designs proposed, 357 to a Scout Patrol or Transport Foil, 1 disbanding units, 1 checked against the rule), 0 mismatches
+action_give: the shipped game differs from the intended in 1 (it gave away the wrong units or kept some given ones in 1); Kiousu: the rest of the cargo goes to the receiver in 1 (1 constructed of 1 tried); Kiousu: units given counted against their designs: the missing counts change the outcome in 15, disbandings that no longer happen in 8 (1 constructed)
+action_sat_attack: 840 compared (550 with calls), 0 mismatches
+action_build: 144 compared (144 bases founded, 30 in another faction's territory, 136 with calls), 0 mismatches
+action_arty: 5187 compared (4837 with calls; the DLL fought 16 times and shelled 1102 empty tiles), 0 mismatches
+TOTAL mismatches: 0 (23250 ms)

@@ -73,6 +73,8 @@
         <Unit filename="src/flatbutton.h" />
         <Unit filename="src/flic.cpp" />
         <Unit filename="src/flic.h" />
+        <Unit filename="src/focusguard.cpp" />
+        <Unit filename="src/focusguard.h" />
         <Unit filename="src/font.cpp" />
         <Unit filename="src/font.h" />
         <Unit filename="src/game.cpp" />

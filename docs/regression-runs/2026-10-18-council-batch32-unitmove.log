@@ -1,0 +1,37 @@
+Batch 32 (movement orders, worktree agent), 2026-10-18, after the review: 758-redirect exe (755 +
+action_go_to, action_road_to, action_airdrop; the airdrop notice names a base of the player at
+the controls, blank when there is none, as Kiousu chose), harness DLL, input-free run, groups
+unitmove and unitact (filter 'unitmove unitact'), Council.SAV.
+
+OpenSMACX regression run: turn 289, 281 bases, 1741 vehs, filter='unitmove unitact'
+survey: map 128x128, SP owners: SAC 83 LV 0 HGP 21 CI 0 VW 35 PTS 17
+survey: faction 1 Consciousness human diff 2 bases 35 units 390 away 6 | SE talent 0 police 1 econ 3 eff 6 | rules talent 0 drone 0 | staple 0 punish 0 brood 28 rec 30 holo 2 paradise 0 assim 8
+survey: faction 2 Pirates      AI diff 3 bases 79 units 409 away 18 | SE talent 0 police 0 econ 0 eff -1 | rules talent 0 drone 0 | staple 0 punish 0 brood 0 rec 58 holo 21 paradise 0 assim 16
+survey: faction 3 Drones       AI diff 3 bases 77 units 505 away 6 | SE talent 0 police 0 econ 0 eff 2 | rules talent 0 drone 0 | staple 0 punish 0 brood 0 rec 62 holo 17 paradise 0 assim 22
+survey: faction 4 Angels       AI diff 3 bases 68 units 365 away 14 | SE talent 0 police -1 econ 3 eff 5 | rules talent 0 drone 0 | staple 0 punish 1 brood 0 rec 42 holo 19 paradise 0 assim 19
+survey: faction 6 Caretakers   AI diff 3 bases 3 units 3 away 0 | SE talent 0 police 0 econ 2 eff -2 | rules talent 0 drone 0 | staple 0 punish 0 brood 0 rec 1 holo 1 paradise 0 assim 0
+survey: faction 7 Usurpers     AI diff 3 bases 19 units 62 away 2 | SE talent 0 police 0 econ 2 eff -2 | rules talent 0 drone 0 | staple 0 punish 0 brood 0 rec 13 holo 1 paradise 0 assim 2
+action_feature: 2 compared (1 with a notice), 0 mismatches
+action_patrol: 5724 compared (4636 changed state, 4020 left a patrol order), 0 mismatches
+action: 2280 compared (1064 returned true, 1064 with a call), 0 mismatches
+action_gate: 952 compared (952 changed state), 0 mismatches
+action_staple: 1491 compared (1491 with calls, bases left stapled 747), 0 mismatches
+action_destruct: 206 compared (539 units destroyed by the DLL), 0 mismatches
+action_sat_attack: 840 compared (550 with calls), 0 mismatches
+action_build: 144 compared (144 bases founded, 30 in another faction's territory, 136 with calls), 0 mismatches
+action_arty: 5187 compared (4837 with calls; the DLL fought 16 times and shelled 1102 empty tiles), 0 mismatches
+action_go_to: 7725 compared (1133 orders ended after a move, 412 waypoints shifted, 120 units ended their turn, 1648 network calls, 103 with four waypoints), 0 mismatches
+action_go_to (the exe's Path::move): 606 compared (412 steps taken), 0 mismatches
+action_road_to: 11610 compared (2864 roads or tubes started, 360 fungus removals, 1698 steps, 6688 orders ended), 0 mismatches
+action_road_to (paths and network): 16856 compared (1484 with a notice, 8428 network calls, 172 "remove fungus" messages), 0 mismatches
+action_road_to (the exe's Path::find): 720 compared (472 steps, 248 without a path), 0 mismatches
+  action_airdrop(159, 33, 99) case 7: the shipped notice names base 89 'Psi Nexus', OpenSMACX's base 272 'Reefside Refinery'
+  action_airdrop(159, 33, 99) case 13: the shipped notice names base 89 'Psi Nexus', OpenSMACX's base 272 'Reefside Refinery'
+  action_airdrop(159, 33, 99) case 17: the shipped notice names base 89 'Psi Nexus', OpenSMACX's base 272 'Reefside Refinery'
+  action_airdrop(159, 34, 98) case 7: the shipped notice names base 89 'Psi Nexus', OpenSMACX's base 272 'Reefside Refinery'
+  action_airdrop(159, 34, 98) case 13: the shipped notice names base 89 'Psi Nexus', OpenSMACX's base 272 'Reefside Refinery'
+action_airdrop: 13222 compared (5499 drops made; refused 1036 out of range, 1731 at sea, 163 onto units, 251 non-combat, 48 by air defenses; 18 captures, 3993 flights shown, 130 pauses, 18 pods, 1246 "air drop near" notices), 0 mismatches
+action_airdrop: all cases but 19: in 137 of the 977 notices the shipped exe (base_find() for faction 1) names another base; 0 found no base; case 19: 269 notices, 269 found no base; every no-base notice is blank, the exe's Bases[-1] read ('') was non-empty in 0; as loaded (cases 0 and 21): 3 notices, 0 name another base
+action_airdrop: Bases[-1].name_string at 0097CF1F starts 00 FF FF 00; faction without a base for case 19: 5
+action_airdrop (the shipped exe): 3005 compared, 358 differ in the notice's base as predicted (269 of them in case 19), 0 otherwise
+TOTAL mismatches: 0 (19610 ms)

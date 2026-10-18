@@ -36,6 +36,7 @@ extern volatile LONG RegressPending; // set by the watcher thread, consumed on t
 
 void regress_init(); // starts the trigger watcher thread (idempotent, cheap)
 void regress_run(); // runs the suite now on the calling thread
+void regress_note(const char *text); // a line for opensmacx_regress.log (kept for regress_run's log too)
 #else
 #define RegressPending 0
 inline void regress_init() {}

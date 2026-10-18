@@ -1,0 +1,102 @@
+Batch 32, 2026-10-18, unit terraforming worker: 758-redirect exe (755 + action_terraform,
+action_destroy, action_home), harness DLL, input-free run, filter 'unitterra unitact', Council.SAV.
+"shipped/intended" lines are not mismatches (see the sweep log).
+
+OpenSMACX regression run: turn 289, 281 bases, 1741 vehs, filter='unitterra unitact'
+survey: map 128x128, SP owners: SAC 83 LV 0 HGP 21 CI 0 VW 35 PTS 17
+survey: faction 1 Consciousness human diff 2 bases 35 units 390 away 6 | SE talent 0 police 1 econ 3 eff 6 | rules talent 0 drone 0 | staple 0 punish 0 brood 28 rec 30 holo 2 paradise 0 assim 8
+survey: faction 2 Pirates      AI diff 3 bases 79 units 409 away 18 | SE talent 0 police 0 econ 0 eff -1 | rules talent 0 drone 0 | staple 0 punish 0 brood 0 rec 58 holo 21 paradise 0 assim 16
+survey: faction 3 Drones       AI diff 3 bases 77 units 505 away 6 | SE talent 0 police 0 econ 0 eff 2 | rules talent 0 drone 0 | staple 0 punish 0 brood 0 rec 62 holo 17 paradise 0 assim 22
+survey: faction 4 Angels       AI diff 3 bases 68 units 365 away 14 | SE talent 0 police -1 econ 3 eff 5 | rules talent 0 drone 0 | staple 0 punish 1 brood 0 rec 42 holo 19 paradise 0 assim 19
+survey: faction 6 Caretakers   AI diff 3 bases 3 units 3 away 0 | SE talent 0 police 0 econ 2 eff -2 | rules talent 0 drone 0 | staple 0 punish 0 brood 0 rec 1 holo 1 paradise 0 assim 0
+survey: faction 7 Usurpers     AI diff 3 bases 19 units 62 away 2 | SE talent 0 police 0 econ 2 eff -2 | rules talent 0 drone 0 | staple 0 punish 0 brood 0 rec 13 holo 1 paradise 0 assim 2
+action_feature: 2 compared (1 with a notice), 0 mismatches
+action_patrol: 5724 compared (4636 changed state, 4020 left a patrol order), 0 mismatches
+action: 2280 compared (1064 returned true, 1064 with a call), 0 mismatches
+action_gate: 952 compared (952 changed state), 0 mismatches
+action_staple: 1491 compared (1491 with calls, bases left stapled 747), 0 mismatches
+action_destruct: 206 compared (539 units destroyed by the DLL), 0 mismatches
+action_sat_attack: 840 compared (550 with calls), 0 mismatches
+action_build: 144 compared (144 bases founded, 30 in another faction's territory, 136 with calls), 0 mismatches
+action_arty: 5187 compared (4837 with calls; the DLL fought 16 times and shelled 1102 empty tiles), 0 mismatches
+action_terraform: MapBaseIdClosestSubmergedVeh at the start: 0 0 0 0 0 0 0 0
+  shipped/intended action_terraform(19, 0, 1) variant 7: Base[3] +0x31 differs (orig 40 new 41)
+  shipped/intended action_terraform(19, 0, 1) variant 7: base globals differs (orig returned 1, new 1) 
+  shipped/intended action_terraform(19, 17, 1) variant 3: recorded calls differs (orig returned 1, new 1) orig 8 calls, new 10
+  shipped/intended action_terraform(19, 17, 1) variant 5: recorded calls differs (orig returned 1, new 1) orig 8 calls, new 10
+  shipped/intended action_terraform(28, 17, 1) variant 3: recorded calls differs (orig returned 1, new 1) orig 20 calls, new 22
+  shipped/intended action_terraform(28, 17, 1) variant 5: recorded calls differs (orig returned 1, new 1) orig 20 calls, new 22
+  shipped/intended action_terraform(40, 0, 1) variant 7: Base[142] +0x31 differs (orig 00 new 01)
+  shipped/intended action_terraform(40, 0, 1) variant 7: base globals differs (orig returned 1, new 1) 
+  shipped/intended action_terraform(40, 17, 1) variant 4: recorded calls differs (orig returned 1, new 1) orig 18 calls, new 16
+  shipped/intended action_terraform(50, 0, 1) variant 7: Base[138] +0x31 differs (orig 00 new 01)
+  shipped/intended action_terraform(50, 0, 1) variant 7: base globals differs (orig returned 1, new 1) 
+  shipped/intended action_terraform(50, 17, 1) variant 4: recorded calls differs (orig returned 1, new 1) orig 14 calls, new 12
+  shipped/intended action_terraform(59, 0, 1) variant 7: Base[60] +0x31 differs (orig 00 new 01)
+  shipped/intended action_terraform(59, 0, 1) variant 7: base globals differs (orig returned 1, new 1) 
+  shipped/intended action_terraform(71, 0, 1) variant 7: Base[78] +0x31 differs (orig 00 new 01)
+  shipped/intended action_terraform(71, 0, 1) variant 7: base globals differs (orig returned 1, new 1) 
+  shipped/intended action_terraform(71, 17, 1) variant 4: recorded calls differs (orig returned 1, new 1) orig 8 calls, new 6
+  shipped/intended action_terraform(83, 16, 1) variant 4: recorded calls differs (orig returned 1, new 1) orig 14 calls, new 12
+  shipped/intended action_terraform(93, 0, 0) variant 0: return value differs (orig returned -2, new -6) 
+  shipped/intended action_terraform(93, 0, 0) variant 1: return value differs (orig returned -2, new -3) 
+  shipped/intended action_terraform(93, 0, 1) variant 2: Base[259] +0x31 differs (orig 00 new 01)
+  shipped/intended action_terraform(93, 0, 1) variant 2: base globals differs (orig returned 1, new 1) 
+  shipped/intended action_terraform(93, 0, 1) variant 3: Base[259] +0x31 differs (orig 00 new 01)
+  shipped/intended action_terraform(93, 0, 1) variant 3: base globals differs (orig returned 1, new 1) 
+  shipped/intended action_terraform(93, 0, 1) variant 4: Base[259] +0x31 differs (orig 00 new 01)
+  shipped/intended action_terraform(93, 0, 1) variant 4: base globals differs (orig returned 1, new 1) 
+  shipped/intended action_terraform(93, 0, 1) variant 5: Base[259] +0x31 differs (orig 00 new 01)
+  shipped/intended action_terraform(93, 0, 1) variant 5: base globals differs (orig returned 1, new 1) 
+  shipped/intended action_terraform(93, 0, 1) variant 6: Base[259] +0x31 differs (orig 00 new 01)
+  shipped/intended action_terraform(93, 0, 1) variant 6: base globals differs (orig returned 1, new 1) 
+  shipped/intended action_terraform(93, 0, 1) variant 7: Base[259] +0x31 differs (orig 00 new 01)
+  shipped/intended action_terraform(93, 0, 1) variant 7: base globals differs (orig returned 1, new 1) 
+  shipped/intended action_terraform(93, 17, 1) variant 2: recorded calls differs (orig returned 1, new 1) orig 8 calls, new 10
+  shipped/intended action_terraform(93, 17, 1) variant 3: recorded calls differs (orig returned 1, new 1) orig 8 calls, new 10
+  shipped/intended action_terraform(93, 17, 1) variant 5: recorded calls differs (orig returned 1, new 1) orig 8 calls, new 10
+  shipped/intended action_terraform(93, 17, 1) variant 6: recorded calls differs (orig returned 1, new 1) orig 8 calls, new 10
+action_terraform: 4885 compared (1985 returned 1), 0 mismatches (the original with the slips fixed against the DLL)
+action_terraform: shipped game differs: farm to soil enricher technology: 34 inputs, 29 changed the outcome
+action_terraform: shipped game differs: unit slot after the land changes: 31 inputs, 18 changed the outcome
+action_terraform: shipped game differs in 47 of 4885, 0 with no known slip
+action_terraform: units of the player at the controls lost to the land changes in 29 inputs, still on record at the units-lost message in 0
+action_terraform: reached (calls in the last runs): MADEFARM 18, HARVESTFOREST 172, wave_it 1206, MADESOIL 18, MADEMINE 18, MADESOLAR 18, MADEFOREST 18, MADETUBE 27, MADESENSOR 18, TERRAMINE 118, MADECONDENSER 10, BOREHOLEMINE 32, MADEBOREHOLE 10, MADEAQUIFER 10, MADEROAD 9, TERRAYOURS 3, MADESEAFARM 17, MADESEAMINE 17, MADESEASOLAR 17
+action_destroy: 4604 compared (4507 changed state, 4021 with notices; the DLL's runs: 2402 explosions shown, 67 counter-battery fights, 3682 messages, 534 map view clears by the climate), 0 mismatches
+action_destroy: reached (calls in the last runs): order_veh 2351, ARTYBOMBFAILED 1804, boom 2402, Console::focus 38, ATESTUFF 14, SPOREFOREST 8, draw_radius 411, BOMBARDSUCCEEDED 1139, HAVEDESTROYED1 71, BOMBSUCCEEDED 429, BOMBFAILED 187, battle_fight_2 67, HAVEDESTROYED 14, SPORESLAUNCHED 11, ATEFOREST 5
+  shipped/intended action_home(631, 0) variant 4: Veh[631] +0x5 differs (orig 00 new 02)
+  shipped/intended action_home(631, 1) variant 4: Veh[631] +0x5 differs (orig 00 new 02)
+  shipped/intended action_home(631, 2) variant 4: Veh[631] +0x5 differs (orig 00 new 02)
+  shipped/intended action_home(631, 4) variant 4: Veh[631] +0x14 differs (orig 10 new 0E)
+  shipped/intended action_home(631, 4) variant 4: return value differs (orig returned 0, new 1) 
+  shipped/intended action_home(718, 0) variant 4: Veh[718] +0x5 differs (orig 00 new 02)
+  shipped/intended action_home(718, 1) variant 4: Veh[718] +0x5 differs (orig 00 new 02)
+  shipped/intended action_home(718, 2) variant 4: Veh[718] +0x5 differs (orig 00 new 02)
+  shipped/intended action_home(718, 4) variant 4: Veh[718] +0x11 differs (orig 00 new 18)
+  shipped/intended action_home(718, 4) variant 4: return value differs (orig returned 0, new 1) 
+  shipped/intended action_home(846, 0) variant 4: Veh[846] +0x5 differs (orig 00 new 02)
+  shipped/intended action_home(846, 1) variant 4: Veh[846] +0x5 differs (orig 00 new 02)
+  shipped/intended action_home(846, 2) variant 4: Veh[846] +0x5 differs (orig 00 new 02)
+  shipped/intended action_home(846, 4) variant 4: Veh[846] +0x14 differs (orig 62 new 6C)
+  shipped/intended action_home(846, 4) variant 4: return value differs (orig returned 0, new 1) 
+  shipped/intended action_home(875, 2) variant 4: Veh[875] +0x5 differs (orig 00 new 02)
+  shipped/intended action_home(904, 0) variant 4: Veh[904] +0x5 differs (orig 00 new 02)
+  shipped/intended action_home(904, 1) variant 4: Veh[904] +0x5 differs (orig 00 new 02)
+  shipped/intended action_home(904, 2) variant 4: Veh[904] +0x5 differs (orig 00 new 02)
+  shipped/intended action_home(904, 4) variant 4: Veh[904] +0x14 differs (orig 55 new 56)
+  shipped/intended action_home(904, 4) variant 4: return value differs (orig returned 0, new 1) 
+  shipped/intended action_home(1016, 0) variant 4: Veh[1016] +0x5 differs (orig 00 new 02)
+  shipped/intended action_home(1016, 1) variant 4: Veh[1016] +0x5 differs (orig 00 new 02)
+  shipped/intended action_home(1016, 2) variant 4: Veh[1016] +0x5 differs (orig 00 new 02)
+  shipped/intended action_home(1016, 4) variant 4: Veh[1016] +0x11 differs (orig 00 new 18)
+  shipped/intended action_home(1016, 4) variant 4: return value differs (orig returned 0, new 1) 
+  shipped/intended action_home(1017, 2) variant 4: Veh[1017] +0x5 differs (orig 00 new 02)
+  shipped/intended action_home(1065, 0) variant 4: Veh[1065] +0x5 differs (orig 00 new 02)
+  shipped/intended action_home(1065, 1) variant 4: Veh[1065] +0x5 differs (orig 00 new 02)
+  shipped/intended action_home(1065, 2) variant 4: Veh[1065] +0x5 differs (orig 00 new 02)
+action_home: 8930 compared (5138 returned 1), 0 mismatches (the original with the slips fixed against the DLL)
+action_home: shipped game differs: home airbase: distance kept: 1176 inputs, 48 changed the outcome
+action_home: shipped game differs in 48 of 8930, 0 with no known slip
+action_home: reached (calls in the last runs): nothing
+action_home: the patched original gave 1875 move orders and kept 3259 units where they are
+TOTAL mismatches: 0 (26734 ms)

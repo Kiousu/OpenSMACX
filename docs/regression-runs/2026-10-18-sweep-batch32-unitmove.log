@@ -1,0 +1,439 @@
+Batch 32 sweep (movement orders, worktree agent), 2026-10-18, after the review: 758-redirect exe,
+harness DLL, input-free runs, groups unitmove and unitact (filter 'unitmove unitact'), the 13
+sweep saves.
+
+== sw_aki2120.SAV: OpenSMACX regression run: turn 20, 17 bases, 84 vehs, filter='unitmove unitact'
+survey: map 128x128, SP owners: SAC -1 LV -1 HGP -1 CI -1 VW -1 PTS -1
+survey: faction 1 Consciousness human diff 2 bases 3 units 4 away 0 | SE talent 0 police 0 econ 0 eff 2 | rules talent 0 drone 0 | staple 0 punish 0 brood 0 rec 0 holo 0 paradise 0 assim 0
+survey: faction 2 Pirates      AI diff 3 bases 4 units 12 away 0 | SE talent 0 police 0 econ 0 eff -1 | rules talent 0 drone 0 | staple 0 punish 0 brood 0 rec 0 holo 0 paradise 0 assim 0
+survey: faction 3 Drones       AI diff 3 bases 3 units 10 away 5 | SE talent 0 police 0 econ 0 eff 0 | rules talent 0 drone 0 | staple 0 punish 0 brood 0 rec 0 holo 0 paradise 0 assim 0
+survey: faction 4 Angels       AI diff 3 bases 2 units 4 away 0 | SE talent 0 police -1 econ 2 eff -2 | rules talent 0 drone 0 | staple 0 punish 0 brood 0 rec 0 holo 0 paradise 0 assim 0
+survey: faction 5 Planet Cult  AI diff 3 bases 1 units 5 away 1 | SE talent 0 police 0 econ 0 eff 0 | rules talent 0 drone 0 WORMPOLICE | staple 0 punish 0 brood 0 rec 0 holo 0 paradise 0 assim 0
+survey: faction 6 Morganites   AI diff 3 bases 3 units 5 away 0 | SE talent 0 police 0 econ 0 eff 0 | rules talent 0 drone 0 | staple 0 punish 0 brood 0 rec 0 holo 0 paradise 0 assim 0
+survey: faction 7 Gaians       AI diff 3 bases 1 units 4 away 2 | SE talent 0 police -1 econ 0 eff 2 | rules talent 0 drone 0 | staple 0 punish 0 brood 0 rec 0 holo 0 paradise 0 assim 0
+action_feature: 2 compared (1 with a notice), 0 mismatches
+action_patrol: 288 compared (236 changed state, 224 left a patrol order), 0 mismatches
+action: 120 compared (56 returned true, 56 with a call), 0 mismatches
+action_gate: 34 compared (34 changed state), 0 mismatches
+action_staple: 105 compared (105 with calls, bases left stapled 57), 0 mismatches
+action_destruct: 10 compared (12 units destroyed by the DLL), 0 mismatches
+action_sat_attack: 840 compared (690 with calls), 0 mismatches
+action_build: 36 compared (36 bases founded, 0 in another faction's territory, 18 with calls), 0 mismatches
+action_arty: 258 compared (251 with calls; the DLL fought 0 times and shelled 66 empty tiles), 0 mismatches
+action_go_to: 375 compared (55 orders ended after a move, 20 waypoints shifted, 0 units ended their turn, 80 network calls, 5 with four waypoints), 0 mismatches
+action_go_to (the exe's Path::move): 28 compared (18 steps taken), 0 mismatches
+action_road_to: 810 compared (166 roads or tubes started, 24 fungus removals, 145 steps, 475 orders ended), 0 mismatches
+action_road_to (paths and network): 784 compared (52 with a notice, 392 network calls, 4 "remove fungus" messages), 0 mismatches
+action_road_to (the exe's Path::find): 36 compared (3 steps, 33 without a path), 0 mismatches
+  action_airdrop(53, 83, 35) case 4: the shipped notice names base 16 'Recursive Function', OpenSMACX's base 4 'Data DeCentral'
+  action_airdrop(53, 83, 35) case 6: the shipped notice names base 16 'Recursive Function', OpenSMACX's base 4 'Data DeCentral'
+  action_airdrop(53, 83, 35) case 7: the shipped notice names base 16 'Recursive Function', OpenSMACX's base 4 'Data DeCentral'
+  action_airdrop(53, 83, 35) case 13: the shipped notice names base 16 'Recursive Function', OpenSMACX's base 4 'Data DeCentral'
+  action_airdrop(53, 83, 35) case 17: the shipped notice names base 16 'Recursive Function', OpenSMACX's base 4 'Data DeCentral'
+action_airdrop: 528 compared (257 drops made; refused 73 out of range, 36 at sea, 4 onto units, 0 non-combat, 2 by air defenses; 4 captures, 189 flights shown, 14 pauses, 0 pods, 67 "air drop near" notices), 0 mismatches
+action_airdrop: all cases but 19: in 45 of the 58 notices the shipped exe (base_find() for faction 1) names another base; 0 found no base; case 19: 9 notices, 9 found no base; every no-base notice is blank, the exe's Bases[-1] read ('') was non-empty in 0; as loaded (cases 0 and 21): 1 notices, 0 name another base
+action_airdrop: Bases[-1].name_string at 0097CF1F starts 00 FF FF 00; faction without a base for case 19: 0
+action_airdrop (the shipped exe): 120 compared, 36 differ in the notice's base as predicted (9 of them in case 19), 0 otherwise
+TOTAL mismatches: 0 (750 ms)
+
+== sw_aki2152.SAV: OpenSMACX regression run: turn 52, 72 bases, 219 vehs, filter='unitmove unitact'
+survey: map 128x128, SP owners: SAC -1 LV -1 HGP -1 CI -1 VW -1 PTS -1
+survey: faction 1 Consciousness human diff 4 bases 6 units 13 away 1 | SE talent 0 police 0 econ 0 eff 2 | rules talent 0 drone 0 | staple 0 punish 0 brood 0 rec 0 holo 0 paradise 0 assim 0
+survey: faction 2 Pirates      AI diff 3 bases 8 units 30 away 3 | SE talent 0 police 0 econ 0 eff -1 | rules talent 0 drone 0 | staple 0 punish 0 brood 0 rec 0 holo 0 paradise 0 assim 0
+survey: faction 3 Drones       AI diff 3 bases 17 units 31 away 2 | SE talent 0 police 0 econ 0 eff 2 | rules talent 0 drone 0 | staple 0 punish 0 brood 0 rec 0 holo 0 paradise 0 assim 0
+survey: faction 4 Angels       AI diff 3 bases 9 units 26 away 1 | SE talent 0 police -1 econ 2 eff -2 | rules talent 0 drone 0 | staple 0 punish 0 brood 0 rec 0 holo 0 paradise 0 assim 0
+survey: faction 5 Planet Cult  AI diff 3 bases 14 units 34 away 3 | SE talent 0 police 0 econ 0 eff 0 | rules talent 0 drone 0 WORMPOLICE | staple 0 punish 0 brood 0 rec 0 holo 0 paradise 0 assim 0
+survey: faction 6 Morganites   AI diff 3 bases 8 units 17 away 0 | SE talent 0 police -5 econ 1 eff 0 | rules talent 0 drone 0 | staple 0 punish 0 brood 0 rec 2 holo 0 paradise 0 assim 0
+survey: faction 7 Gaians       AI diff 3 bases 10 units 29 away 4 | SE talent 0 police -1 econ 3 eff 6 | rules talent 0 drone 0 | staple 0 punish 0 brood 0 rec 0 holo 0 paradise 0 assim 0
+action_feature: 2 compared (1 with a notice), 0 mismatches
+action_patrol: 720 compared (600 changed state, 536 left a patrol order), 0 mismatches
+action: 300 compared (140 returned true, 140 with a call), 0 mismatches
+action_gate: 128 compared (128 changed state), 0 mismatches
+action_staple: 378 compared (378 with calls, bases left stapled 189), 0 mismatches
+action_destruct: 26 compared (37 units destroyed by the DLL), 0 mismatches
+action_sat_attack: 840 compared (690 with calls), 0 mismatches
+action_build: 48 compared (48 bases founded, 0 in another faction's territory, 30 with calls), 0 mismatches
+action_arty: 663 compared (628 with calls; the DLL fought 0 times and shelled 186 empty tiles), 0 mismatches
+action_go_to: 975 compared (143 orders ended after a move, 52 waypoints shifted, 4 units ended their turn, 208 network calls, 13 with four waypoints), 0 mismatches
+action_go_to (the exe's Path::move): 76 compared (56 steps taken), 0 mismatches
+action_road_to: 1620 compared (378 roads or tubes started, 64 fungus removals, 259 steps, 919 orders ended), 0 mismatches
+action_road_to (paths and network): 2352 compared (132 with a notice, 1176 network calls, 20 "remove fungus" messages), 0 mismatches
+action_road_to (the exe's Path::find): 96 compared (91 steps, 5 without a path), 0 mismatches
+  action_airdrop(159, 36, 40) case 4: the shipped notice names base 69 'Assignment Operation', OpenSMACX's base 28 'Alphaville'
+  action_airdrop(159, 36, 40) case 6: the shipped notice names base 69 'Assignment Operation', OpenSMACX's base 28 'Alphaville'
+  action_airdrop(159, 36, 40) case 7: the shipped notice names base 69 'Assignment Operation', OpenSMACX's base 28 'Alphaville'
+  action_airdrop(159, 36, 40) case 13: the shipped notice names base 69 'Assignment Operation', OpenSMACX's base 28 'Alphaville'
+  action_airdrop(159, 36, 40) case 17: the shipped notice names base 69 'Assignment Operation', OpenSMACX's base 28 'Alphaville'
+action_airdrop: 2002 compared (1032 drops made; refused 303 out of range, 68 at sea, 10 onto units, 14 non-combat, 4 by air defenses; 8 captures, 744 flights shown, 44 pauses, 20 pods, 244 "air drop near" notices), 0 mismatches
+action_airdrop: all cases but 19: in 80 of the 216 notices the shipped exe (base_find() for faction 1) names another base; 0 found no base; case 19: 28 notices, 28 found no base; every no-base notice is blank, the exe's Bases[-1] read ('') was non-empty in 0; as loaded (cases 0 and 21): 3 notices, 0 name another base
+action_airdrop: Bases[-1].name_string at 0097CF1F starts 00 FF FF 00; faction without a base for case 19: 0
+action_airdrop (the shipped exe): 455 compared, 78 differ in the notice's base as predicted (28 of them in case 19), 0 otherwise
+TOTAL mismatches: 0 (2094 ms)
+
+== sw_aki2213.SAV: OpenSMACX regression run: turn 113, 300 bases, 1151 vehs, filter='unitmove unitact'
+survey: map 128x128, SP owners: SAC -1 LV -1 HGP 8 CI -1 VW 26 PTS 22
+survey: faction 1 Consciousness human diff 4 bases 18 units 81 away 0 | SE talent 0 police 0 econ 0 eff 2 | rules talent 0 drone 0 | staple 0 punish 0 brood 0 rec 8 holo 0 paradise 0 assim 0
+survey: faction 2 Pirates      AI diff 3 bases 36 units 110 away 4 | SE talent 0 police 0 econ 2 eff -1 | rules talent 0 drone 0 | staple 0 punish 0 brood 0 rec 0 holo 0 paradise 0 assim 0
+survey: faction 3 Drones       AI diff 3 bases 59 units 249 away 1 | SE talent 0 police 0 econ 2 eff 0 | rules talent 0 drone 0 | staple 0 punish 0 brood 0 rec 37 holo 14 paradise 0 assim 0
+survey: faction 4 Angels       AI diff 3 bases 40 units 204 away 1 | SE talent 0 police -1 econ 2 eff 0 | rules talent 0 drone 0 | staple 0 punish 0 brood 0 rec 20 holo 1 paradise 0 assim 1
+survey: faction 5 Planet Cult  AI diff 3 bases 53 units 170 away 1 | SE talent 0 police 0 econ 2 eff 0 | rules talent 0 drone 0 WORMPOLICE | staple 0 punish 0 brood 0 rec 22 holo 13 paradise 0 assim 0
+survey: faction 6 Morganites   AI diff 3 bases 53 units 146 away 0 | SE talent 0 police -5 econ 1 eff 2 | rules talent 0 drone 0 | staple 0 punish 0 brood 0 rec 31 holo 8 paradise 0 assim 0
+survey: faction 7 Gaians       AI diff 3 bases 41 units 165 away 0 | SE talent 0 police -1 econ 3 eff 6 | rules talent 0 drone 0 | staple 0 punish 0 brood 0 rec 8 holo 6 paradise 0 assim 1
+action_feature: 2 compared (1 with a notice), 0 mismatches
+action_patrol: 3780 compared (3318 changed state, 2976 left a patrol order), 0 mismatches
+action: 1530 compared (714 returned true, 714 with a call), 0 mismatches
+action_gate: 632 compared (632 changed state), 0 mismatches
+action_staple: 1575 compared (1575 with calls, bases left stapled 789), 0 mismatches
+action_destruct: 136 compared (270 units destroyed by the DLL), 0 mismatches
+action_sat_attack: 840 compared (660 with calls), 0 mismatches
+action_build: 162 compared (162 bases founded, 12 in another faction's territory, 138 with calls), 0 mismatches
+action_arty: 3471 compared (3213 with calls; the DLL fought 9 times and shelled 838 empty tiles), 0 mismatches
+action_go_to: 5100 compared (748 orders ended after a move, 272 waypoints shifted, 28 units ended their turn, 1088 network calls, 68 with four waypoints), 0 mismatches
+action_go_to (the exe's Path::move): 406 compared (302 steps taken), 0 mismatches
+action_road_to: 7830 compared (1880 roads or tubes started, 352 fungus removals, 1194 steps, 4404 orders ended), 0 mismatches
+action_road_to (paths and network): 10976 compared (668 with a notice, 5488 network calls, 108 "remove fungus" messages), 0 mismatches
+action_road_to (the exe's Path::find): 480 compared (411 steps, 69 without a path), 0 mismatches
+  action_airdrop(53, 87, 83) case 7: the shipped notice names base 183 'Fungus Fane', OpenSMACX's base 122 'Serpent's Song'
+  action_airdrop(53, 87, 83) case 13: the shipped notice names base 183 'Fungus Fane', OpenSMACX's base 122 'Serpent's Song'
+  action_airdrop(53, 87, 83) case 17: the shipped notice names base 183 'Fungus Fane', OpenSMACX's base 122 'Serpent's Song'
+  action_airdrop(53, 88, 82) case 7: the shipped notice names base 183 'Fungus Fane', OpenSMACX's base 150 'Horror Heights'
+  action_airdrop(53, 88, 82) case 13: the shipped notice names base 183 'Fungus Fane', OpenSMACX's base 150 'Horror Heights'
+action_airdrop: 9020 compared (3980 drops made; refused 1042 out of range, 842 at sea, 90 onto units, 95 non-combat, 10 by air defenses; 34 captures, 2819 flights shown, 117 pauses, 23 pods, 911 "air drop near" notices), 0 mismatches
+action_airdrop: all cases but 19: in 578 of the 737 notices the shipped exe (base_find() for faction 1) names another base; 0 found no base; case 19: 174 notices, 174 found no base; every no-base notice is blank, the exe's Bases[-1] read ('') was non-empty in 0; as loaded (cases 0 and 21): 2 notices, 0 name another base
+action_airdrop: Bases[-1].name_string at 0097CF1F starts 00 FF FF 00; faction without a base for case 19: 0
+action_airdrop (the shipped exe): 2050 compared, 548 differ in the notice's base as predicted (174 of them in case 19), 0 otherwise
+TOTAL mismatches: 0 (14156 ms)
+
+== sw_aki2247.SAV: OpenSMACX regression run: turn 147, 300 bases, 1590 vehs, filter='unitmove unitact'
+survey: map 128x128, SP owners: SAC -1 LV -1 HGP 3 CI -1 VW 0 PTS 27
+survey: faction 1 Consciousness human diff 2 bases 26 units 217 away 0 | SE talent 0 police 0 econ 3 eff 6 | rules talent 0 drone 0 | staple 0 punish 0 brood 0 rec 17 holo 0 paradise 0 assim 0
+survey: faction 2 Pirates      AI diff 3 bases 50 units 186 away 2 | SE talent 0 police 0 econ 2 eff -1 | rules talent 0 drone 0 | staple 0 punish 0 brood 0 rec 24 holo 11 paradise 0 assim 0
+survey: faction 3 Drones       AI diff 3 bases 46 units 321 away 2 | SE talent 0 police 0 econ 2 eff 0 | rules talent 0 drone 0 | staple 0 punish 0 brood 0 rec 34 holo 29 paradise 0 assim 0
+survey: faction 4 Angels       AI diff 3 bases 55 units 236 away 2 | SE talent 0 police -1 econ 2 eff 0 | rules talent 0 drone 0 | staple 0 punish 0 brood 0 rec 30 holo 20 paradise 0 assim 0
+survey: faction 5 Planet Cult  AI diff 3 bases 42 units 214 away 12 | SE talent 0 police 2 econ 3 eff 0 | rules talent 0 drone 0 WORMPOLICE | staple 0 punish 0 brood 0 rec 12 holo 0 paradise 0 assim 0
+survey: faction 6 Morganites   AI diff 3 bases 37 units 202 away 4 | SE talent 0 police -5 econ 1 eff 3 | rules talent 0 drone 0 | staple 0 punish 0 brood 0 rec 24 holo 19 paradise 0 assim 0
+survey: faction 7 Gaians       AI diff 3 bases 44 units 185 away 2 | SE talent 0 police -1 econ 3 eff 6 | rules talent 0 drone 0 | staple 0 punish 0 brood 0 rec 15 holo 0 paradise 0 assim 0
+action_feature: 2 compared (1 with a notice), 0 mismatches
+action_patrol: 5220 compared (4398 changed state, 3880 left a patrol order), 0 mismatches
+action: 2100 compared (980 returned true, 980 with a call), 0 mismatches
+action_gate: 870 compared (870 changed state), 0 mismatches
+action_staple: 1575 compared (1575 with calls, bases left stapled 789), 0 mismatches
+action_destruct: 188 compared (388 units destroyed by the DLL), 0 mismatches
+action_sat_attack: 840 compared (670 with calls), 0 mismatches
+action_build: 168 compared (168 bases founded, 0 in another faction's territory, 123 with calls), 0 mismatches
+action_arty: 4767 compared (4398 with calls; the DLL fought 17 times and shelled 1034 empty tiles), 0 mismatches
+action_go_to: 7050 compared (1041 orders ended after a move, 376 waypoints shifted, 70 units ended their turn, 1504 network calls, 94 with four waypoints), 0 mismatches
+action_go_to (the exe's Path::move): 556 compared (398 steps taken), 0 mismatches
+action_road_to: 10530 compared (2538 roads or tubes started, 404 fungus removals, 1609 steps, 5979 orders ended), 0 mismatches
+action_road_to (paths and network): 15288 compared (1092 with a notice, 7644 network calls, 148 "remove fungus" messages), 0 mismatches
+action_road_to (the exe's Path::find): 660 compared (465 steps, 195 without a path), 0 mismatches
+  action_airdrop(53, 104, 34) case 7: the shipped notice names base 250 'Morgan Construction', OpenSMACX's base 253 'Morgan Refinery'
+  action_airdrop(53, 104, 34) case 13: the shipped notice names base 250 'Morgan Construction', OpenSMACX's base 253 'Morgan Refinery'
+  action_airdrop(53, 104, 34) case 17: the shipped notice names base 250 'Morgan Construction', OpenSMACX's base 253 'Morgan Refinery'
+  action_airdrop(53, 105, 33) case 7: the shipped notice names base 250 'Morgan Construction', OpenSMACX's base 253 'Morgan Refinery'
+  action_airdrop(53, 105, 33) case 17: the shipped notice names base 250 'Morgan Construction', OpenSMACX's base 253 'Morgan Refinery'
+action_airdrop: 12056 compared (4677 drops made; refused 1241 out of range, 1422 at sea, 184 onto units, 233 non-combat, 22 by air defenses; 28 captures, 3321 flights shown, 111 pauses, 33 pods, 1058 "air drop near" notices), 0 mismatches
+action_airdrop: all cases but 19: in 575 of the 836 notices the shipped exe (base_find() for faction 1) names another base; 0 found no base; case 19: 222 notices, 222 found no base; every no-base notice is blank, the exe's Bases[-1] read ('') was non-empty in 0; as loaded (cases 0 and 21): 4 notices, 0 name another base
+action_airdrop: Bases[-1].name_string at 0097CF1F starts 00 FF FF 00; faction without a base for case 19: 0
+action_airdrop (the shipped exe): 2740 compared, 610 differ in the notice's base as predicted (222 of them in case 19), 0 otherwise
+TOTAL mismatches: 0 (17922 ms)
+
+== sw_artifacts.SAV: OpenSMACX regression run: turn 74, 142 bases, 384 vehs, filter='unitmove unitact'
+survey: map 160x160, SP owners: SAC -1 LV -1 HGP -1 CI -1 VW 12 PTS -1
+survey: faction 1 Consciousness AI diff 3 bases 17 units 42 away 0 | SE talent 0 police 0 econ 2 eff 0 | rules talent 0 drone 0 | staple 0 punish 0 brood 0 rec 0 holo 0 paradise 0 assim 0
+survey: faction 2 Peacekeepers AI diff 3 bases 18 units 62 away 0 | SE talent 0 police 0 econ 2 eff -3 | rules talent 4 drone 0 | staple 0 punish 0 brood 0 rec 0 holo 0 paradise 0 assim 0
+survey: faction 3 Drones       AI diff 3 bases 24 units 48 away 0 | SE talent 0 police 0 econ 0 eff 2 | rules talent 0 drone 0 | staple 0 punish 0 brood 0 rec 0 holo 0 paradise 0 assim 0
+survey: faction 4 Angels       AI diff 3 bases 21 units 46 away 0 | SE talent 0 police -1 econ 2 eff 0 | rules talent 0 drone 0 | staple 0 punish 0 brood 0 rec 0 holo 0 paradise 0 assim 0
+survey: faction 5 Planet Cult  AI diff 3 bases 19 units 48 away 2 | SE talent 0 police 0 econ 0 eff 0 | rules talent 0 drone 0 WORMPOLICE | staple 0 punish 0 brood 0 rec 0 holo 0 paradise 0 assim 0
+survey: faction 6 Morganites   human diff 3 bases 23 units 46 away 0 | SE talent 0 police 0 econ 0 eff 0 | rules talent 0 drone 0 | staple 0 punish 0 brood 0 rec 0 holo 0 paradise 0 assim 0
+survey: faction 7 Gaians       AI diff 3 bases 20 units 51 away 0 | SE talent 0 police -1 econ 0 eff 4 | rules talent 0 drone 0 | staple 0 punish 0 brood 0 rec 0 holo 0 paradise 0 assim 0
+action_feature: 2 compared (1 with a notice), 0 mismatches
+action_patrol: 1260 compared (1010 changed state, 852 left a patrol order), 0 mismatches
+action: 510 compared (238 returned true, 238 with a call), 0 mismatches
+action_gate: 220 compared (220 changed state), 0 mismatches
+action_staple: 756 compared (756 with calls, bases left stapled 378), 0 mismatches
+action_destruct: 46 compared (62 units destroyed by the DLL), 0 mismatches
+action_sat_attack: 840 compared (690 with calls), 0 mismatches
+action_build: 48 compared (48 bases founded, 0 in another faction's territory, 27 with calls), 0 mismatches
+action_arty: 1143 compared (1075 with calls; the DLL fought 10 times and shelled 303 empty tiles), 0 mismatches
+action_go_to: 1725 compared (253 orders ended after a move, 92 waypoints shifted, 20 units ended their turn, 368 network calls, 23 with four waypoints), 0 mismatches
+action_go_to (the exe's Path::move): 132 compared (98 steps taken), 0 mismatches
+action_road_to: 2700 compared (626 roads or tubes started, 168 fungus removals, 403 steps, 1503 orders ended), 0 mismatches
+action_road_to (paths and network): 3920 compared (368 with a notice, 1960 network calls, 32 "remove fungus" messages), 0 mismatches
+action_road_to (the exe's Path::find): 168 compared (69 steps, 99 without a path), 0 mismatches
+  action_airdrop(106, 87, 121) case 7: the shipped notice names base 94 'Chi Enclave', OpenSMACX's base 131 'Morgan Interstellar'
+  action_airdrop(106, 87, 121) case 13: the shipped notice names base 94 'Chi Enclave', OpenSMACX's base 131 'Morgan Interstellar'
+  action_airdrop(106, 87, 121) case 17: the shipped notice names base 94 'Chi Enclave', OpenSMACX's base 131 'Morgan Interstellar'
+  action_airdrop(106, 88, 120) case 7: the shipped notice names base 94 'Chi Enclave', OpenSMACX's base 131 'Morgan Interstellar'
+  action_airdrop(106, 88, 120) case 13: the shipped notice names base 94 'Chi Enclave', OpenSMACX's base 131 'Morgan Interstellar'
+action_airdrop: 3080 compared (1393 drops made; refused 269 out of range, 393 at sea, 24 onto units, 24 non-combat, 0 by air defenses; 12 captures, 1042 flights shown, 38 pauses, 18 pods, 332 "air drop near" notices), 0 mismatches
+action_airdrop: all cases but 19: in 162 of the 273 notices the shipped exe (base_find() for faction 1) names another base; 0 found no base; case 19: 59 notices, 59 found no base; every no-base notice is blank, the exe's Bases[-1] read ('') was non-empty in 0; as loaded (cases 0 and 21): 0 notices, 0 name another base
+action_airdrop: Bases[-1].name_string at 0097CF1F starts 00 FF FF 00; faction without a base for case 19: 0
+action_airdrop (the shipped exe): 700 compared, 162 differ in the notice's base as predicted (59 of them in case 19), 0 otherwise
+TOTAL mismatches: 0 (4797 ms)
+
+== sw_bugged.SAV: OpenSMACX regression run: turn 272, 291 bases, 1637 vehs, filter='unitmove unitact'
+survey: map 128x128, SP owners: SAC -1 LV 0 HGP 21 CI 0 VW 37 PTS 17
+survey: faction 1 Consciousness human diff 2 bases 28 units 271 away 2 | SE talent 0 police 1 econ 3 eff 6 | rules talent 0 drone 0 | staple 0 punish 0 brood 27 rec 27 holo 0 paradise 0 assim 4
+survey: faction 2 Pirates      AI diff 3 bases 76 units 389 away 26 | SE talent 0 police 0 econ 0 eff -1 | rules talent 0 drone 0 | staple 0 punish 0 brood 0 rec 55 holo 15 paradise 0 assim 8
+survey: faction 3 Drones       AI diff 3 bases 63 units 411 away 12 | SE talent 0 police 0 econ 0 eff 2 | rules talent 0 drone 0 | staple 0 punish 0 brood 0 rec 41 holo 13 paradise 0 assim 10
+survey: faction 4 Angels       AI diff 3 bases 51 units 315 away 13 | SE talent 0 police -1 econ 3 eff 5 | rules talent 0 drone 0 | staple 0 punish 0 brood 0 rec 32 holo 14 paradise 0 assim 5
+survey: faction 6 Caretakers   AI diff 3 bases 21 units 39 away 0 | SE talent 0 police 0 econ 2 eff -2 | rules talent 0 drone 0 | staple 0 punish 0 brood 0 rec 10 holo 6 paradise 0 assim 0
+survey: faction 7 Usurpers     AI diff 3 bases 52 units 197 away 2 | SE talent 0 police 0 econ 2 eff -2 | rules talent 0 drone 0 | staple 0 punish 0 brood 0 rec 40 holo 4 paradise 0 assim 5
+action_feature: 2 compared (1 with a notice), 0 mismatches
+action_patrol: 5364 compared (4262 changed state, 3788 left a patrol order), 0 mismatches
+action: 2160 compared (1008 returned true, 1008 with a call), 0 mismatches
+action_gate: 896 compared (896 changed state), 0 mismatches
+action_staple: 1533 compared (1533 with calls, bases left stapled 768), 0 mismatches
+action_destruct: 194 compared (483 units destroyed by the DLL), 0 mismatches
+action_sat_attack: 840 compared (560 with calls), 0 mismatches
+action_build: 150 compared (150 bases founded, 24 in another faction's territory, 145 with calls), 0 mismatches
+action_arty: 4863 compared (4563 with calls; the DLL fought 18 times and shelled 951 empty tiles), 0 mismatches
+action_go_to: 7275 compared (1067 orders ended after a move, 388 waypoints shifted, 68 units ended their turn, 1552 network calls, 97 with four waypoints), 0 mismatches
+action_go_to (the exe's Path::move): 572 compared (408 steps taken), 0 mismatches
+action_road_to: 10800 compared (2664 roads or tubes started, 312 fungus removals, 1572 steps, 6252 orders ended), 0 mismatches
+action_road_to (paths and network): 15680 compared (1292 with a notice, 7840 network calls, 156 "remove fungus" messages), 0 mismatches
+action_road_to (the exe's Path::find): 684 compared (450 steps, 234 without a path), 0 mismatches
+  action_airdrop(265, 38, 88) case 4: the shipped notice names base 81 'Hall of Industry', OpenSMACX's base 55 'Citizen's Forge'
+  action_airdrop(265, 38, 88) case 6: the shipped notice names base 81 'Hall of Industry', OpenSMACX's base 55 'Citizen's Forge'
+  action_airdrop(265, 38, 88) case 7: the shipped notice names base 81 'Hall of Industry', OpenSMACX's base 55 'Citizen's Forge'
+  action_airdrop(265, 38, 88) case 13: the shipped notice names base 81 'Hall of Industry', OpenSMACX's base 55 'Citizen's Forge'
+  action_airdrop(265, 38, 88) case 17: the shipped notice names base 81 'Hall of Industry', OpenSMACX's base 55 'Citizen's Forge'
+action_airdrop: 12804 compared (4879 drops made; refused 987 out of range, 2005 at sea, 152 onto units, 188 non-combat, 44 by air defenses; 43 captures, 3544 flights shown, 149 pauses, 20 pods, 1204 "air drop near" notices), 0 mismatches
+action_airdrop: all cases but 19: in 122 of the 962 notices the shipped exe (base_find() for faction 1) names another base; 0 found no base; case 19: 242 notices, 242 found no base; every no-base notice is blank, the exe's Bases[-1] read ('') was non-empty in 0; as loaded (cases 0 and 21): 5 notices, 0 name another base
+action_airdrop: Bases[-1].name_string at 0097CF1F starts 00 FF FF 00; faction without a base for case 19: 5
+action_airdrop (the shipped exe): 2910 compared, 317 differ in the notice's base as predicted (242 of them in case 19), 0 otherwise
+TOTAL mismatches: 0 (18391 ms)
+
+== sw_cheese.SAV: OpenSMACX regression run: turn 71, 131 bases, 352 vehs, filter='unitmove unitact'
+survey: map 160x160, SP owners: SAC -1 LV -1 HGP -1 CI -1 VW 12 PTS -1
+survey: faction 1 Consciousness AI diff 3 bases 17 units 31 away 0 | SE talent 0 police 0 econ 2 eff 0 | rules talent 0 drone 0 | staple 0 punish 0 brood 0 rec 0 holo 0 paradise 0 assim 0
+survey: faction 2 Peacekeepers AI diff 3 bases 17 units 59 away 0 | SE talent 0 police 0 econ 2 eff -3 | rules talent 4 drone 0 | staple 0 punish 0 brood 0 rec 0 holo 0 paradise 0 assim 0
+survey: faction 3 Drones       AI diff 3 bases 20 units 51 away 0 | SE talent 0 police 0 econ 0 eff 2 | rules talent 0 drone 0 | staple 0 punish 0 brood 0 rec 0 holo 0 paradise 0 assim 0
+survey: faction 4 Angels       AI diff 3 bases 19 units 44 away 0 | SE talent 0 police -1 econ 2 eff 0 | rules talent 0 drone 0 | staple 0 punish 0 brood 0 rec 0 holo 0 paradise 0 assim 0
+survey: faction 5 Planet Cult  AI diff 3 bases 19 units 42 away 2 | SE talent 0 police 0 econ 0 eff 0 | rules talent 0 drone 0 WORMPOLICE | staple 0 punish 0 brood 0 rec 0 holo 0 paradise 0 assim 0
+survey: faction 6 Morganites   human diff 3 bases 20 units 40 away 0 | SE talent 0 police 0 econ 0 eff 0 | rules talent 0 drone 0 | staple 0 punish 0 brood 0 rec 0 holo 0 paradise 0 assim 0
+survey: faction 7 Gaians       AI diff 3 bases 19 units 46 away 0 | SE talent 0 police -1 econ 0 eff 4 | rules talent 0 drone 0 | staple 0 punish 0 brood 0 rec 0 holo 0 paradise 0 assim 0
+action_feature: 2 compared (1 with a notice), 0 mismatches
+action_patrol: 1152 compared (940 changed state, 808 left a patrol order), 0 mismatches
+action: 480 compared (224 returned true, 224 with a call), 0 mismatches
+action_gate: 200 compared (200 changed state), 0 mismatches
+action_staple: 693 compared (693 with calls, bases left stapled 351), 0 mismatches
+action_destruct: 42 compared (61 units destroyed by the DLL), 0 mismatches
+action_sat_attack: 840 compared (690 with calls), 0 mismatches
+action_build: 84 compared (84 bases founded, 0 in another faction's territory, 52 with calls), 0 mismatches
+action_arty: 1065 compared (1013 with calls; the DLL fought 5 times and shelled 298 empty tiles), 0 mismatches
+action_go_to: 1575 compared (231 orders ended after a move, 84 waypoints shifted, 12 units ended their turn, 336 network calls, 21 with four waypoints), 0 mismatches
+action_go_to (the exe's Path::move): 120 compared (82 steps taken), 0 mismatches
+action_road_to: 2430 compared (552 roads or tubes started, 144 fungus removals, 372 steps, 1362 orders ended), 0 mismatches
+action_road_to (paths and network): 3528 compared (288 with a notice, 1764 network calls, 32 "remove fungus" messages), 0 mismatches
+action_road_to (the exe's Path::find): 156 compared (60 steps, 96 without a path), 0 mismatches
+  action_airdrop(106, 26, 90) case 4: the shipped notice names base 94 'Chi Enclave', OpenSMACX's base 29 'Morgan Polymers'
+  action_airdrop(106, 26, 90) case 6: the shipped notice names base 94 'Chi Enclave', OpenSMACX's base 29 'Morgan Polymers'
+  action_airdrop(106, 26, 90) case 7: the shipped notice names base 94 'Chi Enclave', OpenSMACX's base 29 'Morgan Polymers'
+  action_airdrop(106, 26, 90) case 13: the shipped notice names base 94 'Chi Enclave', OpenSMACX's base 29 'Morgan Polymers'
+  action_airdrop(106, 26, 90) case 17: the shipped notice names base 94 'Chi Enclave', OpenSMACX's base 29 'Morgan Polymers'
+action_airdrop: 2662 compared (1211 drops made; refused 295 out of range, 258 at sea, 36 onto units, 22 non-combat, 0 by air defenses; 15 captures, 861 flights shown, 46 pauses, 20 pods, 292 "air drop near" notices), 0 mismatches
+action_airdrop: all cases but 19: in 187 of the 248 notices the shipped exe (base_find() for faction 1) names another base; 0 found no base; case 19: 44 notices, 44 found no base; every no-base notice is blank, the exe's Bases[-1] read ('') was non-empty in 0; as loaded (cases 0 and 21): 1 notices, 1 name another base
+action_airdrop: Bases[-1].name_string at 0097CF1F starts 00 FF FF 00; faction without a base for case 19: 0
+action_airdrop (the shipped exe): 605 compared, 164 differ in the notice's base as predicted (44 of them in case 19), 0 otherwise
+TOTAL mismatches: 0 (4484 ms)
+
+== sw_morgan.SAV: OpenSMACX regression run: turn 48, 59 bases, 173 vehs, filter='unitmove unitact'
+survey: map 160x160, SP owners: SAC -1 LV -1 HGP -1 CI -1 VW -1 PTS -1
+survey: faction 1 Consciousness AI diff 3 bases 7 units 14 away 3 | SE talent 0 police 0 econ 0 eff 2 | rules talent 0 drone 0 | staple 0 punish 0 brood 0 rec 0 holo 0 paradise 0 assim 0
+survey: faction 2 Peacekeepers AI diff 3 bases 8 units 24 away 1 | SE talent 0 police 0 econ 2 eff -3 | rules talent 4 drone 0 | staple 0 punish 0 brood 0 rec 0 holo 0 paradise 0 assim 0
+survey: faction 3 Drones       AI diff 3 bases 9 units 21 away 0 | SE talent 0 police 0 econ 0 eff 0 | rules talent 0 drone 0 | staple 0 punish 0 brood 0 rec 0 holo 0 paradise 0 assim 0
+survey: faction 4 Angels       AI diff 3 bases 8 units 19 away 0 | SE talent 0 police -1 econ 2 eff -2 | rules talent 0 drone 0 | staple 0 punish 0 brood 0 rec 0 holo 0 paradise 0 assim 0
+survey: faction 5 Planet Cult  AI diff 3 bases 9 units 18 away 2 | SE talent 0 police 0 econ 0 eff 0 | rules talent 0 drone 0 WORMPOLICE | staple 0 punish 0 brood 0 rec 0 holo 0 paradise 0 assim 0
+survey: faction 6 Morganites   human diff 3 bases 9 units 18 away 1 | SE talent 0 police 0 econ 0 eff 0 | rules talent 0 drone 0 | staple 0 punish 0 brood 0 rec 0 holo 0 paradise 0 assim 0
+survey: faction 7 Gaians       AI diff 3 bases 9 units 20 away 0 | SE talent 0 police -1 econ 0 eff 4 | rules talent 0 drone 0 | staple 0 punish 0 brood 0 rec 0 holo 0 paradise 0 assim 0
+action_feature: 2 compared (1 with a notice), 0 mismatches
+action_patrol: 576 compared (486 changed state, 444 left a patrol order), 0 mismatches
+action: 240 compared (112 returned true, 112 with a call), 0 mismatches
+action_gate: 90 compared (90 changed state), 0 mismatches
+action_staple: 315 compared (315 with calls, bases left stapled 162), 0 mismatches
+action_destruct: 22 compared (28 units destroyed by the DLL), 0 mismatches
+action_sat_attack: 840 compared (690 with calls), 0 mismatches
+action_build: 42 compared (42 bases founded, 0 in another faction's territory, 20 with calls), 0 mismatches
+action_arty: 531 compared (509 with calls; the DLL fought 3 times and shelled 139 empty tiles), 0 mismatches
+action_go_to: 825 compared (121 orders ended after a move, 44 waypoints shifted, 8 units ended their turn, 176 network calls, 11 with four waypoints), 0 mismatches
+action_go_to (the exe's Path::move): 60 compared (44 steps taken), 0 mismatches
+action_road_to: 1350 compared (328 roads or tubes started, 80 fungus removals, 196 steps, 746 orders ended), 0 mismatches
+action_road_to (paths and network): 1960 compared (172 with a notice, 980 network calls, 12 "remove fungus" messages), 0 mismatches
+action_road_to (the exe's Path::find): 72 compared (24 steps, 48 without a path), 0 mismatches
+  action_airdrop(53, 0, 126) case 4: the shipped notice names base 25 'Xi Boulevard', OpenSMACX's base 56 'Prophets of Chiron'
+  action_airdrop(53, 0, 126) case 6: the shipped notice names base 25 'Xi Boulevard', OpenSMACX's base 56 'Prophets of Chiron'
+  action_airdrop(53, 0, 126) case 7: the shipped notice names base 25 'Xi Boulevard', OpenSMACX's base 56 'Prophets of Chiron'
+  action_airdrop(53, 0, 126) case 13: the shipped notice names base 25 'Xi Boulevard', OpenSMACX's base 56 'Prophets of Chiron'
+  action_airdrop(53, 0, 126) case 17: the shipped notice names base 25 'Xi Boulevard', OpenSMACX's base 56 'Prophets of Chiron'
+action_airdrop: 1430 compared (645 drops made; refused 126 out of range, 187 at sea, 8 onto units, 5 non-combat, 0 by air defenses; 4 captures, 493 flights shown, 20 pauses, 20 pods, 162 "air drop near" notices), 0 mismatches
+action_airdrop: all cases but 19: in 121 of the 132 notices the shipped exe (base_find() for faction 1) names another base; 0 found no base; case 19: 30 notices, 30 found no base; every no-base notice is blank, the exe's Bases[-1] read ('') was non-empty in 0; as loaded (cases 0 and 21): 0 notices, 0 name another base
+action_airdrop: Bases[-1].name_string at 0097CF1F starts 00 FF FF 00; faction without a base for case 19: 0
+action_airdrop (the shipped exe): 325 compared, 106 differ in the notice's base as predicted (30 of them in case 19), 0 otherwise
+TOTAL mismatches: 0 (2234 ms)
+
+== sw_quake.SAV: OpenSMACX regression run: turn 53, 71 bases, 204 vehs, filter='unitmove unitact'
+survey: map 160x160, SP owners: SAC -1 LV -1 HGP -1 CI -1 VW -1 PTS -1
+survey: faction 1 Consciousness AI diff 3 bases 8 units 17 away 2 | SE talent 0 police 0 econ 2 eff 0 | rules talent 0 drone 0 | staple 0 punish 0 brood 0 rec 0 holo 0 paradise 0 assim 0
+survey: faction 2 Peacekeepers AI diff 3 bases 9 units 29 away 1 | SE talent 0 police 0 econ 2 eff -3 | rules talent 4 drone 0 | staple 0 punish 0 brood 0 rec 0 holo 0 paradise 0 assim 0
+survey: faction 3 Drones       AI diff 3 bases 10 units 26 away 0 | SE talent 0 police 0 econ 0 eff 0 | rules talent 0 drone 0 | staple 0 punish 0 brood 0 rec 0 holo 0 paradise 0 assim 0
+survey: faction 4 Angels       AI diff 3 bases 11 units 26 away 0 | SE talent 0 police -1 econ 2 eff -2 | rules talent 0 drone 0 | staple 0 punish 0 brood 0 rec 0 holo 0 paradise 0 assim 0
+survey: faction 5 Planet Cult  AI diff 3 bases 12 units 21 away 2 | SE talent 0 police 0 econ 0 eff 0 | rules talent 0 drone 0 WORMPOLICE | staple 0 punish 0 brood 0 rec 0 holo 0 paradise 0 assim 0
+survey: faction 6 Morganites   human diff 3 bases 11 units 25 away 1 | SE talent 0 police 0 econ 0 eff 0 | rules talent 0 drone 0 | staple 0 punish 0 brood 0 rec 0 holo 0 paradise 0 assim 0
+survey: faction 7 Gaians       AI diff 3 bases 10 units 24 away 0 | SE talent 0 police -1 econ 0 eff 4 | rules talent 0 drone 0 | staple 0 punish 0 brood 0 rec 0 holo 0 paradise 0 assim 0
+action_feature: 2 compared (1 with a notice), 0 mismatches
+action_patrol: 684 compared (564 changed state, 480 left a patrol order), 0 mismatches
+action: 270 compared (126 returned true, 126 with a call), 0 mismatches
+action_gate: 126 compared (126 changed state), 0 mismatches
+action_staple: 378 compared (378 with calls, bases left stapled 189), 0 mismatches
+action_destruct: 24 compared (32 units destroyed by the DLL), 0 mismatches
+action_sat_attack: 840 compared (690 with calls), 0 mismatches
+action_build: 30 compared (30 bases founded, 0 in another faction's territory, 11 with calls), 0 mismatches
+action_arty: 609 compared (577 with calls; the DLL fought 6 times and shelled 204 empty tiles), 0 mismatches
+action_go_to: 900 compared (132 orders ended after a move, 48 waypoints shifted, 8 units ended their turn, 192 network calls, 12 with four waypoints), 0 mismatches
+action_go_to (the exe's Path::move): 68 compared (48 steps taken), 0 mismatches
+action_road_to: 1350 compared (300 roads or tubes started, 72 fungus removals, 214 steps, 764 orders ended), 0 mismatches
+action_road_to (paths and network): 1960 compared (160 with a notice, 980 network calls, 16 "remove fungus" messages), 0 mismatches
+action_road_to (the exe's Path::find): 84 compared (21 steps, 63 without a path), 0 mismatches
+  action_airdrop(53, 0, 126) case 4: the shipped notice names base 25 'Xi Boulevard', OpenSMACX's base 56 'Prophets of Chiron'
+  action_airdrop(53, 0, 126) case 6: the shipped notice names base 25 'Xi Boulevard', OpenSMACX's base 56 'Prophets of Chiron'
+  action_airdrop(53, 0, 126) case 7: the shipped notice names base 25 'Xi Boulevard', OpenSMACX's base 56 'Prophets of Chiron'
+  action_airdrop(53, 0, 126) case 13: the shipped notice names base 25 'Xi Boulevard', OpenSMACX's base 56 'Prophets of Chiron'
+  action_airdrop(53, 0, 126) case 17: the shipped notice names base 25 'Xi Boulevard', OpenSMACX's base 56 'Prophets of Chiron'
+action_airdrop: 1430 compared (678 drops made; refused 122 out of range, 141 at sea, 22 onto units, 22 non-combat, 0 by air defenses; 6 captures, 497 flights shown, 28 pauses, 20 pods, 178 "air drop near" notices), 0 mismatches
+action_airdrop: all cases but 19: in 50 of the 148 notices the shipped exe (base_find() for faction 1) names another base; 0 found no base; case 19: 30 notices, 30 found no base; every no-base notice is blank, the exe's Bases[-1] read ('') was non-empty in 0; as loaded (cases 0 and 21): 0 notices, 0 name another base
+action_airdrop: Bases[-1].name_string at 0097CF1F starts 00 FF FF 00; faction without a base for case 19: 0
+action_airdrop (the shipped exe): 325 compared, 60 differ in the notice's base as predicted (30 of them in case 19), 0 otherwise
+TOTAL mismatches: 0 (2297 ms)
+
+== sw_starcraft.SAV: OpenSMACX regression run: turn 75, 146 bases, 391 vehs, filter='unitmove unitact'
+survey: map 160x160, SP owners: SAC -1 LV -1 HGP 54 CI -1 VW 12 PTS -1
+survey: faction 1 Consciousness AI diff 3 bases 17 units 43 away 0 | SE talent 0 police 0 econ 2 eff 0 | rules talent 0 drone 0 | staple 0 punish 0 brood 0 rec 0 holo 0 paradise 0 assim 0
+survey: faction 2 Peacekeepers AI diff 3 bases 18 units 63 away 0 | SE talent 0 police 0 econ 2 eff -3 | rules talent 4 drone 0 | staple 0 punish 0 brood 0 rec 0 holo 0 paradise 0 assim 0
+survey: faction 3 Drones       AI diff 3 bases 24 units 48 away 0 | SE talent 0 police 0 econ 0 eff 2 | rules talent 0 drone 0 | staple 0 punish 0 brood 0 rec 0 holo 0 paradise 0 assim 0
+survey: faction 4 Angels       AI diff 3 bases 22 units 47 away 0 | SE talent 0 police -1 econ 2 eff 0 | rules talent 0 drone 0 | staple 0 punish 0 brood 0 rec 0 holo 0 paradise 0 assim 0
+survey: faction 5 Planet Cult  AI diff 3 bases 19 units 50 away 2 | SE talent 0 police 0 econ 0 eff 0 | rules talent 0 drone 0 WORMPOLICE | staple 0 punish 0 brood 0 rec 0 holo 0 paradise 0 assim 0
+survey: faction 6 Morganites   human diff 3 bases 25 units 48 away 0 | SE talent 0 police 0 econ 0 eff 0 | rules talent 0 drone 0 | staple 0 punish 0 brood 0 rec 0 holo 0 paradise 0 assim 0
+survey: faction 7 Gaians       AI diff 3 bases 21 units 51 away 0 | SE talent 0 police -1 econ 0 eff 4 | rules talent 0 drone 0 | staple 0 punish 0 brood 0 rec 0 holo 0 paradise 0 assim 0
+action_feature: 2 compared (1 with a notice), 0 mismatches
+action_patrol: 1296 compared (1064 changed state, 924 left a patrol order), 0 mismatches
+action: 510 compared (238 returned true, 238 with a call), 0 mismatches
+action_gate: 216 compared (216 changed state), 0 mismatches
+action_staple: 777 compared (777 with calls, bases left stapled 393), 0 mismatches
+action_destruct: 46 compared (64 units destroyed by the DLL), 0 mismatches
+action_sat_attack: 840 compared (690 with calls), 0 mismatches
+action_build: 108 compared (108 bases founded, 0 in another faction's territory, 56 with calls), 0 mismatches
+action_arty: 1182 compared (1120 with calls; the DLL fought 7 times and shelled 260 empty tiles), 0 mismatches
+action_go_to: 1725 compared (253 orders ended after a move, 92 waypoints shifted, 8 units ended their turn, 368 network calls, 23 with four waypoints), 0 mismatches
+action_go_to (the exe's Path::move): 132 compared (98 steps taken), 0 mismatches
+action_road_to: 2700 compared (604 roads or tubes started, 136 fungus removals, 420 steps, 1540 orders ended), 0 mismatches
+action_road_to (paths and network): 3920 compared (356 with a notice, 1960 network calls, 36 "remove fungus" messages), 0 mismatches
+action_road_to (the exe's Path::find): 168 compared (69 steps, 99 without a path), 0 mismatches
+  action_airdrop(53, 31, 79) case 4: the shipped notice names base 94 'Chi Enclave', OpenSMACX's base 1 'U.N. Headquarters'
+  action_airdrop(53, 31, 79) case 6: the shipped notice names base 94 'Chi Enclave', OpenSMACX's base 1 'U.N. Headquarters'
+  action_airdrop(53, 31, 79) case 7: the shipped notice names base 94 'Chi Enclave', OpenSMACX's base 1 'U.N. Headquarters'
+  action_airdrop(53, 31, 79) case 13: the shipped notice names base 94 'Chi Enclave', OpenSMACX's base 1 'U.N. Headquarters'
+  action_airdrop(53, 31, 79) case 17: the shipped notice names base 94 'Chi Enclave', OpenSMACX's base 1 'U.N. Headquarters'
+action_airdrop: 3080 compared (1159 drops made; refused 316 out of range, 476 at sea, 26 onto units, 6 non-combat, 0 by air defenses; 14 captures, 840 flights shown, 46 pauses, 25 pods, 291 "air drop near" notices), 0 mismatches
+action_airdrop: all cases but 19: in 197 of the 244 notices the shipped exe (base_find() for faction 1) names another base; 0 found no base; case 19: 47 notices, 47 found no base; every no-base notice is blank, the exe's Bases[-1] read ('') was non-empty in 0; as loaded (cases 0 and 21): 1 notices, 1 name another base
+action_airdrop: Bases[-1].name_string at 0097CF1F starts 00 FF FF 00; faction without a base for case 19: 0
+action_airdrop (the shipped exe): 700 compared, 169 differ in the notice's base as predicted (47 of them in case 19), 0 otherwise
+TOTAL mismatches: 0 (5266 ms)
+
+== sw_steam1.SAV: OpenSMACX regression run: turn 32, 20 bases, 81 vehs, filter='unitmove unitact'
+survey: map 128x128, SP owners: SAC -1 LV -1 HGP -1 CI -1 VW -1 PTS -1
+survey: faction 1 Consciousness human diff 2 bases 3 units 5 away 1 | SE talent 0 police 0 econ 0 eff 2 | rules talent 0 drone 0 | staple 0 punish 0 brood 0 rec 0 holo 0 paradise 0 assim 0
+survey: faction 2 Pirates      AI diff 3 bases 4 units 6 away 1 | SE talent 0 police 0 econ 0 eff -1 | rules talent 0 drone 0 | staple 0 punish 0 brood 0 rec 0 holo 0 paradise 0 assim 0
+survey: faction 3 Drones       AI diff 3 bases 3 units 7 away 0 | SE talent 0 police 0 econ 0 eff 0 | rules talent 0 drone 0 | staple 0 punish 0 brood 0 rec 1 holo 0 paradise 0 assim 0
+survey: faction 4 Angels       AI diff 3 bases 4 units 6 away 1 | SE talent 0 police -1 econ 2 eff -2 | rules talent 0 drone 0 | staple 0 punish 0 brood 0 rec 0 holo 0 paradise 0 assim 0
+survey: faction 5 Planet Cult  AI diff 3 bases 2 units 5 away 1 | SE talent 0 police 0 econ 0 eff 0 | rules talent 0 drone 0 WORMPOLICE | staple 0 punish 0 brood 0 rec 0 holo 0 paradise 0 assim 0
+survey: faction 6 University   AI diff 3 bases 3 units 5 away 0 | SE talent 0 police 0 econ 2 eff 0 | rules talent 0 drone 4 | staple 0 punish 0 brood 0 rec 0 holo 0 paradise 0 assim 0
+survey: faction 7 Morganites   AI diff 3 bases 1 units 4 away 1 | SE talent 0 police -5 econ 1 eff 0 | rules talent 0 drone 0 | staple 0 punish 0 brood 0 rec 0 holo 0 paradise 0 assim 0
+action_feature: 2 compared (1 with a notice), 0 mismatches
+action_patrol: 288 compared (232 changed state, 176 left a patrol order), 0 mismatches
+action: 120 compared (56 returned true, 56 with a call), 0 mismatches
+action_gate: 40 compared (40 changed state), 0 mismatches
+action_staple: 105 compared (105 with calls, bases left stapled 57), 0 mismatches
+action_destruct: 10 compared (10 units destroyed by the DLL), 0 mismatches
+action_sat_attack: 840 compared (680 with calls), 0 mismatches
+action_build: 30 compared (30 bases founded, 12 in another faction's territory, 12 with calls), 0 mismatches
+action_arty: 273 compared (266 with calls; the DLL fought 1 times and shelled 83 empty tiles), 0 mismatches
+action_go_to: 375 compared (55 orders ended after a move, 20 waypoints shifted, 0 units ended their turn, 80 network calls, 5 with four waypoints), 0 mismatches
+action_go_to (the exe's Path::move): 26 compared (18 steps taken), 0 mismatches
+action_road_to: 540 compared (98 roads or tubes started, 16 fungus removals, 103 steps, 323 orders ended), 0 mismatches
+action_road_to (paths and network): 784 compared (52 with a notice, 392 network calls, 4 "remove fungus" messages), 0 mismatches
+action_road_to (the exe's Path::find): 36 compared (15 steps, 21 without a path), 0 mismatches
+  action_airdrop(53, 7, 61) case 7: the shipped notice names base 9 'Upsilon Depot', OpenSMACX's base 13 'Mir Lab'
+  action_airdrop(53, 7, 61) case 13: the shipped notice names base 9 'Upsilon Depot', OpenSMACX's base 13 'Mir Lab'
+  action_airdrop(53, 7, 61) case 17: the shipped notice names base 9 'Upsilon Depot', OpenSMACX's base 13 'Mir Lab'
+  action_airdrop(53, 8, 60) case 4: the shipped notice names base 9 'Upsilon Depot', OpenSMACX's base 13 'Mir Lab'
+  action_airdrop(53, 8, 60) case 6: the shipped notice names base 9 'Upsilon Depot', OpenSMACX's base 13 'Mir Lab'
+action_airdrop: 726 compared (376 drops made; refused 59 out of range, 72 at sea, 4 onto units, 4 non-combat, 0 by air defenses; 2 captures, 274 flights shown, 11 pauses, 20 pods, 88 "air drop near" notices), 0 mismatches
+action_airdrop: all cases but 19: in 36 of the 77 notices the shipped exe (base_find() for faction 1) names another base; 0 found no base; case 19: 11 notices, 11 found no base; every no-base notice is blank, the exe's Bases[-1] read ('') was non-empty in 0; as loaded (cases 0 and 21): 0 notices, 0 name another base
+action_airdrop: Bases[-1].name_string at 0097CF1F starts 00 03 00 02; faction without a base for case 19: 0
+action_airdrop (the shipped exe): 165 compared, 35 differ in the notice's base as predicted (11 of them in case 19), 0 otherwise
+TOTAL mismatches: 0 (719 ms)
+
+== sw_steam20.SAV: OpenSMACX regression run: turn 20, 13 bases, 74 vehs, filter='unitmove unitact'
+survey: map 128x128, SP owners: SAC -1 LV -1 HGP -1 CI -1 VW -1 PTS -1
+survey: faction 1 Consciousness human diff 2 bases 2 units 3 away 0 | SE talent 0 police 0 econ 0 eff 2 | rules talent 0 drone 0 | staple 0 punish 0 brood 0 rec 0 holo 0 paradise 0 assim 0
+survey: faction 2 Pirates      AI diff 3 bases 2 units 5 away 1 | SE talent 0 police 0 econ 0 eff -1 | rules talent 0 drone 0 | staple 0 punish 0 brood 0 rec 0 holo 0 paradise 0 assim 0
+survey: faction 3 Drones       AI diff 3 bases 3 units 6 away 0 | SE talent 0 police 0 econ 0 eff 0 | rules talent 0 drone 0 | staple 0 punish 0 brood 0 rec 0 holo 0 paradise 0 assim 0
+survey: faction 4 Angels       AI diff 3 bases 2 units 5 away 0 | SE talent 0 police -1 econ 2 eff -2 | rules talent 0 drone 0 | staple 0 punish 0 brood 0 rec 0 holo 0 paradise 0 assim 0
+survey: faction 5 Planet Cult  AI diff 3 bases 1 units 5 away 1 | SE talent 0 police 0 econ 0 eff 0 | rules talent 0 drone 0 WORMPOLICE | staple 0 punish 0 brood 0 rec 0 holo 0 paradise 0 assim 0
+survey: faction 6 University   AI diff 3 bases 2 units 5 away 1 | SE talent 0 police 0 econ 2 eff -2 | rules talent 0 drone 4 | staple 0 punish 0 brood 0 rec 0 holo 0 paradise 0 assim 0
+survey: faction 7 Morganites   AI diff 3 bases 1 units 4 away 2 | SE talent 0 police -5 econ 1 eff 0 | rules talent 0 drone 0 | staple 0 punish 0 brood 0 rec 0 holo 0 paradise 0 assim 0
+action_feature: 2 compared (1 with a notice), 0 mismatches
+action_patrol: 252 compared (190 changed state, 128 left a patrol order), 0 mismatches
+action: 120 compared (56 returned true, 56 with a call), 0 mismatches
+action_gate: 40 compared (40 changed state), 0 mismatches
+action_staple: 84 compared (84 with calls, bases left stapled 42), 0 mismatches
+action_destruct: 10 compared (10 units destroyed by the DLL), 0 mismatches
+action_sat_attack: 840 compared (680 with calls), 0 mismatches
+action_build: 0 compared (0 bases founded, 0 in another faction's territory, 0 with calls), 0 mismatches
+action_arty: 231 compared (225 with calls; the DLL fought 0 times and shelled 71 empty tiles), 0 mismatches
+action_go_to: 375 compared (55 orders ended after a move, 20 waypoints shifted, 4 units ended their turn, 80 network calls, 5 with four waypoints), 0 mismatches
+action_go_to (the exe's Path::move): 28 compared (20 steps taken), 0 mismatches
+action_road_to: 540 compared (98 roads or tubes started, 16 fungus removals, 103 steps, 323 orders ended), 0 mismatches
+action_road_to (paths and network): 784 compared (52 with a notice, 392 network calls, 4 "remove fungus" messages), 0 mismatches
+action_road_to (the exe's Path::find): 36 compared (21 steps, 15 without a path), 0 mismatches
+  action_airdrop(53, 10, 78) case 4: the shipped notice names base 9 'Upsilon Depot', OpenSMACX's base 7 'Zoloto-Gold'
+  action_airdrop(53, 10, 78) case 6: the shipped notice names base 9 'Upsilon Depot', OpenSMACX's base 7 'Zoloto-Gold'
+  action_airdrop(53, 10, 78) case 7: the shipped notice names base 9 'Upsilon Depot', OpenSMACX's base 7 'Zoloto-Gold'
+  action_airdrop(53, 10, 78) case 13: the shipped notice names base 9 'Upsilon Depot', OpenSMACX's base 7 'Zoloto-Gold'
+  action_airdrop(53, 10, 78) case 17: the shipped notice names base 9 'Upsilon Depot', OpenSMACX's base 7 'Zoloto-Gold'
+action_airdrop: 726 compared (399 drops made; refused 59 out of range, 65 at sea, 9 onto units, 1 non-combat, 1 by air defenses; 4 captures, 298 flights shown, 21 pauses, 20 pods, 108 "air drop near" notices), 0 mismatches
+action_airdrop: all cases but 19: in 56 of the 97 notices the shipped exe (base_find() for faction 1) names another base; 0 found no base; case 19: 11 notices, 11 found no base; every no-base notice is blank, the exe's Bases[-1] read ('') was non-empty in 0; as loaded (cases 0 and 21): 0 notices, 0 name another base
+action_airdrop: Bases[-1].name_string at 0097CF1F starts 00 FF FF 00; faction without a base for case 19: 0
+action_airdrop (the shipped exe): 165 compared, 44 differ in the notice's base as predicted (11 of them in case 19), 0 otherwise
+TOTAL mismatches: 0 (594 ms)
+
+== sw_urfl.SAV: OpenSMACX regression run: turn 1, 5 bases, 51 vehs, filter='unitmove unitact'
+survey: map 160x160, SP owners: SAC -1 LV -1 HGP -1 CI -1 VW -1 PTS -1
+survey: faction 1 Consciousness AI diff 3 bases 1 units 2 away 0 | SE talent 0 police 0 econ 0 eff 2 | rules talent 0 drone 0 | staple 0 punish 0 brood 0 rec 0 holo 0 paradise 0 assim 0
+survey: faction 2 Peacekeepers AI diff 3 bases 1 units 2 away 0 | SE talent 0 police 0 econ 0 eff -1 | rules talent 4 drone 0 | staple 0 punish 0 brood 0 rec 0 holo 0 paradise 0 assim 0
+survey: faction 3 Drones       AI diff 3 bases 1 units 2 away 0 | SE talent 0 police 0 econ 0 eff 0 | rules talent 0 drone 0 | staple 0 punish 0 brood 0 rec 0 holo 0 paradise 0 assim 0
+survey: faction 4 Angels       AI diff 3 bases 1 units 3 away 0 | SE talent 0 police -1 econ 0 eff 0 | rules talent 0 drone 0 | staple 0 punish 0 brood 0 rec 0 holo 0 paradise 0 assim 0
+survey: faction 5 Planet Cult  AI diff 3 bases 1 units 3 away 0 | SE talent 0 police 0 econ 0 eff 0 | rules talent 0 drone 0 WORMPOLICE | staple 0 punish 0 brood 0 rec 0 holo 0 paradise 0 assim 0
+survey: faction 6 Morganites   human diff 3 bases 0 units 3 away 1 | SE talent 0 police 0 econ 0 eff 0 | rules talent 0 drone 0 | staple 0 punish 0 brood 0 rec 0 holo 0 paradise 0 assim 0
+survey: faction 7 Gaians       AI diff 3 bases 0 units 3 away 1 | SE talent 0 police 0 econ 0 eff 0 | rules talent 0 drone 0 | staple 0 punish 0 brood 0 rec 0 holo 0 paradise 0 assim 0
+action_feature: 2 compared (1 with a notice), 0 mismatches
+action_patrol: 180 compared (138 changed state, 108 left a patrol order), 0 mismatches
+action: 90 compared (42 returned true, 42 with a call), 0 mismatches
+action_gate: 20 compared (20 changed state), 0 mismatches
+action_staple: 42 compared (42 with calls, bases left stapled 21), 0 mismatches
+action_destruct: 6 compared (8 units destroyed by the DLL), 0 mismatches
+action_sat_attack: 840 compared (690 with calls), 0 mismatches
+action_build: 6 compared (6 bases founded, 0 in another faction's territory, 3 with calls), 0 mismatches
+action_arty: 141 compared (136 with calls; the DLL fought 0 times and shelled 42 empty tiles), 0 mismatches
+action_go_to: 225 compared (33 orders ended after a move, 12 waypoints shifted, 4 units ended their turn, 48 network calls, 3 with four waypoints), 0 mismatches
+action_go_to (the exe's Path::move): 20 compared (14 steps taken), 0 mismatches
+action_road_to: 540 compared (118 roads or tubes started, 16 fungus removals, 93 steps, 313 orders ended), 0 mismatches
+action_road_to (paths and network): 784 compared (52 with a notice, 392 network calls, 4 "remove fungus" messages), 0 mismatches
+action_road_to (the exe's Path::find): 24 compared (12 steps, 12 without a path), 0 mismatches
+action_airdrop: 154 compared (49 drops made; refused 14 out of range, 30 at sea, 0 onto units, 0 non-combat, 1 by air defenses; 4 captures, 37 flights shown, 4 pauses, 0 pods, 14 "air drop near" notices), 0 mismatches
+action_airdrop: all cases but 19: in 0 of the 12 notices the shipped exe (base_find() for faction 1) names another base; 0 found no base; case 19: 2 notices, 2 found no base; every no-base notice is blank, the exe's Bases[-1] read ('') was non-empty in 0; as loaded (cases 0 and 21): 1 notices, 0 name another base
+action_airdrop: Bases[-1].name_string at 0097CF1F starts 00 FF FF 00; faction without a base for case 19: 6
+action_airdrop (the shipped exe): 35 compared, 2 differ in the notice's base as predicted (2 of them in case 19), 0 otherwise
+TOTAL mismatches: 0 (688 ms)

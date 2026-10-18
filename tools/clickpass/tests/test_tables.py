@@ -68,6 +68,12 @@ class TablesTest(unittest.TestCase):
             "?hex_cost@@YAHHHIIIIH@Z",
             "?wants_to_attack@@YAHIIH@Z",
             "?drone_riot@@YAXXZ",
+            "?action_airdrop@@YAHHHHH@Z",
+            "?action_terraform@@YAHHHH@Z",
+            "?action_home@@YAHHH@Z",
+            "?action_tectonic@@YAXHHH@Z",
+            "?action_fungal@@YAXHHH@Z",
+            "?action_give@@YAXHH@Z",
         ])
 
     def test_bisect_halves_never_takes_approved(self):

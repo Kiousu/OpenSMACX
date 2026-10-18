@@ -25,7 +25,63 @@ public static class GM {
   [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint f);
 }
 "@
+# The launch of every test game (Start-TestProcess below; Start-Game, tools/mp/autorun.ps1):
+# CreateProcessW with the show command SW_SHOWMINNOACTIVE (7, minimized) or SW_SHOWNOACTIVATE (4,
+# shown), so the game never becomes the active window (Start-Process -WindowStyle Minimized or Normal
+# use SW_SHOWMINIMIZED or SW_SHOWNORMAL, which made every game the foreground window, from whatever
+# Kiousu was using). The process is created suspended and its Process object (with its handle, so that
+# ExitCode can be read once it has ended) taken before it runs; a launch that fails after the process
+# exists ends that process (by handle).
+Add-Type @"
+using System; using System.ComponentModel; using System.Diagnostics; using System.Runtime.InteropServices;
+public static class GMLaunch {
+  [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)] struct STARTUPINFO {
+    public int cb; public string lpReserved, lpDesktop, lpTitle;
+    public int dwX, dwY, dwXSize, dwYSize, dwXCountChars, dwYCountChars, dwFillAttribute, dwFlags;
+    public short wShowWindow, cbReserved2; public IntPtr lpReserved2, hStdInput, hStdOutput, hStdError; }
+  [StructLayout(LayoutKind.Sequential)] struct PROCESS_INFORMATION {
+    public IntPtr hProcess, hThread; public int dwProcessId, dwThreadId; }
+  [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern bool CreateProcessW(
+    string app, System.Text.StringBuilder cmd, IntPtr pa, IntPtr ta, bool inherit, uint flags, IntPtr env,
+    string dir, ref STARTUPINFO si, out PROCESS_INFORMATION pi);
+  [DllImport("kernel32.dll", SetLastError = true)] static extern uint ResumeThread(IntPtr h);
+  [DllImport("kernel32.dll")] static extern bool TerminateProcess(IntPtr h, uint code);
+  [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr h);
+  public static Process StartNoActivate(string exe, string dir, short show) {
+    STARTUPINFO si = new STARTUPINFO();
+    si.cb = Marshal.SizeOf(typeof(STARTUPINFO));
+    si.dwFlags = 1;                                                    // STARTF_USESHOWWINDOW
+    if (show != 7 && show != 4) { throw new ArgumentException("show: 7 (SW_SHOWMINNOACTIVE) or 4 (SW_SHOWNOACTIVATE)"); }
+    si.wShowWindow = show;
+    PROCESS_INFORMATION pi;
+    if (!CreateProcessW(exe, new System.Text.StringBuilder("\"" + exe + "\""), IntPtr.Zero, IntPtr.Zero, false,
+        4 /* CREATE_SUSPENDED */, IntPtr.Zero, dir, ref si, out pi)) {
+      throw new Win32Exception();
+    }
+    try {
+      Process p;
+      try {
+        p = Process.GetProcessById(pi.dwProcessId);
+        IntPtr keep = p.Handle;                                        // (kept for ExitCode)
+        if (ResumeThread(pi.hThread) == 0xFFFFFFFF) { throw new Win32Exception(); }
+      } catch {
+        TerminateProcess(pi.hProcess, 1);
+        throw;
+      }
+      return p;
+    } finally {
+      CloseHandle(pi.hThread);
+      CloseHandle(pi.hProcess);
+    }
+  }
+}
+"@
 if (-not $script:GameDir) { $script:GameDir = "G:\SMACX-opensmacx-test" }   # set before dot-sourcing for a copy
+# Starts a test game's exe in $Dir without ever activating it (GMLaunch above): minimized, or shown where
+# it opens. Returns its Process.
+function Start-TestProcess([string]$Exe, [string]$Dir, [switch]$Minimized) {
+    return [GMLaunch]::StartNoActivate($Exe, $Dir, $(if ($Minimized) { 7 } else { 4 }))
+}
 function GameRunningIn([string]$dir) {      # a game started from this folder (copies run side by side)
     return [bool](Get-Process terranx* -ErrorAction SilentlyContinue | Where-Object {
         $_.Path -and $_.Path.StartsWith($dir.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase) })
@@ -155,18 +211,19 @@ function KeyWindow($p) {
 }
 function PopupOpen($p) { $w = KeyWindow $p; return ($w -ne 0 -and $w -ne 0x939444) }  # a dialog has the focus
 
-# Launch the game and let the harness DLL load $Save in place of the main menu (no tests run).
-# -Background: start minimized (never takes the focus), then once loaded show the window again
-# without activating it, behind the other windows. A minimized game ignores clicks and spins a
-# CPU core, so UI scripts must not leave it minimized. -Extra: more trigger lines (e.g. "clickpass").
+# Launch the game and let the harness DLL load $Save in place of the main menu (no tests run). The game
+# never becomes the active window (Start-TestProcess; the harness DLL's focus guard, src/focusguard.cpp,
+# keeps it from activating itself). -Background: start minimized, then once loaded show the window again
+# without activating it, behind the other windows; without it the window is shown from the start, not
+# active. A minimized game ignores clicks and spins a CPU core, so UI scripts must not leave it
+# minimized. -Extra: more trigger lines (e.g. "clickpass").
 # A game that ends during the load is returned as it is (check $p.HasExited). -PidFile: a file that
 # gets "<pid> <start time as a UTC FILETIME>" right after the launch (tools/clickpass/case.ps1).
 function Start-Game([string]$Save, [string]$Exe = "terranx_opensmacx.exe", [switch]$Background,
     [string[]]$Extra = @(), [string]$PidFile = "") {
     if (GameRunningIn $script:GameDir) { throw "a game from $($script:GameDir) is already running" }
     Set-Content "$script:GameDir\opensmacx_regress.txt" (@("load saves\$Save", "notests") + $Extra) -Encoding ASCII
-    $style = if ($Background) { "Minimized" } else { "Normal" }
-    $p = Start-Process -FilePath "$script:GameDir\$Exe" -WorkingDirectory $script:GameDir -PassThru -WindowStyle $style
+    $p = Start-TestProcess "$script:GameDir\$Exe" $script:GameDir -Minimized:$Background
     if ($PidFile) {   # "<pid> <start time, UTC FILETIME>" at once, for whoever must stop this game if the caller can't
         try { [IO.File]::WriteAllText($PidFile, ("{0} {1}`r`n" -f $p.Id, $p.StartTime.ToFileTimeUtc())) }
         catch { Write-Host "Start-Game: $PidFile not written: $_" }

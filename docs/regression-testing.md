@@ -1945,11 +1945,17 @@ the approved rows of `tools/redirects.tsv` (tagged `approved`; no tool ever remo
 changes from the v2.1 exe that Kiousu chose, so the reference plays the intended rules and the pass
 judges OpenSMACX against them. They are `game_data` (the save header), `battle_compute` and
 `best_defender` (no read of `Vehs[-1]`), and since 2026-10-18 `hex_cost` (the Sealurk fix),
-`wants_to_attack` (zero-start counts) and `drone_riot` (the intended defection). The reference
-runs these whole functions from the DLL, so the pass doesn't compare the rest of them with the
-exe; their function tests do, with only the chosen change allowed: `hex_cost`, `wants_to_attack`,
-`drone_riot` and `save_header` run the exe's own code on any build, `battle_compute` and
-`best_defender` only on an exe patched without their rows (see How to run). `G:\SMACX-opensmacx-test-clickosx` is OpenSMACX: the exe
+`wants_to_attack` (zero-start counts), `drone_riot` (the intended defection) and, with batch 32,
+`action_airdrop` (the notice names a base the player at the controls knows), `action_terraform`
+(the enricher's own technology, the former's own state after raise/lower), `action_home` (the
+airbase's own distance), `action_tectonic` and `action_fungal` (the missile's own faction and
+reactor, a payload once shot down stays down) and `action_give` (the units actually given, counted
+against their new designs): twelve in all. The reference runs these whole functions from the DLL,
+so the pass doesn't compare the rest of them with the exe; their function tests do, with only the
+chosen change allowed: `hex_cost`, `wants_to_attack`, `drone_riot`, `save_header`,
+`action_airdrop`, `action_terraform`, `action_home`, `action_tectonic`, `action_fungal` and
+`action_give` run the exe's own code on any build, `battle_compute` and `best_defender` only on an
+exe patched without their rows (see How to run). `G:\SMACX-opensmacx-test-clickosx` is OpenSMACX: the exe
 patched from the whole table. Both are `make_testdir.ps1` copies with the harness DLL
 (`/DOPENSMACX_REGRESS`), `Windowed=1` and `DirectDraw=0`. Each game may also write to
 `G:\SMACX-clickpass-outside\<its folder name>` (for "save elsewhere"), which the driver empties
@@ -2071,7 +2077,9 @@ under Failures with the decision as what's being done. Recorded on 2026-10-18: `
 starts its region counts at zero, and `drone_riot`'s REVOLT slots start at -1 with
 take = round(100 * (1 - prod(1 - c/100))), picked when time % 100 < take, the nearest-faction
 distance using each base's own owner's treaty (the intended design in both); `hex_cost` keeps
-upstream's Sealurk fix (Kiousu: "Keep fix").
+upstream's Sealurk fix (Kiousu: "Keep fix"). With batch 32: `action_airdrop`, `action_terraform`,
+`action_home`, `action_tectonic`, `action_fungal` and `action_give`, one row each with Kiousu's
+decision (see their sections after "Batch 32, 2026-10-18").
 
 ### First results
 
@@ -2132,3 +2140,414 @@ Kiousu then kept the Sealurk fix and asked for the pass to test the intended beh
 `test_hex_cost`; the OpenSMACX exe is unchanged. Pass `2026-10-18-0954` (report:
 `regression-runs/2026-10-18-clickpass-755-approved.md`): every reference recorded again with its
 self-check, 10 pass, end_turn_steam1 included.
+
+### On desktop-msvc-net, 765 rows
+
+Batch 32 added six approved rows (`action_airdrop`, `action_terraform`, `action_home`,
+`action_tectonic`, `action_fungal`, `action_give`: twelve in all). The merge's pass ran in two new
+folders, `G:\SMACX-opensmacx-test-mainref` (the pristine exe with the twelve approved rows,
+9f1e9875) and `-mainosx` (the 765-row exe, 06150821), both with the merged harness DLL and the focus
+guard: pass `2026-10-18-1451` (report: `regression-runs/2026-10-18-clickpass-765.md`), every
+reference recorded again with its self-check, 10 pass. See "Batch 32, 2026-10-18".
+
+## Batch 32, 2026-10-18 (Council.SAV and the 13 sweep saves, 765-redirect exe)
+
+Three worktree agents in parallel (movement orders, unit terraforming, special payloads and handing
+units over), each testing its own group in its own copy of the test folder, and an independent
+reviewer per group reading the C++ against the disassembly line by line: no transcription
+mismatches in any of the three (the reviews' findings were in the tests and the comments, fixed in
+the fix rounds). Six of the ten functions have a deliberate change from the v2.1 exe that Kiousu
+chose; their rows are `approved` and each has a section after this one. The main session merged the
+three groups on top of 2f0e050 and ran the whole suite on all 14 saves.
+
+Merge. The groups went in as 3-way patches (movement orders, unit terraforming, special payloads);
+the conflicts were textual. The exe pointers the first two groups removed sat next to each other in
+temp.h and temp.cpp, and all four are gone (`action_go_to`, `action_road_to`, `action_terraform`,
+`action_destroy` with its `func_action_destroy`); `order_veh` (0x5947C0), which both added, is kept
+once (the movement orders' `func_iii`, the same type as the terraforming group's own typedef).
+`UnitActStubs` has all four of its stubs for the batch's functions (`terraform`, `go_to`, `road_to`,
+`destroy`) on the DLL entries, the two test blocks after `test_action_arty` and their dispatch lines
+are in group order, and the three redirect blocks are at the end of `tools/redirects.tsv`, each row
+once: 765 rows, twelve of them `approved`. Stub check: no test stubs any of the ten functions at its
+exe address any more. The movement orders' own `action_terraform` recorder is set at
+`(uint32_t)action_terraform`, which became the DLL entry with the merge; every other use of the ten
+exe addresses is an `OriginalEntry` (the exe's own code put back for the test) or a call into it.
+
+Focus guard. The suite, the boot test and the click pass below ran with the click pass's focus
+guard, brought over from its stage 2 (ruling S11): every test game is launched without activation
+(`tools/mp/msg.ps1`'s `Start-TestProcess`: CreateProcess with SW_SHOWMINNOACTIVE or
+SW_SHOWNOACTIVATE, used by `Start-Game` and `autorun.ps1`), and the harness DLL
+(`src/focusguard.cpp`, regress build only, on for input-free loads) keeps the game from activating
+itself, moving or clipping the real cursor (SetForegroundWindow, SetActiveWindow, BringWindowToTop,
+SetCursorPos and ClipCursor do nothing, ShowWindow and SetWindowPos get their no-activate forms, the
+windowed main window gets WS_EX_NOACTIVATE) and from reading the real keyboard and cursor:
+GetKeyState, GetAsyncKeyState and GetCursorPos answer from the posted messages alone, for the DLL's
+own calls too. Each kind of changed call is noted once in opensmacx_regress.log (`FOCUS-GUARD
+ShowWindow(5) shown as ShowWindow(7)`). Normal play is unchanged (release builds don't have it).
+`tools/clickpass/tests/smoke_focus.ps1 -Command` around one autorun of Council.SAV
+(`-Tests value_of_base`) in the test folder: PASS, 44 samples over 5.1 s, the foreground Firefox's
+in all of them and the cursor where it stood before the launch.
+
+### Movement orders (worktree agent)
+
+`action_go_to` (0x4CB310), `action_road_to` (0x4CB580) and `action_airdrop` (0x4CC360) in veh.cpp;
+the temp.cpp pointers `action_go_to` and `action_road_to` are gone. The path finder and the network
+daemon stay in the exe: new exe pointers `Path_move` (0x59BC10; the DLL's Path::move is unfinished),
+`order_veh` (0x5947C0), `NetDaemon_order_veh` (0x531780), `say_loc` (0x592250), `capture_base`
+(0x50C510), `goody_box` (0x57A660), `Console_cursor_next` (0x5109B0) and the Console field
+`MapWinUnk23BF0` (0x9392A0); `Path_find` is batch 31's, and `action_terraform` (the unit
+terraforming group's) is called directly since the merge. Kept from the original: go_to and road_to
+point NetVehIDRef at their own unit id parameter in a network game and never clear it (the DLL's
+parameter slot is the exe's); go_to's multi-waypoint shift copies index `waypoint_count`, past the
+arrays at 4 (the map view's waypoint mode never gets there); a computer faction's unit whose chassis
+has a cargo rating (all but the missile) ends its turn when its go to arrives in a base; road_to's
+tube to passes TERRA_ROAD to action_terraform, which makes it a magtube on a road.
+`action_airdrop`'s notice is a deliberate change from the v2.1 exe, chosen by Kiousu (2026-10-18),
+see "action_airdrop notice"; its redirect row is marked `approved`.
+
+Trigger group `unitmove` (tests `action_go_to`, `action_road_to`, `action_airdrop`): the exe's code
+(OriginalEntry) against the DLL's from the same snapshot through `unitact_run`, plus every call into
+foreign code recorded in order with its arguments and the unit id NetVehIDRef points at (Path::move,
+Path::find, order_veh, the NetDaemon calls, synch_veh, message_data, action_terraform, spot_all,
+veh_scoot, clock_wait, Console::cursor_next, capture_base, goody_box, ambience, GetAsyncKeyState),
+answered from a per-case script (order_veh moves the unit to a chosen tile, the network waits can
+renumber the unit as veh_kill would, capture_base can renumber VehIDCurrent), and the lift and bit
+error globals. go_to: 23 cases (no step, steps, arrivals at either waypoint and in bases, human or
+computer, multi-waypoint go tos with 1 to 4 waypoints, network games) x 3-4 orders, plus the exe's
+own Path::move toward four targets. road_to: 9 tile kinds x 5 tech sets x 2 orders x 3 targets, 14
+path and network cases (two of them in a network game knowing fungus removal but not roads in
+fungus, which sends the "remove fungus" message), and the exe's own Path::find along a road.
+airdrop: 19 targets x 22 cases (flags 0 to 3, watchers, preferences, shift, treaties, air defenses,
+captures, network, non-combat, Cloudbase Academy, alien factions), the exe's `push 1` at 0x4CCC4C
+made `push ecx` (FactionIDCurrent) for that pass, and a second pass with the shipped exe that may
+differ only where the two base lookups name different bases. A test-only snag: a faked unit bit made
+veh_at rebuild the unit bits, which in a network game happens once per VehBitError, so the exe's run
+used it up; the cases now move a real unit, and the lift and bit error globals are put back and
+compared each run.
+
+| test | Council.SAV | 13 sweep saves | mismatches |
+|---|---|---|---|
+| action_go_to (scripted) | 7,725 | 28,500 | 0 |
+| action_go_to (exe's Path::move) | 606 | 2,224 | 0 |
+| action_road_to (tiles x techs) | 11,610 | 43,740 | 0 |
+| action_road_to (paths and network) | 16,856 (172 "remove fungus" messages) | 62,720 (576) | 0 |
+| action_road_to (exe's Path::find) | 720 | 2,700 | 0 |
+| action_airdrop (exe made to ask for the player at the controls) | 13,222 | 49,698 | 0 |
+| action_airdrop (shipped exe) | 3,005: 358 predicted differences | 11,295: 2,331 predicted | 0 unexplained |
+
+By the DLL on Council: go_to ended 1,133 orders after a move and shifted 412 waypoint lists; road_to
+started 2,864 roads or tubes and 360 fungus removals; airdrop made 5,499 drops (18 captures, 3,993
+flights shown, 130 pauses, 18 pods) and refused 1,036 out of range, 1,731 at sea, 163 onto units,
+251 non-combat and 48 by air defenses. unitact unchanged (its go_to/road_to stubs now sit on the DLL
+entries). Boot test: Council.SAV 289 -> 290 in 29 s, alive. Logs:
+`regression-runs/2026-10-18-council-batch32-unitmove.log`,
+`regression-runs/2026-10-18-sweep-batch32-unitmove.log`.
+
+### Unit terraforming (worktree agent)
+
+`action_terraform` (0x4C9B00), `action_destroy` (0x4CAA50) and `action_home` (0x4CBAA0) in veh.cpp;
+the temp.cpp pointers `action_terraform` and `action_destroy` are gone (`action()` and
+`action_arty()` call the DLL's), and the unitact recorders for them sit on the DLL entries. New exe
+pointers: `BaseWin_check_veh`, `TutWin_tut_map` with `TutWinVar`, `order_veh`, and the globals
+`TutTerraformShown` (0x9A64B4, the tutorial's "MADE..." bits for land and sea) and
+`TerraformSoundPlayed` (0x90DB84, the completion chime, cleared by `turn_upkeep()`). `action_home`
+does not set a home base: it finds where a unit rests or refuels and sends it there (mode 1 is
+`order_veh()`'s low-fuel check, -1 only answers it, 4 is `air_power()`, 2 `enemy_move()`). Kept from
+the original: computer factions above Librarian work one rate step faster; the units-lost messages
+(DROWNMINE/DROWNYOURS) stay silent as shipped, because `world_climate()` before the check goes
+through `world_alt_set()` for nearly every tile (`world_shorelines()`) and every call resets the
+record (the tests found the player's units lost in 268 inputs and the record set at the check in
+none); `action_destroy` returns without `order_veh` after a failed shelling, and its notice to the
+tile's owner reads `Bases[base_find(...)]` unchecked (the owner at the controls always has a base
+there); `synch_bit(x, y, -1)` writes the tile's own bit word onto itself. Two deliberate changes in
+`action_terraform` and one in `action_home`, chosen by Kiousu, see "action_terraform farm and
+raise/lower" and "action_home airbase distance" below; the units-lost messages stay silent by
+Kiousu's choice, see "Units-lost messages".
+
+Trigger group `unitterra`: each input runs the exe's code (`OriginalEntry`) against the DLL from the
+same snapshot. For `action_terraform` and `action_home` the exe runs with its slips fixed in its own
+code (one byte, altitude wrappers that restore the unit's own slot, a 4-instruction cave) against
+the DLL, and the shipped exe against the fixed one counts the decision cases (any other difference
+fails the test). `action_terraform`: up to 48 units (formers first), all 20 jobs, 10 variants
+(estimates, pooled stacks, completion, tutorial and chime for the player at the controls, harvests,
+farm or road already there, raise/lower near another faction, a planted units-lost record).
+`action_destroy`: units, natives and aircraft on their own tile and tiles two steps out, 6 variants
+(shelling, bombing, sensor/forest/condenser, the owner in contact, spore launchers). `action_home`:
+aircraft and a spread of other units, 5 modes, 11 variants (on alert to a base or a planted
+airbase, low fuel, computer and human, aircraft placed in the field). The test inputs aren't
+limited to orders the game accepts: completions are forced, so some formers drown in their own
+raise/lower. Recorded: the notice and unitact recorders plus `draw_tiles`, `draw_radius`, the base
+window checks, `GraphicWin::redraw`, `TutWin::tut_map`, `wave_it`, `ambience`, `order_veh`,
+`base_kill` and the terrain clears; `timeGetTime` pinned. Compared: the snapshot, parse slots,
+diplomacy globals, random streams, return value, base and selection globals, every recorded call,
+the tutorial bits, the chime flag and the rainfall globals. One planted bug per function was caught
+(14, 46 and 90 mismatches).
+
+| test | Council.SAV | 13 sweep saves | mismatches |
+|---|---|---|---|
+| action_terraform | 4,885 | 40,246 | 0 |
+| action_destroy | 4,604 | 27,603 | 0 |
+| action_home | 8,930 | 15,260 | 0 |
+
+The unitact group's counts are unchanged and 0 on all 14 saves. Logs:
+`regression-runs/2026-10-18-council-batch32-unitterra.log` and
+`regression-runs/2026-10-18-sweep-batch32-unitterra.log`.
+
+### Special payloads and handing units over (worktree agent)
+
+**Functions.** `action_oblit` (0x4CD4E0), `action_tectonic` (0x4CE210), `action_fungal` (0x4CE790)
+and `action_give` (0x4CEDE0) are in veh.cpp, with three helpers: `missile_shot_down()` (the
+shoot-down step both payloads share), `give_proto()` (the receiver's design for a given unit) and
+`give_units()` (the conversion, following the units through `veh_kill`). New exe pointers:
+`FX_play2` (0x446960) and `shoot_it` (0x4CDAF0, left in the exe). `Rules->tgl_oblit_base_atrocity`
+is 0x949860, `TectonicDetonationCount` 0x946138.
+
+**Kept from the original:**
+- the tectonic ring's radius comes from the exe's RadiusRange copy;
+- `propose_proto` gets the design's `unk_1` zero-extended;
+- the payload notices name the nearest base of any owner.
+
+**Deliberate changes from the v2.1 exe, chosen by Kiousu (2026-10-18)** (see "action_tectonic and
+action_fungal payloads" and "action_give handover" below):
+1. Both payloads read the attacker (and the fungal one its reactor) from the missile's unit slot
+   after `kill()` freed it, i.e. from the next unit in the table. Now the faction that fired gets
+   the credit, and the fungal payload uses the missile's own reactor.
+2. A payload shot down was still offered to the territory owner, whose answer replaced the first.
+   Now a payload once shot down stays down.
+3. When proposing a design for a given unit disbanded units, the exe carried on with stale slot
+   numbers and gave away the wrong unit. Now the units actually given go over: the list is taken
+   first, and `veh_kill` renumbers the ids in `VehKillWatch`. This includes the rest of the cargo
+   when the transport itself is disbanded on the way, so one gift is never split between the two
+   factions.
+4. Each unit given is counted against its new design (`proto_id_active`: the giver's
+   count of the old design down, the receiver's of the new one up), as `give_a_base` counts units
+   changing sides. In the exe a design just made for a given unit looked unused and was the one the
+   next unit's proposal retired, disbanding the unit just given.
+
+**Trigger group `unitfx`.** The exe's code (`OriginalEntry`) runs against the DLL from the same
+snapshot.
+- Recorded: the unitact recorders plus FX::play2, draw_radius, X_pop, base_kill (DLL entry), the
+  terrain clears of `world_climate`, and `shoot_it`. `shoot_it` gets scripted answers, or the real
+  one runs with orbital defense pods, or with a flechette defense where it looks. The clock is
+  pinned.
+- Payloads: a pinned copy of the exe (its post-`kill()` loads and its shot-down jump patched to the
+  intended ones) must match the DLL. The shipped exe is compared with it, and each difference is
+  counted and attributed.
+- `action_give`: the exe is pinned for the counts (a stub on `propose_proto` counts the units given
+  so far before each proposal) and must match the DLL exactly, except in runs that disband units.
+  Those are checked against an identity rule (units followed by a tag in `Veh::unk_1`: sides,
+  designs, notice), and the pinned exe's breaches are counted. Two constructed cases per save cover
+  the counts and the disbanded transport.
+- Inputs are read from the game as loaded.
+- Compared: the snapshot, notice state and calls, the unitact extras, detonation counts, new units,
+  prototypes, BungList, ProtoIDNewDesign and the design suggestion globals.
+
+| test | Council.SAV | 13 sweep saves | mismatches |
+|---|---|---|---|
+| action_oblit | 2,820 | 18,354 | 0 |
+| action_tectonic | 536 | 6,079 | 0 |
+| action_fungal | 1,213 | 13,104 | 0 |
+| action_give | 3,985 | 15,712 | 0 |
+
+**How often the shipped game differs from the intended:**
+- 3,088 of 6,615 tectonic cases: freed slot 2,209, territory owner 879. As loaded, the detonation
+  count went to another faction in 455 of 1,014.
+- 3,744 of 14,317 fungal cases: freed slot 2,033, territory owner 1,711.
+- With a flechette defense alone, tectonic payloads went off 353 times as shipped and 302 as
+  intended (of 531), fungal 652 and 535 (of 996).
+- `action_give`: the missing counts changed the outcome in 110 runs. The shipped game disbanded
+  given units the intended one keeps in 73 (64 natural, on Council.SAV and sw_bugged). The
+  intended game disbands only in the constructed case, where the rest of the cargo goes over (9
+  saves).
+
+Logs: `regression-runs/2026-10-18-council-batch32-unitfx.log` and
+`regression-runs/2026-10-18-sweep-batch32-unitfx.log`.
+
+### Results
+
+Whole suite (`-Tests ''`) on the merged 765-redirect tree, harness DLL with the focus guard:
+
+| test | Council.SAV | 13 sweep saves | mismatches |
+|---|---|---|---|
+| action_go_to (scripted) | 7,725 | 28,500 | 0 |
+| action_go_to (exe's Path::move) | 606 | 2,224 | 0 |
+| action_road_to (tiles x techs) | 11,610 | 43,740 | 0 |
+| action_road_to (paths and network) | 16,856 | 62,720 | 0 |
+| action_road_to (exe's Path::find) | 720 | 2,700 | 0 |
+| action_airdrop | 13,222 | 49,698 | 0 |
+| action_airdrop, shipped exe | 3,005 (358 predicted) | 11,295 (2,331 predicted) | 0 unexplained |
+| action_terraform | 4,885 | 40,246 | 0 |
+| action_destroy | 4,604 | 27,603 | 0 |
+| action_home | 8,930 | 15,260 | 0 |
+| action_oblit | 2,820 | 18,354 | 0 |
+| action_tectonic | 536 | 6,079 | 0 |
+| action_fungal | 1,213 | 13,104 | 0 |
+| action_give | 3,985 | 15,712 | 0 |
+
+Every count equals the group's own run, and the batch's lines on Council.SAV are the groups' lines
+word for word but one: the live `Path::find` pass of `action_road_to` took 470 steps and found no
+path 250 times, against 472 and 248 in the group's run. That pass runs the exe's own path finder on
+whatever state the earlier tests leave; the merged build run with the group's filter
+(`unitmove unitact`) gives 472 and 248 again. The `unitact` tests, `veh_kill` and `unit_kill` have
+batch 31's counts (`veh_kill` 3,546 and 13,212, so `VehKillWatch` changes nothing outside
+`action_give`). Every other test was 0 on every save except `social_ai`'s known line on Council.SAV
+and sw_bugged (faction 5, AI self, `bunglist_index` 34 vs 33). Every save's log has the focus
+guard's one note (`FOCUS-GUARD ShowWindow(5) shown as ShowWindow(7)`). Boot test through the
+message-driven UI: Council.SAV 289 -> 291 (29 s and 56 s), the game alive, nothing new in the live
+game folder. Logs: `regression-runs/2026-10-18-council-batch32.log` and
+`regression-runs/2026-10-18-sweep-batch32.log`.
+
+Click pass (stage 1 runner, one pair) in two new folders made for the merge with `make_testdir.ps1`,
+`G:\SMACX-opensmacx-test-mainref` and `-mainosx`, with the click-pass ini settings (`Windowed=1`,
+`DirectDraw=0`): `clickpass.py reference` gave the reference the pristine exe with the twelve
+approved rows (9f1e9875) and the merged harness DLL (f9716d32), and the OpenSMACX folder has the
+765-row exe (06150821) and the same DLL. Pass `2026-10-18-1451` (report:
+`regression-runs/2026-10-18-clickpass-765.md`): every reference recorded with its self-check, all
+self-checks agreed, 10 pass (end_turn, idle and reports on Council.SAV, sw_aki2120.SAV and
+sw_steam1.SAV, and save_game), in about 8 minutes.
+
+## action_tectonic and action_fungal payloads, 2026-10-18 (deliberate change from the v2.1 exe, chosen by Kiousu)
+
+When a tectonic or fungal payload goes off, the v2.1 exe gets two things wrong.
+
+- Who fired it, and for a fungal payload how big its reactor is. The exe reads them from the
+  missile's unit slot after the missile is used up; removing a unit moves every later unit down one
+  slot, so the answer comes from the next unit in the game's unit list, usually the next unit built
+  anywhere, of any faction (on the saves the next unit belongs to another faction in 32 % of slots
+  on Council.SAV and up to 64 % on sw_morgan). A tectonic detonation is credited to that unit's
+  owner: native life fights the credited faction harder and a human faction's bases take more
+  ecological damage, so the attacker escapes it and someone else, possibly the victim, takes it, and
+  the TECMOFIED notice names that faction. A fungal payload's fungus picks follow that unit's
+  reactor (a Fusion missile followed by a Fission unit makes 2 picks instead of 4, by a Singularity
+  unit 8), and whether the target's owner is shown the fungus, and the FUNGMOTIZED notice, follow
+  that unit's owner.
+- Whether it was shot down. The factions near the target try in turn to shoot it down (orbital
+  defense pods, a flechette defense); once one succeeds the exe still asks the owner of the target's
+  territory, and that answer replaces the first. A payload just shot down goes off anyway when a
+  third faction without defenses owns the territory; a defender with pods spends a second
+  interception (a human defender gets the satellite-sacrifice dialog again) and sees a second
+  notice; with a flechette defense alone the stop chance is 25 % instead of 50 % when the defender
+  owns the territory, and 50 % instead of 75 % when someone else does.
+
+Kiousu chose: the faction that fired gets the credit and the fungal payload uses the missile's own
+reactor (both read before the missile is removed), and a payload once shot down stays down. The
+same rule is to apply to `planet_busting` (0x500B60, its shoot-down 0x500560) when it is converted.
+That the re-ask is a defect was known: the base game's terran.exe (SMAC, 2002) carries an
+unofficial patch that skips it (0x515879, a test/jne, and `nop nop` around a call to a stub at
+0x6328C6); terranx v2.1 has no such fix (`planet_busting` at 0x500E7D falls into `whose_territory`
+at 0x500E8D). Code: `action_tectonic` reads `Vehs[veh_id].faction_id` after `kill()` at
+0x4CE5A9/0x4CE5E3/0x4CE61D (the notice) and 0x4CE679 (`TectonicDetonationCount`); `action_fungal`
+reads `.proto_id` at 0x4CEA1B and `.faction_id` at 0x4CEB46 and 0x4CED04/40/7A; the shot-down
+`break` at 0x4CE4E5 / 0x4CE9AC jumps to the `whose_territory` call instead of past it.
+
+The test runs a pinned copy of the exe (its post-`kill()` loads and its shot-down jump patched to
+the intended ones) against the DLL: 0 mismatches. The shipped exe against the pinned one, every
+difference attributed, on the 14 saves: 3,088 of 6,615 tectonic cases differ (freed slot 2,209,
+territory owner 879; with the save as loaded the detonation count went to a faction that didn't
+fire in 455 of 1,014), 3,744 of 14,317 fungal cases (2,033 and 1,711); with a flechette defense
+alone tectonic payloads went off 353 times as shipped and 302 as intended (of 531), fungal 652 and
+535 (of 996). Both rows are `approved`.
+
+## action_give handover, 2026-10-18 (deliberate change from the v2.1 exe, chosen by Kiousu)
+
+Giving a unit to another faction gives the units sentried aboard it too. For each unit the receiver
+may need a new design, and proposing one can retire one of the receiver's designs, which disbands
+that design's units (all of them for a human receiver; for a computer one, those a human can see
+outside a base). In the v2.1 exe:
+
+- `action_give` doesn't count the given units against their new designs, so the design just made
+  for an earlier unit of the same stack looks unused and is the one retired: the unit just given is
+  disbanded.
+- It walks the stack with the slot numbers from before the proposal. After a disbanding every later
+  unit has moved down one slot, so it converts whichever unit moved into the slot (often a unit of
+  another faction elsewhere on the map changes sides), follows that unit's stack, and leaves the
+  real cargo or transport with the giver; the receiver's notice may name that other unit's design.
+- When the transport itself is disbanded on the way, the rest of its cargo stays with the giver,
+  even with the right slot numbers.
+
+Kiousu chose: the units actually given go over (the list is taken first, and `veh_kill` renumbers
+the ids in `VehKillWatch`, a three-slot list only `action_give` fills while it proposes a design);
+the rest of the cargo goes to the receiver, so one gift is never split between the two factions;
+and each unit given counts against its new design (`proto_id_active`: the giver's count of the old
+design down, the receiver's of the new one up), as `give_a_base` counts units changing sides
+(0x54D225-0x54D258), so given units survive. A disbanding can still happen, as ordinary
+`propose_proto` behaviour, only when the receiver has no free design slot, no unused obsolete design
+and no other design without units, and the next unit's design falls in the category of a design
+just made for a given unit that is the least used of it; with full design slots that can also move
+a disbanding onto the receiver's own units (the first unit of a gift already works this way).
+
+The test runs the exe pinned for the counts (a stub on `propose_proto` counts the units given so far
+before each proposal) against the DLL: equal except in runs that disband units, which are checked
+against an identity rule (sides, designs, notice). The shipped game's missing counts changed the
+outcome in 110 runs on the 14 saves (Council.SAV 15, sw_bugged 88, and a constructed case on 7
+saves); it disbanded given units the intended game keeps in 73 (64 natural: Council.SAV 7, sw_bugged
+57). The intended game disbands only in the constructed case, where the rest of the cargo goes over
+(9 saves). The row is `approved`.
+
+## action_airdrop notice, 2026-10-18 (deliberate change from the v2.1 exe, chosen by Kiousu)
+
+When another faction makes an air drop or orbital insertion the player can see, the notice
+"<faction> makes air drop near <base>!" names a base near the drop. The shipped exe asks
+base_find() for the base nearest the drop that faction 1 owns or has seen (`push 1` at 0x4CCC4C;
+say_loc() and every other caller pass the player at the controls). With no such base it reads the
+name from `Bases[-1]`, an empty string on all 14 saves ("near !"). With the player in slot 1
+nothing changes. A player in another slot (Morganites in slot 6 on six of the sweep saves) can be
+shown a base faction 1 knows and they don't. Kiousu chose the intended behaviour: OpenSMACX names
+the nearest base the player at the controls owns or has seen, and leaves the name blank on purpose
+when there is none. The redirect row is marked `approved`.
+
+The test runs the exe with that push made `push ecx` (FactionIDCurrent) against the DLL: 0
+mismatches. Every no-base notice is counted; the exe's Bases[-1] read was empty in all of them
+(Council 269, sweep 909, all in a constructed case with a player who owns and has seen no base).
+The shipped exe differs from OpenSMACX on exactly the predicted inputs (Council 358 of 3,005, sweep
+2,331 of 11,295, nothing else). The save's own player watching AI drops saw another base name in 2
+of 18 notices on the sweep saves.
+
+## action_terraform farm and raise/lower, 2026-10-18 (deliberate change from the v2.1 exe, chosen by Kiousu)
+
+- **Farm on a farm:** a farm ordered on a land farm becomes a Soil Enricher only with the Soil
+  Enricher's technology (Advanced Ecological Engineering), just as a road becomes a mag tube only
+  with the Mag Tube's. The v2.1 exe checks the Farm's technology, which has none, so the change
+  always happened. In play the player's order is already refused (HASFARM, by `Console::terraform`
+  with the enricher's technology), and computer players ask for it only with the technology. The
+  slip's only visible effect was the turn estimate shown next to "Farm" on a farm tile, which
+  counted the enricher's work. Kiousu kept the corrected check (the original script.txt's #HASFARM
+  states the intent, and Thinker 5.4 checks the enricher's technology too). In the tests: 473
+  inputs, 407 with a different outcome.
+- **Raise or lower land:** the change can lose units on the neighbouring tiles (ships where coastal
+  sea is lifted into land; land units, and bases flooded, where land sinks below sea level). The
+  former itself never drowns, since TOOLOW/SEATOOHIGH refuse that, and automated formers and the AI
+  only raise. When a lost unit comes before the former in the unit table, another unit moves into
+  the former's slot. The v2.1 exe reads that slot again, so the "terraforming complete" chime went
+  by the other unit's order and automation. The DLL uses the former's own state and order. In the
+  tests (completions forced, formers' own tiles included): 274 inputs, 130 with a different chime.
+
+The test runs the exe with both slips fixed in its own code (one byte at 0x4C9BBE, wrappers on its
+`world_raise_alt`/`world_lower_alt` calls that put the former's own state and order back into its
+slot) against the DLL: 0 mismatches; the shipped exe against the fixed one counts the cases above
+and fails on any other difference. The row is `approved`.
+
+## action_home airbase distance, 2026-10-18 (deliberate change from the v2.1 exe, chosen by Kiousu)
+
+An aircraft on alert (automated) heading back to its home airbase (its second waypoint) is checked
+against that airbase's own distance. The v2.1 exe keeps the shortest distance found before it
+(bases, carriers, air supply units and airbases scanned earlier; at 0x4CC255 the airbase path
+stores x and y but not the distance, which the base path at 0x4CBE9A does), and that can be longer
+or shorter than the airbase's. With a longer one, a human player's return order is cancelled with
+its automation (the aircraft stays out and can run dry) and the AI's `air_power()` gives up; with a
+shorter one, the low-fuel check waits too long. For a home base the exe records the base's own
+distance. The right-click "go to nearest airbase" of air units (`Console::go_home`, 0x4D7DE0) calls
+`action_home(veh, 0)`, the plain nearest search, like the go-home key; only the on-alert return
+takes this path. In the tests: path taken in 2,156 inputs (mostly constructed: airbases and alert
+orders planted next to aircraft), 101 with a different outcome (Council.SAV 48, sw_bugged 53); the
+exe with a 4-instruction cave that also stores the distance matches the DLL. The row is `approved`.
+
+## Units-lost messages, 2026-10-18 (kept as shipped, chosen by Kiousu)
+
+The "units lost to terraforming" messages (DROWNMINE/DROWNYOURS) never show in the v2.1 exe:
+`action_terraform` checks the record of the raise or lower after `world_climate()`, whose
+`world_shorelines()` calls `world_alt_set()` for nearly every tile, and each call resets the record
+(`MapBaseIdClosestSubmergedVeh`, 0x9B22BC). The tests found the player's units lost in 268 inputs
+and the record still set at the check in none. Kiousu kept them silent, as shipped: reviving them
+would be new behaviour (and would expose two more slips: the check also runs after condensers, and
+the base is named by the terraformer's index, `Bases[-1]`, when it lost nothing).

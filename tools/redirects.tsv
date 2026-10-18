@@ -805,3 +805,16 @@
 0x000F67F0	?base_ecology@@YAXXZ
 0x000F79C0	?base_upkeep@@YAHI@Z
 0x00126E70	?production_phase@@YAXI@Z
+# --- batch 32: movement orders
+0x000CB310	?action_go_to@@YAXH@Z
+0x000CB580	?action_road_to@@YAXH@Z
+0x000CC360	?action_airdrop@@YAHHHHH@Z	approved
+# --- batch 32: unitterra
+0x000C9B00	?action_terraform@@YAHHHH@Z	approved
+0x000CAA50	?action_destroy@@YAXHHHH@Z
+0x000CBAA0	?action_home@@YAHHH@Z	approved
+# --- batch 32: unitfx
+0x000CD4E0	?action_oblit@@YAXHH@Z
+0x000CE210	?action_tectonic@@YAXHHH@Z	approved
+0x000CE790	?action_fungal@@YAXHHH@Z	approved
+0x000CEDE0	?action_give@@YAXHH@Z	approved

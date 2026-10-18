@@ -431,6 +431,13 @@ typedef void __fastcall func_fx_play(void *This, void *edx_unused, int fx_id);
 extern func_fx_play *FX_play; // FX::play()
 extern func_fx_play *FX_stop; // FX::stop()
 extern void *FXVar; // global FX instance
+// batch 32: special payloads
+typedef void __fastcall func_fx_play2(void *This, void *edx_unused, int fx_id, int x, int y);
+extern func_fx_play2 *FX_play2; // FX::play2(fx_id, x, y) on FXVar: a sound effect at a tile
+typedef int func_shoot_it(uint32_t, uint32_t, int, int, int);
+// shoot_it(faction_id, faction_id_def, x, y, is_fungal): the defender's orbital defense pods or a
+// flechette defense nearby try to shoot down a tectonic (0) or fungal (1) payload; non-zero if shot
+extern func_shoot_it *shoot_it;
 typedef int __fastcall func_netmsg_pop(void *This, void *edx_unused, LPCSTR label, int delay,
     int flags, LPCSTR pcx_file);
 extern func_netmsg_pop *NetMsg_pop; // NetMsg::pop()
@@ -559,6 +566,17 @@ extern func_i *enemy_move; // enemy_move(veh_id): the AI's move for one unit (56
 extern func_net_this_only *NetDaemon_await_synch; // NetDaemon::await_synch()
 typedef int __fastcall func_net_action(void *This, void *edx_unused, int veh_id, int unk);
 extern func_net_action *NetDaemon_action; // NetDaemon::action(veh_id, unk): non-zero to stop
+// batch 32: unit terraforming
+// BaseWin::check_veh(veh_id) on BaseWinVar: redraws the base window if it shows the unit
+extern func_basewin_check_base *BaseWin_check_veh;
+typedef int __fastcall func_tut_map(void *This, void *edx_unused, LPCSTR label, int x, int y, int veh_id,
+    void *picture, int unk1, int unk2, int unk3);
+extern func_tut_map *TutWin_tut_map; // TutWin::tut_map(): a tutorial message pointing at a map tile
+extern void *TutWinVar; // global TutWin instance
+extern uint32_t *TutTerraformShown; // [2] land, sea: a bit per terraform id whose "MADE..." tutorial
+                                    // message has been shown
+extern int *TerraformSoundPlayed; // set when a terraforming of the player at the controls completes and
+                                  // its sound plays; cleared by turn_upkeep() (once per turn)
 // batch 31: AI diplomacy
 extern func_xyi *communicate; // communicate(faction_id, faction_id_with, unk): the diplomacy dialog
 typedef void func_encounter(int, int, int, int, int, int);
@@ -566,11 +584,6 @@ extern func_encounter *encounter; // encounter(faction_id, faction_id_with, unk1
 typedef int __fastcall func_path_find(void *This, void *edx_unused, int x_src, int y_src, int x_dst,
     int y_dst, int faction_id, int faction_id_2, int flags, int unk);
 extern func_path_find *Path_find; // Path::find() on Paths, still in the exe (the DLL's is a stub)
-extern func_xyi *action_terraform; // action_terraform(veh_id, terraform_id, unk)
-extern func5 *action_go_to; // action_go_to(veh_id)
-extern func5 *action_road_to; // action_road_to(veh_id)
-typedef void func_action_destroy(int, int, int, int);
-extern func_action_destroy *action_destroy; // action_destroy(veh_id, unk, x, y)
 extern func_xyi *boom; // boom(x, y, unk): explosion animation
 extern void *ReportIf; // global ReportIf (Thinker's name)
 extern func_win_redraw *ReportIf_on_redraw; // ReportIf::on_redraw()
@@ -586,6 +599,21 @@ extern func_net_await *NetDaemon_await_exec; // NetDaemon::await_exec()
 typedef int __fastcall func_net_maybe_lock(void *This, void *edx_unused, int *veh_id, int unk1, int unk2,
     int x, int y, int flags);
 extern func_net_maybe_lock *NetDaemon_maybe_lock; // NetDaemon::maybe_lock(): non-zero if not locked
+// batch 32: movement orders
+typedef int __fastcall func_path_move(void *This, void *edx_unused, int veh_id, int faction_id);
+extern func_path_move *Path_move; // Path::move() on Paths: the next step toward the unit's first waypoint
+                                  // (still in the exe; the DLL's Path::move() is unfinished)
+extern func_iii *order_veh; // order_veh(veh_id, dir, flags): move a unit one step; non-zero if it moved
+typedef int __fastcall func_net_order_veh(void *This, void *edx_unused, int veh_id, int dir, int flags);
+extern func_net_order_veh *NetDaemon_order_veh; // NetDaemon::order_veh() on NetDaemonVar
+typedef void func_say_loc(LPSTR output, int x, int y, int near_base, int coords, int prefix);
+extern func_say_loc *say_loc; // say_loc(): appends the name of the base at (or near) a tile
+extern func_xyi *capture_base; // capture_base(base_id, faction_id, unk)
+extern func14 *goody_box; // goody_box(veh_id, goody): open a supply pod
+typedef void __fastcall func_console_xy(void *This, void *edx_unused, int x, int y);
+extern func_console_xy *Console_cursor_next; // Console::cursor_next(x, y) on ConsoleVar
+extern int *MapWinUnk23BF0; // Console field +0x23BF0: cleared by order_veh() for a move without flag 1;
+                            // action_airdrop() skips its pause while it is set
 
 DLLEXPORT BOOL __cdecl do_non_input();
 DLLEXPORT void __cdecl do_all_non_input();

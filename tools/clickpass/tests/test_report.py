@@ -171,7 +171,9 @@ class TsvFilesTest(unittest.TestCase):
 
     def test_shipped_decisions(self):
         decisions = {d.function: d for d in read_decisions(DECISIONS_TSV)}
-        self.assertEqual(sorted(decisions), ["drone_riot", "hex_cost", "wants_to_attack"])
+        self.assertEqual(sorted(decisions), ["action_airdrop", "action_fungal", "action_give", "action_home",
+                                             "action_tectonic", "action_terraform", "drone_riot", "hex_cost",
+                                             "wants_to_attack"])
         self.assertEqual(decisions["wants_to_attack"],
                          Decision("*", "wants_to_attack", "start the region counts at zero (the intended design)",
                                   "2026-10-18", "Kiousu: replicate the original's intent, not the shipped "

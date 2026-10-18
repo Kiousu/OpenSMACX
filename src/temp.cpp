@@ -900,6 +900,8 @@ func_win_redraw *WorldWin_clear_terrain = (func_win_redraw *)0x004C45E0;
 func_fx_play *FX_play = (func_fx_play *)0x00446A00;
 func_fx_play *FX_stop = (func_fx_play *)0x00446A90;
 void *FXVar = (void *)0x00749CF8;
+func_fx_play2 *FX_play2 = (func_fx_play2 *)0x00446960;
+func_shoot_it *shoot_it = (func_shoot_it *)0x004CDAF0;
 func_netmsg_pop *NetMsg_pop = (func_netmsg_pop *)0x0047A890;
 void *NetMsgVar = (void *)0x00805338;
 int *BaseIDUnk = (int *)0x009A6564;
@@ -952,10 +954,6 @@ func_net_this_only *NetDaemon_net_tasks = (func_net_this_only *)0x00530360;
 func_net_this_only *NetMsg_close = (func_net_this_only *)0x0047A7D0;
 func_x_pop_2 *X_pop_2 = (func_x_pop_2 *)0x005BF330;
 Sprite **FactionPortraits = (Sprite **)0x006846D8;
-func_xyi *action_terraform = (func_xyi *)0x004C9B00;
-func5 *action_go_to = (func5 *)0x004CB310;
-func5 *action_road_to = (func5 *)0x004CB580;
-func_action_destroy *action_destroy = (func_action_destroy *)0x004CAA50;
 func_xyi *boom = (func_xyi *)0x00504AA0;
 void *ReportIf = (void *)0x00885F38;
 func_win_redraw *ReportIf_on_redraw = (func_win_redraw *)0x004A3FC0;
@@ -988,6 +986,12 @@ func_veh_scoot *veh_scoot = (func_veh_scoot *)0x0055A150;
 func5 *call_council = (func5 *)0x0052C880;
 int *PathXDst = (int *)0x00945B18;
 int *PathYDst = (int *)0x00945B1C;
+// batch 32: unit terraforming
+func_basewin_check_base *BaseWin_check_veh = (func_basewin_check_base *)0x0041A8B0;
+func_tut_map *TutWin_tut_map = (func_tut_map *)0x004BE650;
+void *TutWinVar = (void *)0x008C6E68;
+uint32_t *TutTerraformShown = (uint32_t *)0x009A64B4;
+int *TerraformSoundPlayed = (int *)0x0090DB84;
 // batch 31: base turn
 func_void *base_production = (func_void *)0x004F07E0;
 func5 *base_terraform = (func5 *)0x004ECBF0;
@@ -996,6 +1000,15 @@ func_mapwin_set_center *MapWin_set_center = (func_mapwin_set_center *)0x0046B1F0
 func_basewin_zoom *BaseWin_zoom = (func_basewin_zoom *)0x0041A920;
 func_win_redraw *BaseWin_on_redraw = (func_win_redraw *)0x0041E790;
 int *BaseWinBaseID = (int *)0x006E8134;
+// batch 32: movement orders
+func_path_move *Path_move = (func_path_move *)0x0059BC10;
+func_iii *order_veh = (func_iii *)0x005947C0;
+func_net_order_veh *NetDaemon_order_veh = (func_net_order_veh *)0x00531780;
+func_say_loc *say_loc = (func_say_loc *)0x00592250;
+func_xyi *capture_base = (func_xyi *)0x0050C510;
+func14 *goody_box = (func14 *)0x0057A660;
+func_console_xy *Console_cursor_next = (func_console_xy *)0x005109B0;
+int *MapWinUnk23BF0 = (int *)0x009392A0;
 
 /*
 Purpose: Process non-input related message.

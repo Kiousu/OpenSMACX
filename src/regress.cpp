@@ -25,12 +25,14 @@
 #include "path.h"
 #include "random.h"
 #include "technology.h"
+#include "terraforming.h"
 #include "council.h"
 #include "probe.h"
 #include "alpha.h"
 #include "net.h"
 #include "iat.h"
 #include "clickpass.h"
+#include "focusguard.h"
 #include "regress.h"
 
 #ifdef OPENSMACX_REGRESS
@@ -53,6 +55,24 @@ static void logf(const char *fmt, ...) {
     va_end(ap);
     fputc('\n', regress_log);
     fflush(regress_log);
+}
+
+// The harness's notes (the focus guard's, focusguard.cpp), kept so that regress_run(), which starts
+// the log afresh, writes them again.
+static char RegressNotes[2048];
+
+void regress_note(const char *text) {
+    strncat_s(RegressNotes, text, _TRUNCATE);
+    strncat_s(RegressNotes, "\n", _TRUNCATE);
+    if (regress_log) {
+        logf("%s", text);
+        return;
+    }
+    FILE *log = fopen(LOG_FILE, "a");
+    if (log) {
+        fprintf(log, "%s\n", text);
+        fclose(log);
+    }
 }
 
 // Crash guard: a test that faults (access violation in either version) is logged with the
@@ -10609,10 +10629,10 @@ struct UnitActStubs {
           focus_stub(0x005108A0, (void *)unitact_console_focus),
           atrocity_stub((uint32_t)&atrocity, (void *)unitact_atrocity),
           boom_stub(0x00504AA0, (void *)unitact_boom),
-          terraform_stub(0x004C9B00, (void *)unitact_terraform),
-          go_to_stub(0x004CB310, (void *)unitact_go_to),
-          road_to_stub(0x004CB580, (void *)unitact_road_to),
-          destroy_stub(0x004CAA50, (void *)unitact_destroy),
+          terraform_stub((uint32_t)&action_terraform, (void *)unitact_terraform),
+          go_to_stub((uint32_t)&action_go_to, (void *)unitact_go_to), // DLL code since batch 32
+          road_to_stub((uint32_t)&action_road_to, (void *)unitact_road_to),
+          destroy_stub((uint32_t)&action_destroy, (void *)unitact_destroy),
           fight_stub(0x00506AF0, (void *)unitact_battle_fight_2),
           draw_map_stub(0x0046B190, (void *)unitact_draw_map),
           report_stub(0x004A3FC0, (void *)unitact_report_redraw),
@@ -10920,6 +10940,1059 @@ static int test_action_destruct() {
     return h.mismatches;
 }
 
+// ---------------------------------------------------------------- batch 32: special payloads (unitfx)
+
+// action_oblit(), action_tectonic(), action_fungal() and action_give(): the exe's code against the
+// DLL's from the same state, with the unitact recorders plus FX::play2 (the payload's sound),
+// draw_radius, base_kill (the DLL function, which the exe's call reaches through the redirect),
+// X_pop, the map views' terrain clears at the end of world_climate() and shoot_it() (answered per
+// defender, except in the variants where the real one runs). NoticeFn has no entries for these:
+// each is recorded under a related one, with a label of its own.
+static void __fastcall unitfx_fx_play2(void *This, void *, int fx_id, int x, int y) {
+    notice_record(NF_FX_PLAY, "play2", NULL, NULL, fx_id + (This == FXVar) * 0x1000, x, y);
+}
+static void __cdecl unitfx_draw_radius(int x, int y, int radius, int mode) {
+    notice_record(NF_DRAW_TILE, "radius", NULL, NULL, x, y, radius * 16 + mode);
+}
+static void __cdecl unitfx_base_kill(uint32_t base_id) {
+    notice_record(NF_BASE_KILL, NULL, NULL, NULL, base_id, 0, 0);
+}
+static void __fastcall unitfx_clear_terrain(void *This, void *) {
+    notice_record(NF_DRAW_MAP, "clear_terrain", NULL, NULL, (int)This, 0, 0);
+}
+static int UnitFxShootAnswer[MaxPlayerNum];
+static int __cdecl unitfx_shoot_it(uint32_t faction_id, uint32_t faction_id_def, int x, int y,
+                                   int is_fungal) {
+    notice_record(NF_BATTLE_FIGHT_2, "shoot_it", NULL, NULL, faction_id * 16 + faction_id_def,
+        x * 0x10000 + y, is_fungal);
+    return UnitFxShootAnswer[faction_id_def & 7];
+}
+
+struct UnitFxStubs {
+    JmpStub fx_stub, radius_stub, base_kill_stub, x_pop_stub, mapwin_stub, worldwin_stub;
+    UnitFxStubs()
+        : fx_stub(0x00446960, (void *)unitfx_fx_play2),
+          radius_stub(0x0046AEF0, (void *)unitfx_draw_radius),
+          base_kill_stub((uint32_t)&base_kill, (void *)unitfx_base_kill),
+          x_pop_stub(0x005BF310, (void *)notice_x_pop),
+          mapwin_stub(0x0046FD90, (void *)unitfx_clear_terrain),
+          worldwin_stub(0x004C45E0, (void *)unitfx_clear_terrain) {}
+    BOOL ok() const {
+        return fx_stub.ok && radius_stub.ok && base_kill_stub.ok && x_pop_stub.ok && mapwin_stub.ok
+            && worldwin_stub.ok;
+    }
+};
+
+// The fields the exe reads at fixed offsets (checked here, the C++ uses the names).
+static_assert(offsetof(PlayerData, region_base_plan) == 0x197C, "PlayerData layout");
+static_assert(offsetof(PlayerData, satellites_odp_total) == 0x814, "PlayerData layout");
+static_assert(offsetof(PlayerData, sat_odp_deployed) == 0x364, "PlayerData layout");
+static_assert(offsetof(RulesBasic, tgl_oblit_base_atrocity) == 0x949860 - 0x949738, "RulesBasic layout");
+
+// Exe code sites switched between their own bytes and replacement code while a test runs. The
+// own bytes are checked before anything is written.
+struct CodeSite {
+    uint8_t *at;
+    int size;
+    uint8_t orig[8];
+    uint8_t code[8];
+    DWORD old_protect;
+};
+struct CodePatchSet {
+    CodeSite sites[8];
+    int count;
+    BOOL ok;
+    CodePatchSet() : count(0), ok(true) {}
+    void add(uint32_t address, const uint8_t *orig, const uint8_t *code, int size) {
+        if (count >= 8 || size > 8) {
+            ok = false;
+            return;
+        }
+        CodeSite *s = &sites[count];
+        s->at = (uint8_t *)address;
+        s->size = size;
+        memcpy(s->orig, orig, size);
+        memcpy(s->code, code, size);
+        if (!VirtualProtect(s->at, size, PAGE_EXECUTE_READWRITE, &s->old_protect)) {
+            logf("cannot unprotect %08X (%u)", address, GetLastError());
+            ok = false;
+            return;
+        }
+        count++;
+        if (memcmp(s->at, orig, size)) {
+            logf("unexpected code at %08X", address);
+            ok = false;
+        }
+    }
+    void set(BOOL on) {
+        for (int i = 0; i < count && ok; i++) {
+            memcpy(sites[i].at, on ? sites[i].code : sites[i].orig, sites[i].size);
+            FlushInstructionCache(GetCurrentProcess(), sites[i].at, sites[i].size);
+        }
+    }
+    ~CodePatchSet() {
+        set(false);
+        for (int i = 0; i < count; i++) {
+            VirtualProtect(sites[i].at, sites[i].size, sites[i].old_protect, &sites[i].old_protect);
+        }
+    }
+};
+
+// What the pinned exe reads instead of the freed unit slot: the missile's faction and prototype.
+static uint8_t UnitFxPinFaction;
+static int16_t UnitFxPinProto;
+
+// The exe's action_tectonic() and action_fungal() with the intended reads (see the DLL's): the
+// loads from the unit slot kill() has just freed read UnitFxPinFaction / UnitFxPinProto ("slot
+// pins"), and the jump out of the shoot-down loop skips the territory owner's turn ("stop pin").
+static void unitfx_pins(BOOL fungal, CodePatchSet *slot, CodePatchSet *stop) {
+    uint8_t f[4], p[4];
+    uint32_t fa = (uint32_t)&UnitFxPinFaction, pa = (uint32_t)&UnitFxPinProto;
+    memcpy(f, &fa, 4);
+    memcpy(p, &pa, 4);
+    const uint8_t jne_loop_end[2] = { 0x75, 0x29 }, jne_past_owner[2] = { 0x75, 0x62 };
+    if (!fungal) {
+        const uint8_t ebx_cl[6] = { 0x8A, 0x8B, 0x36, 0x28, 0x95, 0x00 }; // mov cl,[ebx+0x952836]
+        const uint8_t ebx_al[6] = { 0x8A, 0x83, 0x36, 0x28, 0x95, 0x00 }; // mov al,[ebx+0x952836]
+        const uint8_t abs_cl[6] = { 0x8A, 0x0D, f[0], f[1], f[2], f[3] };
+        const uint8_t abs_al[6] = { 0xA0, f[0], f[1], f[2], f[3], 0x90 };
+        slot->add(0x004CE5A9, ebx_cl, abs_cl, 6); // TECMOFIED: title, name and noun of the attacker
+        slot->add(0x004CE5E3, ebx_cl, abs_cl, 6);
+        slot->add(0x004CE61D, ebx_cl, abs_cl, 6);
+        slot->add(0x004CE679, ebx_al, abs_al, 6); // TectonicDetonationCount[attacker]++
+        stop->add(0x004CE4E5, jne_loop_end, jne_past_owner, 2);
+    } else {
+        const uint8_t esi_proto[7] = { 0x0F, 0xBF, 0x86, 0x32, 0x28, 0x95, 0x00 }; // movsx eax,[esi+0x952832]
+        const uint8_t abs_proto[7] = { 0x0F, 0xBF, 0x05, p[0], p[1], p[2], p[3] };
+        const uint8_t ecx_dl[6] = { 0x8A, 0x91, 0x36, 0x28, 0x95, 0x00 }; // mov dl,[ecx+0x952836]
+        const uint8_t abs_dl[6] = { 0x8A, 0x15, f[0], f[1], f[2], f[3] };
+        const uint8_t esi_cl[6] = { 0x8A, 0x8E, 0x36, 0x28, 0x95, 0x00 }; // mov cl,[esi+0x952836]
+        const uint8_t abs_cl[6] = { 0x8A, 0x0D, f[0], f[1], f[2], f[3] };
+        slot->add(0x004CEA1B, esi_proto, abs_proto, 7); // the reactor: how many fungus tiles
+        slot->add(0x004CEB46, ecx_dl, abs_dl, 6); // the attacker for the map view and notice test
+        slot->add(0x004CED04, esi_cl, abs_cl, 6); // FUNGMOTIZED: title, name and noun
+        slot->add(0x004CED40, esi_cl, abs_cl, 6);
+        slot->add(0x004CED7A, esi_cl, abs_cl, 6);
+        stop->add(0x004CE9AC, jne_loop_end, jne_past_owner, 2);
+    }
+}
+
+// Unit slots after the last unit that veh_init() fills (fungal payloads breed mind worms).
+const int UnitFxSpare = 24;
+static uint8_t *const DesignSuggestBlock = (uint8_t *)0x0093FC38; // DesignSuggestCategory..State
+const size_t DesignSuggestSize = 0x0093FC58 - 0x0093FC38;
+
+// Everything one run leaves: GameSnapshot, NoticeState, UnitActExtra, and the detonation counts,
+// the new units, the prototypes (action_give() proposes designs) and the design suggestion globals.
+struct UnitFxRun {
+    GameSnapshot snap;
+    NoticeState notice;
+    UnitActExtra extra;
+    uint32_t tectonic[MaxPlayerNum];
+    Veh spare[UnitFxSpare];
+    uint8_t suggest[DesignSuggestSize];
+    VehPrototype protos[MaxVehProtoNum];
+    BungedDesign bung[MaxPlayerNum * MaxBungedDesignNum];
+    int new_design;
+};
+
+static BOOL unitfx_differs(const UnitFxRun *o, const UnitFxRun *n, int spare, const char *label) {
+    if (notice_differs(&o->notice, &n->notice, label) || snap_differs(&o->snap, &n->snap, label)) {
+        return true;
+    }
+    const char *what = unitact_differs(&o->extra, &n->extra);
+    if (!what && memcmp(o->tectonic, n->tectonic, sizeof(o->tectonic))) {
+        what = "TectonicDetonationCount";
+    }
+    if (!what && memcmp(o->spare, n->spare, sizeof(Veh) * spare)) {
+        what = "a new unit past the last";
+    }
+    if (!what && memcmp(o->protos, n->protos, sizeof(o->protos))) {
+        what = "VehPrototypes";
+    }
+    if (!what && memcmp(o->suggest, n->suggest, sizeof(o->suggest))) {
+        what = "the design suggestion globals";
+    }
+    if (!what && (memcmp(o->bung, n->bung, sizeof(o->bung)) || o->new_design != n->new_design)) {
+        what = "BungList or ProtoIDNewDesign";
+    }
+    if (what && label) {
+        logf("  %s: %s differs", label, what);
+    }
+    return what != NULL;
+}
+
+// The exe as shipped, the exe with pins (when given) and the DLL from the same state; the pinned
+// exe (or the shipped one without pins) must match the DLL. Where the shipped exe differs from the
+// pinned one, the case is counted, and each kind of pin alone tells which slip made the difference.
+struct UnitFxHarness {
+    GameSnapshot base;
+    UnitFxRun runs[3]; // 0 the exe (shipped, later one pin kind only), 1 the exe pinned, 2 the DLL
+    NoticeState notice_saved;
+    uint8_t status_saved;
+    int diff_saved, sunspot_saved;
+    uint32_t tectonic_saved[MaxPlayerNum];
+    Veh spare_saved[UnitFxSpare];
+    uint8_t suggest_saved[DesignSuggestSize];
+    VehPrototype protos_saved[MaxVehProtoNum];
+    BungedDesign bung_saved[MaxPlayerNum * MaxBungedDesignNum];
+    int new_design_saved;
+    int spare;
+    int compared, mismatches, with_calls, changed;
+    int shipped, by_slot, by_stop, shipped_count, shipped_notice, shipped_world;
+    int shown; // shipped differences logged
+    // the last case: the shipped exe differed from the intended, and by which slip; whether the
+    // shipped and the intended run detonated (UnkBitfield1 bit 4, cleared by the setup)
+    BOOL last_shipped, last_slot, last_stop, last_det_shipped, last_det_intended;
+    UnitFxHarness() : compared(0), mismatches(0), with_calls(0), changed(0), shipped(0), by_slot(0),
+        by_stop(0), shipped_count(0), shipped_notice(0), shipped_world(0), shown(0) {
+        snap_alloc(&base);
+        for (int i = 0; i < 3; i++) {
+            snap_alloc(&runs[i].snap);
+        }
+        snap_take(&base);
+        NoticeCallCount = 0;
+        notice_take(&notice_saved, 0);
+        status_saved = *FactionsStatus;
+        diff_saved = *DiffLevelCurrent;
+        sunspot_saved = *SunspotDuration;
+        memcpy(tectonic_saved, TectonicDetonationCount, sizeof(tectonic_saved));
+        spare = MaxVehNum - base.veh_count_global;
+        spare = (spare < UnitFxSpare) ? spare : UnitFxSpare;
+        memcpy(spare_saved, &Vehs[base.veh_count_global], sizeof(Veh) * spare);
+        memcpy(suggest_saved, DesignSuggestBlock, sizeof(suggest_saved));
+        memcpy(protos_saved, VehPrototypes, sizeof(protos_saved));
+        memcpy(bung_saved, BungList, sizeof(bung_saved));
+        new_design_saved = *ProtoIDNewDesign;
+    }
+    ~UnitFxHarness() {
+        prepare(0);
+        snap_free(&base);
+        for (int i = 0; i < 3; i++) {
+            snap_free(&runs[i].snap);
+        }
+    }
+    void prepare(uint32_t seed) {
+        snap_restore(&base);
+        notice_restore(&notice_saved);
+        unitact_restore(seed);
+        *FactionsStatus = status_saved;
+        *DiffLevelCurrent = diff_saved;
+        *SunspotDuration = sunspot_saved;
+        memcpy(TectonicDetonationCount, tectonic_saved, sizeof(tectonic_saved));
+        memcpy(&Vehs[base.veh_count_global], spare_saved, sizeof(Veh) * spare);
+        memcpy(DesignSuggestBlock, suggest_saved, sizeof(suggest_saved));
+        memcpy(VehPrototypes, protos_saved, sizeof(protos_saved));
+        memcpy(BungList, bung_saved, sizeof(bung_saved));
+        *ProtoIDNewDesign = new_design_saved;
+        NoticeCallCount = 0;
+        memset(NoticeAnswer, 0, sizeof(NoticeAnswer));
+        memset(UnitFxShootAnswer, 0, sizeof(UnitFxShootAnswer));
+        FixedTimeValue = 0x5EED0000u + seed;
+    }
+    void take(UnitFxRun *r, int ret) {
+        snap_take(&r->snap);
+        notice_take(&r->notice, ret);
+        unitact_take(&r->extra, ret);
+        memcpy(r->tectonic, TectonicDetonationCount, sizeof(r->tectonic));
+        memcpy(r->spare, &Vehs[base.veh_count_global], sizeof(Veh) * spare);
+        memcpy(r->suggest, DesignSuggestBlock, sizeof(r->suggest));
+        memcpy(r->protos, VehPrototypes, sizeof(r->protos));
+        memcpy(r->bung, BungList, sizeof(r->bung));
+        r->new_design = *ProtoIDNewDesign;
+    }
+    template <class S, class C>
+    void one(UnitFxRun *r, uint32_t seed, S setup, C call) {
+        prepare(seed);
+        setup();
+        call();
+        take(r, 0);
+    }
+    template <class S, class E, class D>
+    void run(const char *label, uint32_t seed, S setup, E exe, D dll, CodePatchSet *slot = NULL,
+             CodePatchSet *stop = NULL) {
+        run(label, seed, setup, exe, dll, [](UnitFxHarness *) { return false; }, slot, stop);
+    }
+    // The exe as shipped (runs[0]), the exe pinned to the intended behaviour by the caller's own
+    // call (runs[1]) and the DLL (runs[2]); the pinned exe must match the DLL unless explain()
+    // accepts the difference (counted in shipped). The caller compares runs[0] with runs[1].
+    template <class S, class E, class P, class D, class X>
+    void run_pinned(const char *label, uint32_t seed, S setup, E exe, P pinned, D dll, X explain) {
+        REGRESS_CTX("%s", label); // named in a crash or hang report
+        last_shipped = last_slot = last_stop = false;
+        one(&runs[0], seed, setup, exe);
+        one(&runs[1], seed, setup, pinned);
+        one(&runs[2], seed, setup, dll);
+        compared++;
+        with_calls += runs[1].notice.call_count > 0;
+        changed += snap_differs(&base, &runs[1].snap, NULL);
+        if (unitfx_differs(&runs[1], &runs[2], spare, NULL)) {
+            if (explain(this)) {
+                shipped++;
+            } else {
+                mismatches++;
+                if (mismatches <= MAX_DETAIL) {
+                    unitfx_differs(&runs[1], &runs[2], spare, label);
+                }
+            }
+        }
+    }
+    // explain(): true when a difference between the exe and the DLL is a deliberate one, checked by
+    // the caller (counted in shipped instead of mismatches)
+    template <class S, class E, class D, class X>
+    void run(const char *label, uint32_t seed, S setup, E exe, D dll, X explain,
+             CodePatchSet *slot = NULL, CodePatchSet *stop = NULL) {
+        REGRESS_CTX("%s", label); // named in a crash or hang report
+        last_shipped = last_slot = last_stop = false;
+        one(&runs[0], seed, setup, exe);
+        last_det_shipped = (runs[0].extra.bitfield & 4) != 0;
+        if (slot) {
+            slot->set(true);
+            stop->set(true);
+            one(&runs[1], seed, setup, exe);
+            slot->set(false);
+            stop->set(false);
+        }
+        one(&runs[2], seed, setup, dll);
+        const UnitFxRun *ref = slot ? &runs[1] : &runs[0];
+        last_det_intended = (ref->extra.bitfield & 4) != 0;
+        compared++;
+        with_calls += ref->notice.call_count > 0;
+        changed += snap_differs(&base, &ref->snap, NULL);
+        if (unitfx_differs(ref, &runs[2], spare, NULL)) {
+            if (!slot && explain(this)) {
+                shipped++;
+            } else {
+                mismatches++;
+                if (mismatches <= MAX_DETAIL) {
+                    unitfx_differs(ref, &runs[2], spare, label);
+                }
+            }
+        }
+        if (!slot || !unitfx_differs(&runs[0], &runs[1], spare, NULL)) {
+            return;
+        }
+        shipped++;
+        last_shipped = true;
+        shipped_count += memcmp(runs[0].tectonic, runs[1].tectonic, sizeof(runs[0].tectonic)) != 0;
+        shipped_notice += notice_differs(&runs[0].notice, &runs[1].notice, NULL);
+        shipped_world += snap_differs(&runs[0].snap, &runs[1].snap, NULL);
+        if (shown < 12) {
+            char what[160];
+            sprintf_s(what, "shipped game vs intended, %s", label);
+            unitfx_differs(&runs[0], &runs[1], spare, what);
+            shown++;
+        }
+        slot->set(true); // the freed slot pinned, the territory owner asked again as shipped
+        one(&runs[0], seed, setup, exe);
+        slot->set(false);
+        last_stop = unitfx_differs(&runs[0], &runs[1], spare, NULL);
+        by_stop += last_stop;
+        stop->set(true); // the territory owner skipped, the freed slot read as shipped
+        one(&runs[0], seed, setup, exe);
+        stop->set(false);
+        last_slot = unitfx_differs(&runs[0], &runs[1], spare, NULL);
+        by_slot += last_slot;
+    }
+};
+
+// Tiles on the map within the wrap-around (the x of a tile from an offset, or -1 off the map).
+static int unitfx_tile_x(int x, int y, int i) {
+    int x_radius = x + RadiusOffsetX[i];
+    if (!(*MapIsFlat & 1)) {
+        if (x_radius < 0) {
+            x_radius += *MapLongitudeBounds;
+        } else if (x_radius >= *MapLongitudeBounds) {
+            x_radius -= *MapLongitudeBounds;
+        }
+    }
+    int y_radius = y + RadiusOffsetY[i];
+    if (y_radius < 0 || y_radius >= *MapLatitudeBounds || x_radius < 0
+        || x_radius >= *MapLongitudeBounds) {
+        return -1;
+    }
+    return x_radius;
+}
+
+static int unitfx_payload(BOOL fungal) {
+    static const uint8_t entry[6] = { 0x55, 0x8B, 0xEC, 0x83, 0xEC, 0x34 };
+    const uint32_t address = fungal ? 0x004CE790 : 0x004CE210;
+    const char *name = fungal ? "action_fungal" : "action_tectonic";
+    OriginalEntry vanilla(address, entry);
+    NoticeStubs stubs;
+    UnitActStubs stubs2;
+    UnitFxStubs stubs3;
+    TimeGetTimePin pin; // world_climate() reseeds from the clock
+    CodePatchSet slot, stop;
+    unitfx_pins(fungal, &slot, &stop);
+    if (!vanilla.ok || !stubs.ok() || !stubs2.ok() || !stubs3.ok() || !pin.ok() || !slot.ok
+        || !stop.ok) {
+        logf("%s: cannot set up the stubs, the clock pin or the pins", name);
+        return 1;
+    }
+    UnitActScope scope;
+    const int count = *VehCurrentCount;
+    // the unit after each unit in the table: the slot the shipped exe reads after kill()
+    int next_faction = 0, next_reactor = 0;
+    for (int i = 0; i + 1 < count; i++) {
+        next_faction += Vehs[i + 1].faction_id != Vehs[i].faction_id;
+        next_reactor += VehPrototypes[Vehs[i + 1].proto_id].reactor_id
+            != VehPrototypes[Vehs[i].proto_id].reactor_id;
+    }
+    UnitFxHarness *h = new UnitFxHarness();
+    const uint32_t state_saved = *GameState;
+    char label[128];
+    int detonated = 0, notified = 0;
+    int by_v[8][6] = {}; // per variant: compared, shipped differs, slot, stop, detonated shipped/intended
+    const int step = count / (fungal ? 80 : 40) + 1;
+    int units[128], unit_count = 0;
+    for (int veh_id = 0; veh_id < count && unit_count < 127; veh_id += step) {
+        units[unit_count++] = veh_id;
+    }
+    if (count > 0 && units[unit_count - 1] != count - 1) {
+        units[unit_count++] = count - 1; // the last unit: there the freed slot keeps the missile
+    }
+    for (int n = 0; n < unit_count; n++) {
+        const int veh_id = units[n];
+        h->prepare(0); // the inputs come from the game as loaded, not as the last run left it
+        const uint32_t faction_id = Vehs[veh_id].faction_id;
+        const int x0 = Vehs[veh_id].x, y0 = Vehs[veh_id].y;
+        // targets: the nearest base of another faction; a tile two steps from the unit
+        int targets[2][2], target_count = 0;
+        int best = -1, best_dist = 9999;
+        for (int b = 0; b < *BaseCurrentCount; b++) {
+            if (Bases[b].faction_id_current == faction_id) {
+                continue;
+            }
+            int dx = abs(Bases[b].x - x0);
+            if (!(*MapIsFlat & 1) && dx > (int)*MapLongitude) {
+                dx = *MapLongitudeBounds - dx;
+            }
+            int dist = dx + abs(Bases[b].y - y0);
+            if (dist < best_dist) {
+                best_dist = dist;
+                best = b;
+            }
+        }
+        if (best >= 0) {
+            targets[target_count][0] = Bases[best].x;
+            targets[target_count++][1] = Bases[best].y;
+        }
+        int i_far = 9 + veh_id % 16;
+        if (on_map(x0, y0) && unitfx_tile_x(x0, y0, i_far) >= 0) {
+            targets[target_count][0] = unitfx_tile_x(x0, y0, i_far);
+            targets[target_count++][1] = y0 + RadiusOffsetY[i_far];
+        }
+        for (int t = 0; t < target_count; t++) {
+            const int x = targets[t][0], y = targets[t][1];
+            h->prepare(0);
+            const int base_near = base_find(x, y);
+            const int owner_near = (base_near >= 0) ? Bases[base_near].faction_id_current : -1;
+            const int territory = map_loc(x, y)->territory;
+            // the flechette defense goes where shoot_it() looks: the first base within two tiles
+            // of the target (its 25 tiles in RadiusOffset order) that isn't the attacker's
+            int flechette = -1;
+            for (int i = 0; i < 25 && flechette < 0; i++) {
+                const int x_fl = unitfx_tile_x(x, y, i);
+                const int base_fl = (x_fl >= 0) ? base_at(x_fl, y + RadiusOffsetY[i]) : -1;
+                if (base_fl >= 0 && Bases[base_fl].faction_id_current != faction_id) {
+                    flechette = base_fl;
+                }
+            }
+            // 0 as loaded, nobody shoots it down; 1 the owner of the target's nearest base at the
+            // controls, its map revealed; 2 the attacker at the controls; 3 everyone shoots it
+            // down; 4 only the target's territory owner does; 5 the real shoot_it(), everyone with
+            // two orbital defense pods; 6 the real one, a flechette defense near the target (no
+            // pods); 7 (fungal) omniscient view
+            for (int v = 0; v < (fungal ? 8 : 7); v++) {
+                if ((v == 1 && owner_near < 1) || (v == 6 && flechette < 0)) {
+                    continue;
+                }
+                sprintf_s(label, "%s(%d, %d, %d) variant %d", name, veh_id, x, y, v);
+                auto setup = [&] {
+                    UnitFxPinFaction = Vehs[veh_id].faction_id;
+                    UnitFxPinProto = Vehs[veh_id].proto_id;
+                    *UnkBitfield1 &= ~4; // set again by a detonation
+                    *FactionIDCurrent = (v == 1) ? owner_near
+                        : ((v == 2) ? (int)faction_id : scope.current_saved);
+                    *GameState = (v == 7) ? (state_saved | STATE_OMNISCIENT_VIEW) : state_saved;
+                    if (v == 1) {
+                        PlayersData[owner_near].flags |= PFLAG_MAP_REVEALED;
+                    } else if (v == 3) {
+                        for (int f = 0; f < MaxPlayerNum; f++) {
+                            UnitFxShootAnswer[f] = 1;
+                        }
+                    } else if (v == 4 && territory > 0) {
+                        UnitFxShootAnswer[territory] = 1;
+                    } else if (v == 5) {
+                        for (int f = 1; f < MaxPlayerNum; f++) {
+                            PlayersData[f].satellites_odp_total = 2;
+                            PlayersData[f].sat_odp_deployed = 0;
+                        }
+                    } else if (v == 6) {
+                        for (int f = 1; f < MaxPlayerNum; f++) {
+                            PlayersData[f].satellites_odp_total = 0;
+                            PlayersData[f].sat_odp_deployed = 0;
+                        }
+                        set_fac(FAC_FLECHETTE_DEFENSE_SYS, flechette, true);
+                    }
+                };
+                // the real shoot_it() in variants 5 and 6
+                auto exe = [&] {
+                    JmpStub *s = (v < 5 || v > 6) ? new JmpStub(0x004CDAF0, (void *)unitfx_shoot_it) : NULL;
+                    ((void(__cdecl *)(int, int, int))address)(veh_id, x, y);
+                    delete s;
+                };
+                auto dll = [&] {
+                    JmpStub *s = (v < 5 || v > 6) ? new JmpStub(0x004CDAF0, (void *)unitfx_shoot_it) : NULL;
+                    if (fungal) {
+                        action_fungal(veh_id, x, y);
+                    } else {
+                        action_tectonic(veh_id, x, y);
+                    }
+                    delete s;
+                };
+                h->run(label, (uint32_t)(veh_id * 16 + t * 8 + v), setup, exe, dll, &slot, &stop);
+                by_v[v][0]++;
+                by_v[v][1] += h->last_shipped;
+                by_v[v][2] += h->last_slot;
+                by_v[v][3] += h->last_stop;
+                by_v[v][4] += h->last_det_shipped;
+                by_v[v][5] += h->last_det_intended;
+                // the DLL run: detonated (not shot down), the target's owner notified
+                detonated += (h->runs[2].extra.bitfield & 4) != 0;
+                for (int c = 0; c < h->runs[2].notice.call_count && c < MaxNoticeCalls; c++) {
+                    const NoticeCall *call = &h->runs[2].notice.calls[c];
+                    notified += call->fn == NF_POPP && (!strcmp(call->label, "TECMOFIED")
+                        || !strcmp(call->label, "FUNGMOTIZED"));
+                }
+            }
+        }
+    }
+    *GameState = state_saved;
+    logf("%s: %d compared (%d changed state, %d with calls; the DLL detonated %d times and showed "
+        "the target's owner %d notices), %d mismatches", name, h->compared, h->changed,
+        h->with_calls, detonated, notified, h->mismatches);
+    logf("%s: the shipped game differs from the intended in %d of %d (freed slot read %d, territory "
+        "owner asked again %d; detonation count elsewhere %d, notices or calls %d, map or units %d); "
+        "the unit after a unit in the table is another faction's in %d of %d slots, has another "
+        "reactor in %d", name, h->shipped, h->compared, h->by_slot, h->by_stop, h->shipped_count,
+        h->shipped_notice, h->shipped_world, next_faction, count - 1, next_reactor);
+    for (int v = 0; v < 8; v++) {
+        if (by_v[v][0]) {
+            logf("%s variant %d: %d cases, the shipped game differs in %d (freed slot %d, territory "
+                "owner again %d), detonated %d times as shipped and %d as intended", name, v,
+                by_v[v][0], by_v[v][1], by_v[v][2], by_v[v][3], by_v[v][4], by_v[v][5]);
+        }
+    }
+    int mismatches = h->mismatches;
+    delete h;
+    return mismatches;
+}
+
+static int test_action_tectonic() {
+    return unitfx_payload(false);
+}
+
+static int test_action_fungal() {
+    return unitfx_payload(true);
+}
+
+// action_give(): every unit carries its index in the table as loaded, plus one, in Veh::unk_1
+// (written by veh_clear() only, read by nothing), so the units can be followed through the
+// disbandings a design proposal can cause. The rule for the units given, checked on a run:
+enum { GIVE_OK, GIVE_BROKEN };
+struct GivePre { // the state a run starts from (after the setup)
+    int count;
+    uint8_t faction[MaxVehNum];
+    int16_t proto[MaxVehNum];
+    BOOL member[MaxVehNum]; // the given unit and the units aboard it
+    int current;
+};
+static GivePre GiveCase;
+static int GiveWhere[2][MaxVehNum]; // after a run: each unit's slot, -1 if disbanded
+
+static void give_tag() {
+    for (int i = 0; i < *VehCurrentCount; i++) {
+        Vehs[i].unk_1 = (uint16_t)(i + 1);
+    }
+}
+
+static void give_pre(int veh_id) {
+    GivePre *g = &GiveCase;
+    g->count = *VehCurrentCount;
+    for (int i = 0; i < g->count; i++) {
+        g->faction[i] = Vehs[i].faction_id;
+        g->proto[i] = Vehs[i].proto_id;
+        g->member[i] = false;
+    }
+    int top = veh_id;
+    while (Vehs[top].prev_veh_id_stack >= 0) {
+        top = Vehs[top].prev_veh_id_stack;
+    }
+    for (int i = top; i >= 0; i = Vehs[i].next_veh_id_stack) {
+        g->member[i] = i == veh_id
+            || (Vehs[i].order == ORDER_SENTRY_BOARD && Vehs[i].waypoint_x[0] == veh_id);
+    }
+    g->current = *FactionIDCurrent;
+}
+
+static void give_where(const GameSnapshot *after, int *where) {
+    for (int i = 0; i < GiveCase.count; i++) {
+        where[i] = -1;
+    }
+    for (int j = 0; j < after->veh_count_global; j++) {
+        int i = after->vehs[j].unk_1 - 1;
+        if (i >= 0 && i < GiveCase.count) {
+            where[i] = j;
+        }
+    }
+}
+
+// Every unit given goes over (or is disbanded), with its basic design or one of the receiver's
+// (or a basic one) sharing its chassis, plan or category, or the Scout Patrol / Transport Foil; no
+// other unit changes sides, and only those or the receiver's own can be disbanded; the receiver's
+// notice names the given unit's design.
+static int give_verdict(const UnitFxHarness *h, const UnitFxRun *r, int *where, int veh_id, int f,
+                        const char **why) {
+    const GivePre *g = &GiveCase;
+    give_where(&r->snap, where);
+    for (int i = 0; i < g->count; i++) {
+        if (where[i] < 0) {
+            if (!g->member[i] && g->faction[i] != f && g->proto[i] / MaxVehProtoFactionNum != f) {
+                *why = "a unit not given was disbanded";
+                return GIVE_BROKEN;
+            }
+            continue;
+        }
+        const Veh *u = &r->snap.vehs[where[i]];
+        if (!g->member[i]) {
+            if (u->faction_id != g->faction[i]) {
+                *why = "a unit not given changed sides";
+                return GIVE_BROKEN;
+            }
+            continue;
+        }
+        if (u->faction_id != f) {
+            *why = "a unit given stayed with the giver";
+            return GIVE_BROKEN;
+        }
+        const int p0 = g->proto[i], p1 = u->proto_id;
+        const VehPrototype *a = &h->protos_saved[p0], *b = &r->protos[p1];
+        const BOOL ok = (p0 < MaxVehProtoFactionNum) ? p1 == p0
+            : (p1 == BSC_SCOUT_PATROL || p1 == BSC_TRANSPORT_FOIL
+                || ((p1 < MaxVehProtoFactionNum || p1 / MaxVehProtoFactionNum == f)
+                    && (b->flags & PROTO_ACTIVE) && (b->chassis_id == a->chassis_id
+                        || b->plan == a->plan || b->unk_1 == a->unk_1)));
+        if (!ok) {
+            *why = "a unit given got an unrelated design";
+            return GIVE_BROKEN;
+        }
+    }
+    if (g->current == f && where[veh_id] >= 0
+        && strcmp(r->notice.parse[0].str, r->protos[r->snap.vehs[where[veh_id]].proto_id].veh_name)) {
+        *why = "the notice names another design";
+        return GIVE_BROKEN;
+    }
+    return GIVE_OK;
+}
+
+// Kiousu (2026-10-18): the rest of the cargo goes to the receiver when the given transport is
+// disbanded on the way. The (pinned) exe leaves those units with the giver (their orders cleared):
+// count the runs where the DLL gave such a unit and the exe kept it.
+static BOOL give_rest_of_cargo(const UnitFxHarness *h, int veh_id, int f) {
+    const int *where_o = GiveWhere[0], *where_n = GiveWhere[1];
+    if (where_n[veh_id] >= 0) {
+        return false;
+    }
+    for (int i = 0; i < GiveCase.count; i++) {
+        if (GiveCase.member[i] && i != veh_id && where_n[i] >= 0 && where_o[i] >= 0
+            && h->runs[2].snap.vehs[where_n[i]].faction_id == f
+            && h->runs[1].snap.vehs[where_o[i]].faction_id == GiveCase.faction[i]
+            && h->runs[1].snap.vehs[where_o[i]].order == ORDER_NONE) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Kiousu (2026-10-18): a unit given is counted against its new design as give_a_base() counts units
+// changing sides (the giver's count of its old design down, the receiver's of the new one up); the
+// exe never does. The pinned exe gets these counts from the test: before each design proposal
+// (propose_proto(), stubbed at its DLL entry, which the exe's call reaches through the redirect)
+// and after the call, every unit that changed sides since is counted, so each proposal sees the
+// counts the DLL has at that point (nothing else reads them during action_give()).
+static BOOL GiveCounted[MaxVehNum];
+static JmpStub *GiveProposeStub;
+static void give_count_changed() {
+    for (int j = 0; j < *VehCurrentCount; j++) {
+        const int i = Vehs[j].unk_1 - 1;
+        if (i < 0 || i >= GiveCase.count || GiveCounted[i] || Vehs[j].faction_id == GiveCase.faction[i]) {
+            continue;
+        }
+        PlayersData[GiveCase.faction[i]].proto_id_active[GiveCase.proto[i]]--;
+        PlayersData[Vehs[j].faction_id].proto_id_active[Vehs[j].proto_id]++;
+        GiveCounted[i] = true;
+    }
+}
+static int __cdecl give_propose_pinned(uint32_t faction_id, uint32_t chassis_id, uint32_t weapon_id,
+                                       uint32_t armor_id, uint32_t abilities, uint32_t reactor_id,
+                                       int category, LPCSTR name) {
+    give_count_changed();
+    JmpStub *stub = GiveProposeStub; // let the real one run, then put the stub back
+    uint8_t jump[5];
+    memcpy(jump, stub->entry, 5);
+    memcpy(stub->entry, stub->saved_code, 5);
+    FlushInstructionCache(GetCurrentProcess(), stub->entry, 5);
+    int result = propose_proto(faction_id, chassis_id, weapon_id, armor_id, abilities, reactor_id,
+        category, name);
+    memcpy(stub->entry, jump, 5);
+    FlushInstructionCache(GetCurrentProcess(), stub->entry, 5);
+    return result;
+}
+// the exe's action_give() with the counts (call after the setup; give_pre() reads the units)
+static void give_exe_pinned(int veh_id, int f) {
+    give_pre(veh_id);
+    memset(GiveCounted, 0, sizeof(GiveCounted));
+    JmpStub stub((uint32_t)&propose_proto, (void *)give_propose_pinned);
+    GiveProposeStub = &stub;
+    ((func_xy *)0x004CEDE0)(veh_id, f);
+    GiveProposeStub = NULL;
+    give_count_changed();
+}
+
+// The shipped exe against the pinned one: did the missing counts change what happened to the units
+// or designs (and did the shipped game disband units the intended one keeps)?
+static BOOL give_counts_matter(const UnitFxHarness *h) {
+    const GameSnapshot *o = &h->runs[0].snap, *n = &h->runs[1].snap;
+    return o->veh_count_global != n->veh_count_global
+        || memcmp(o->vehs, n->vehs, sizeof(Veh) * o->veh_count_global)
+        || memcmp(h->runs[0].protos, h->runs[1].protos, sizeof(h->runs[0].protos))
+        || memcmp(o->bases, n->bases, sizeof(Base) * o->base_count);
+}
+
+static int test_action_give() {
+    static const uint8_t entry[6] = { 0x55, 0x8B, 0xEC, 0x83, 0xEC, 0x24 };
+    OriginalEntry vanilla(0x004CEDE0, entry);
+    NoticeStubs stubs;
+    UnitActStubs stubs2;
+    UnitFxStubs stubs3;
+    if (!vanilla.ok || !stubs.ok() || !stubs2.ok() || !stubs3.ok()) {
+        return 1;
+    }
+    UnitActScope scope;
+    const int count = *VehCurrentCount;
+    // every 29th unit, and up to 40 units that carry others
+    int units[200], unit_count = 0, carriers = 0;
+    for (int veh_id = 0; veh_id < count && unit_count < 200; veh_id++) {
+        BOOL carries = false;
+        if (carriers < 40) {
+            for (int i = Vehs[veh_id].next_veh_id_stack; i >= 0 && !carries; i = Vehs[i].next_veh_id_stack) {
+                carries = Vehs[i].order == ORDER_SENTRY_BOARD && Vehs[i].waypoint_x[0] == veh_id;
+            }
+            for (int i = Vehs[veh_id].prev_veh_id_stack; i >= 0 && !carries; i = Vehs[i].prev_veh_id_stack) {
+                carries = Vehs[i].order == ORDER_SENTRY_BOARD && Vehs[i].waypoint_x[0] == veh_id;
+            }
+        }
+        if (carries || veh_id % 29 == 0) {
+            units[unit_count++] = veh_id;
+            carriers += carries;
+        }
+    }
+    UnitFxHarness *h = new UnitFxHarness();
+    const uint32_t language_saved = *Language;
+    char label[128];
+    int converted = 0, proposed = 0, fallback = 0, disbanded = 0, shipped_wrong = 0;
+    int rest_of_cargo = 0, rule_checked = 0, counts_matter = 0, kept_alive = 0;
+    // One case: the run's setup, then the exe as shipped, the exe with the counts pinned and the
+    // DLL; a run that disbands units is checked against the rule. When the pinned exe and the DLL
+    // differ, a unit must have been disbanded, the DLL must keep the rule and the exe break it (the
+    // stale slots or the rest of the cargo, counted); when the exe keeps it too, they must agree
+    // exactly. The shipped exe is compared with the pinned one for the counts (counted).
+    auto give_case = [&](int veh_id, int f, uint32_t seed, auto setup) {
+        BOOL checked = false;
+        auto check = [&](UnitFxHarness *hh) {
+            hh->prepare(seed);
+            setup();
+            give_pre(veh_id);
+            const char *why_n = NULL, *why_o = NULL;
+            const int verdict_n = give_verdict(hh, &hh->runs[2], GiveWhere[1], veh_id, f, &why_n);
+            const int verdict_o = give_verdict(hh, &hh->runs[1], GiveWhere[0], veh_id, f, &why_o);
+            checked = true;
+            rule_checked++;
+            return verdict_n * 2 + verdict_o; // 0 both keep it, 1 the exe breaks it, 2/3 the DLL does
+        };
+        auto explain = [&](UnitFxHarness *hh) {
+            if (hh->runs[1].snap.veh_count_global == hh->base.veh_count_global
+                && hh->runs[2].snap.veh_count_global == hh->base.veh_count_global) {
+                return false; // nobody disbanded: the two must agree
+            }
+            const int verdict = check(hh);
+            if (verdict >= 2) {
+                const char *why = NULL;
+                give_verdict(hh, &hh->runs[2], GiveWhere[1], veh_id, f, &why);
+                logf("  %s: the DLL breaks the rule: %s", label, why);
+                return false;
+            }
+            if (verdict == 0) {
+                return false; // the exe got it right too: the two must agree
+            }
+            shipped_wrong++;
+            rest_of_cargo += give_rest_of_cargo(hh, veh_id, f);
+            return true;
+        };
+        h->run_pinned(label, seed, [&] { setup(); },
+            [&] { ((func_xy *)0x004CEDE0)(veh_id, f); },
+            [&] { give_exe_pinned(veh_id, f); },
+            [&] { action_give(veh_id, f); }, explain);
+        counts_matter += give_counts_matter(h);
+        kept_alive += h->runs[0].snap.veh_count_global < h->runs[1].snap.veh_count_global;
+        const BOOL any_disbanded = h->runs[2].snap.veh_count_global < h->base.veh_count_global
+            || h->runs[1].snap.veh_count_global < h->base.veh_count_global;
+        disbanded += h->runs[2].snap.veh_count_global < h->base.veh_count_global;
+        if (any_disbanded && !checked && check(h) != 0) {
+            // the exe and the DLL agree, so both break the rule: the rule doesn't fit this case
+            h->mismatches++;
+            const char *why = NULL;
+            give_verdict(h, &h->runs[2], GiveWhere[1], veh_id, f, &why);
+            logf("  %s: the exe and the DLL agree but break the rule: %s", label, why);
+        }
+    };
+    for (int n = 0; n < unit_count; n++) {
+        const int veh_id = units[n];
+        h->prepare(0); // the inputs come from the game as loaded, not as the last run left it
+        const uint32_t from = Vehs[veh_id].faction_id;
+        const int region = map_loc(Vehs[veh_id].x, Vehs[veh_id].y)->region;
+        for (int f = 0; f < MaxPlayerNum; f++) {
+            if ((uint32_t)f == from) {
+                continue;
+            }
+            // 0 as loaded; 1 the receiver at the controls; 2 the same in a translated game; 3 from
+            // a human; 4 the region's plan defensive; 5 the giver at the controls; 6 the receiver
+            // at the controls, propose_proto() refusing (a workshop suggestion of another
+            // category); 7 the same with the receiver's own designs retired; 8 the receiver human
+            // and at the controls (retired designs disband its units)
+            for (int v = 0; v < 9; v++) {
+                if (!f && v != 0 && v != 5) {
+                    continue;
+                }
+                sprintf_s(label, "action_give(%d, %d) variant %d", veh_id, f, v);
+                auto setup = [&] {
+                    give_tag();
+                    *FactionIDCurrent = (v == 5) ? (int)from
+                        : ((v == 0) ? scope.current_saved : f);
+                    *Language = (v == 2) ? 1 : language_saved;
+                    if (v == 3) {
+                        *FactionsStatus |= (uint8_t)(1 << from);
+                    } else if (v == 4) {
+                        PlayersData[f].region_base_plan[region] = PLAN_DEFENSIVE;
+                    } else if (v == 6 || v == 7) {
+                        *DesignSuggestState = 1;
+                        *DesignSuggestCategory = 99;
+                        for (int i = MaxVehProtoFactionNum * f; v == 7 && i < MaxVehProtoFactionNum * (f + 1); i++) {
+                            VehPrototypes[i].flags &= ~PROTO_ACTIVE;
+                        }
+                    } else if (v == 8) {
+                        *FactionsStatus |= (uint8_t)(1 << f);
+                    }
+                };
+                give_case(veh_id, f, (uint32_t)(veh_id * 64 + f * 8 + v), setup);
+                const Veh *given = &h->runs[2].snap.vehs[veh_id];
+                converted += given->faction_id == f;
+                proposed += memcmp(h->runs[2].protos, h->protos_saved, sizeof(h->protos_saved)) != 0;
+                fallback += h->base.vehs[veh_id].proto_id >= MaxVehProtoFactionNum
+                    && (given->proto_id == BSC_SCOUT_PATROL || given->proto_id == BSC_TRANSPORT_FOIL);
+            }
+        }
+    }
+    // Constructed: a transport T with two units aboard, C1 and C2 (C2 of a basic design), in a land
+    // base of its faction, T on top of the stack, given to a human receiver whose 64 custom design
+    // slots are all in use except one (by designs of a category of their own). T's new design
+    // takes the free slot. (a) C1 of another category than T: the shipped game's proposal for C1
+    // retires T's design, unused as the exe doesn't count it, and disbands T; counted, nothing is
+    // disbanded. (b) C1 of T's category: T's design, counted now, is still the least used of that
+    // category, so it is retired and T disbanded, which clears C2's order: the exe keeps C2 with
+    // the giver, the DLL gives it (Kiousu).
+    int constructed = 0, tried = 0, constructed_kept = 0;
+    for (int g = 1; g < MaxPlayerNum && !constructed; g++) {
+        h->prepare(0);
+        int base_id = -1;
+        for (int b = 0; b < *BaseCurrentCount && base_id < 0; b++) {
+            if (Bases[b].faction_id_current == g
+                && (map_loc(Bases[b].x, Bases[b].y)->climate & 0xE0) >= ALT_BIT_SHORE_LINE) {
+                base_id = b;
+            }
+        }
+        int c2 = -1; // any unit of a basic design
+        for (int i = 0; i < count && c2 < 0; i++) {
+            if (Vehs[i].faction_id == g && Vehs[i].proto_id < MaxVehProtoFactionNum) {
+                c2 = i;
+            }
+        }
+        int picked[2], picks = 0; // C1, T: distinct custom designs, no scouts, T after C1 in the table
+        for (int i = 0; i < count && picks < 2; i++) {
+            if (i == c2) {
+                continue;
+            }
+            const int p = Vehs[i].proto_id;
+            if (Vehs[i].faction_id != g || p < MaxVehProtoFactionNum) {
+                continue;
+            }
+            const VehPrototype *d = &VehPrototypes[p];
+            if (Chassis[d->chassis_id].speed == 1 && Armor[d->armor_id].defense_rating == 1
+                && Weapon[d->weapon_id].offense_rating == 1) {
+                continue;
+            }
+            BOOL same = (uint8_t)d->unk_1 == 250;
+            for (int k = 0; k < picks; k++) {
+                const VehPrototype *e = &VehPrototypes[Vehs[picked[k]].proto_id];
+                same = same || (e->chassis_id == d->chassis_id && e->weapon_id == d->weapon_id
+                    && e->armor_id == d->armor_id && e->ability_flags == d->ability_flags
+                    && e->reactor_id == d->reactor_id);
+            }
+            if (!same) {
+                picked[picks++] = i;
+            }
+        }
+        if (base_id < 0 || picks < 2 || c2 < 0) {
+            continue;
+        }
+        const int c1 = picked[0], t = picked[1];
+        const int bx = Bases[base_id].x, by = Bases[base_id].y;
+        const int t_cat = (uint8_t)VehPrototypes[Vehs[t].proto_id].unk_1;
+        for (int f = 1; f < MaxPlayerNum && !constructed; f++) {
+            for (int kind = 0; kind < 2; kind++) {
+                if (f == g) {
+                    continue;
+                }
+                tried += kind;
+                sprintf_s(label, "action_give(%d, %d) constructed %c (cargo %d, %d)", t, f, 'a' + kind,
+                    c1, c2);
+                auto setup = [&] {
+                    give_tag();
+                    *FactionIDCurrent = f;
+                    *FactionsStatus |= (uint8_t)(1 << f);
+                    // C1's design: (a) another category than T's, (b) T's
+                    VehPrototypes[Vehs[c1].proto_id].unk_1
+                        = (int8_t)(kind ? t_cat : (t_cat == 1 ? 2 : 1));
+                    for (int k = 0; k < MaxVehProtoFactionNum; k++) {
+                        const int id = f * MaxVehProtoFactionNum + k;
+                        VehPrototype *p = &VehPrototypes[id];
+                        if (!k) {
+                            p->flags = 0; // the free slot
+                            PlayersData[f].proto_id_active[id] = 0;
+                            PlayersData[f].proto_id_queue[id] = 0;
+                            continue;
+                        }
+                        *p = VehPrototypes[BSC_SCOUT_PATROL];
+                        p->flags = PROTO_ACTIVE;
+                        p->obsolete_factions = 0;
+                        p->unk_1 = (int8_t)250; // a category of their own: never retired here
+                        PlayersData[f].proto_id_active[id] = 1;
+                        PlayersData[f].proto_id_queue[id] = 0;
+                    }
+                    veh_drop(veh_lift(c2), bx, by);
+                    veh_drop(veh_lift(c1), bx, by);
+                    veh_drop(veh_lift(t), bx, by);
+                    Vehs[c1].order = ORDER_SENTRY_BOARD;
+                    Vehs[c1].waypoint_x[0] = (int16_t)t;
+                    Vehs[c1].waypoint_y[0] = 0;
+                    Vehs[c2].order = ORDER_SENTRY_BOARD;
+                    Vehs[c2].waypoint_x[0] = (int16_t)t;
+                    Vehs[c2].waypoint_y[0] = 0;
+                };
+                const int before = rest_of_cargo, kept_before = kept_alive;
+                give_case(t, f, (uint32_t)(t * 64 + f * 2 + kind), setup);
+                if (kind) {
+                    constructed += rest_of_cargo > before;
+                } else {
+                    constructed_kept += kept_alive > kept_before;
+                }
+            }
+        }
+    }
+    *Language = language_saved;
+    logf("action_give: %d compared over %d units (%d carrying others; %d with calls, %d given away, "
+        "%d new designs proposed, %d to a Scout Patrol or Transport Foil, %d disbanding units, %d "
+        "checked against the rule), %d mismatches", h->compared, unit_count, carriers, h->with_calls,
+        converted, proposed, fallback, disbanded, rule_checked, h->mismatches);
+    logf("action_give: the shipped game differs from the intended in %d (it gave away the wrong "
+        "units or kept some given ones in %d); Kiousu: the rest of the cargo goes to the receiver "
+        "in %d (%d constructed of %d tried); Kiousu: units given counted against their designs: the "
+        "missing counts change the outcome in %d, disbandings that no longer happen in %d (%d "
+        "constructed)", h->shipped, shipped_wrong, rest_of_cargo, constructed, tried, counts_matter,
+        kept_alive, constructed_kept);
+    int mismatches = h->mismatches;
+    delete h;
+    return mismatches;
+}
+
+static int test_action_oblit() {
+    static const uint8_t entry[6] = { 0x55, 0x8B, 0xEC, 0x8B, 0x45, 0x08 };
+    OriginalEntry vanilla(0x004CD4E0, entry);
+    NoticeStubs stubs;
+    UnitActStubs stubs2;
+    UnitFxStubs stubs3;
+    if (!vanilla.ok || !stubs.ok() || !stubs2.ok() || !stubs3.ok()) {
+        return 1;
+    }
+    UnitActScope scope;
+    int unit_of[MaxPlayerNum]; // the attacker is read from the unit
+    for (int f = 0; f < MaxPlayerNum; f++) {
+        unit_of[f] = -1;
+        for (int i = 0; i < *VehCurrentCount && unit_of[f] < 0; i++) {
+            if (Vehs[i].faction_id == f) {
+                unit_of[f] = i;
+            }
+        }
+    }
+    UnitFxHarness *h = new UnitFxHarness();
+    const int rule_saved = Rules->tgl_oblit_base_atrocity;
+    char label[128];
+    int notices = 0, atrocities = 0;
+    for (int base_id = 0; base_id < *BaseCurrentCount; base_id += 3) {
+        h->prepare(0); // the inputs come from the game as loaded, not as the last run left it
+        const int owner = Bases[base_id].faction_id_current;
+        for (int f = 1; f < MaxPlayerNum; f++) {
+            if (unit_of[f] < 0 || f == owner) {
+                continue;
+            }
+            const int veh_id = unit_of[f];
+            const int third = (owner % 7 + 1 == f) ? f % 7 + 1 : owner % 7 + 1;
+            // 0 as loaded, the rule off; 1 the rule on; 2 the attacker at the controls; 3 the owner
+            // at the controls, the rule on; 4 a third faction that can see the base at the
+            // controls; 5 a former owner (a third faction) at the controls, the base unseen
+            for (int v = 0; v < 6; v++) {
+                sprintf_s(label, "action_oblit(%d, %d) variant %d", veh_id, base_id, v);
+                auto setup = [&] {
+                    Rules->tgl_oblit_base_atrocity = (v == 1 || v == 3) ? 1 : 0;
+                    *FactionIDCurrent = (v == 2) ? f : ((v == 3) ? owner
+                        : ((v == 4 || v == 5) ? third : scope.current_saved));
+                    if (v == 4) {
+                        Bases[base_id].visibility |= (uint8_t)(1 << third);
+                    } else if (v == 5) {
+                        Bases[base_id].faction_id_former = (uint8_t)third;
+                        Bases[base_id].visibility &= (uint8_t)~(1 << third);
+                    }
+                };
+                h->run(label, (uint32_t)(base_id * 64 + f * 8 + v), setup,
+                    [&] { ((func_xy *)0x004CD4E0)(veh_id, base_id); },
+                    [&] { action_oblit(veh_id, base_id); });
+                for (int c = 0; c < h->runs[2].notice.call_count && c < MaxNoticeCalls; c++) {
+                    notices += h->runs[2].notice.calls[c].fn == NF_POPP;
+                    atrocities += h->runs[2].notice.calls[c].fn == NF_ATROCITY;
+                }
+            }
+        }
+    }
+    Rules->tgl_oblit_base_atrocity = rule_saved;
+    logf("action_oblit: %d compared (%d notices, %d atrocities), %d mismatches", h->compared,
+        notices, atrocities, h->mismatches);
+    int mismatches = h->mismatches;
+    delete h;
+    return mismatches;
+}
+
 static int test_action_sat_attack() {
     static const uint8_t entry[6] = { 0x55, 0x8B, 0xEC, 0x53, 0x57, 0x8B };
     OriginalEntry vanilla(0x004CF480, entry);
@@ -11090,6 +12163,2005 @@ static int test_action_arty() {
     logf("action_arty: %d compared (%d with calls; the DLL fought %d times and shelled %d empty tiles), "
         "%d mismatches", h.compared, h.with_calls, fights, shells, h.mismatches);
     return h.mismatches;
+}
+
+// ---------------------------------------------------------------- batch 32: movement orders
+
+// The calls the movement orders make into code that is not theirs (path finding, the move
+// itself, the network daemon, terraforming, the air drop's flight and pause, spotting, music,
+// base capture, supply pods and the shift key) are recorded in order with their arguments and
+// answered from MoveScriptNow. Each record also notes the unit id NetVehIDRef points at.
+enum MoveFn {
+    MF_PATH_MOVE, MF_PATH_FIND, MF_ORDER_VEH, MF_NET_ORDER_VEH, MF_AWAIT_EXEC, MF_AWAIT_SYNCH,
+    MF_UNLOCK_VEH, MF_SYNCH_VEH, MF_MESSAGE_DATA, MF_TERRAFORM, MF_SPOT_ALL, MF_VEH_SCOOT,
+    MF_CLOCK_WAIT, MF_CURSOR_NEXT, MF_CAPTURE_BASE, MF_GOODY_BOX, MF_KEY_STATE, MF_AMBIENCE,
+    MF_COUNT
+};
+static const char *const MoveFnName[MF_COUNT] = { "Path::move", "Path::find", "order_veh",
+    "NetDaemon::order_veh", "NetDaemon::await_exec", "NetDaemon::await_synch",
+    "NetDaemon::unlock_veh", "synch_veh", "message_data", "action_terraform", "spot_all",
+    "veh_scoot", "clock_wait", "Console::cursor_next", "capture_base", "goody_box",
+    "GetAsyncKeyState", "ambience" };
+struct MoveCall {
+    int fn;
+    int args[8];
+    int ref; // the unit id NetVehIDRef points at during the call, -99999 while it is not set
+};
+const int MaxMoveCalls = 32;
+static MoveCall MoveCalls[MaxMoveCalls];
+static int MoveCallCount;
+
+// What the stubs answer; each case sets all of it.
+struct MoveScript {
+    int path_dir;     // Path::move()'s and Path::find()'s answer
+    int order_ret;    // order_veh()'s answer
+    int order_to;     // where order_veh() leaves the unit: 0 where it is, 1 one step in the
+                      // direction, 2 on its first waypoint, 3 on its second
+    BOOL order_clear; // order_veh() ends the order
+    int net_ret;      // NetDaemon::order_veh()'s answer
+    BOOL renumber;    // the network calls lower the unit id NetVehIDRef points at, as veh_kill()
+                      // does when a lower unit dies meanwhile
+    int key_state;    // GetAsyncKeyState()'s answer
+    int capture_id;   // capture_base() leaves this unit id in VehIDCurrent (-1: unchanged)
+};
+static MoveScript MoveScriptNow;
+
+static void move_record(int fn, int a0 = 0, int a1 = 0, int a2 = 0, int a3 = 0, int a4 = 0,
+                        int a5 = 0, int a6 = 0, int a7 = 0) {
+    if (MoveCallCount < MaxMoveCalls) {
+        MoveCall *call = &MoveCalls[MoveCallCount];
+        call->fn = fn;
+        call->args[0] = a0; call->args[1] = a1; call->args[2] = a2; call->args[3] = a3;
+        call->args[4] = a4; call->args[5] = a5; call->args[6] = a6; call->args[7] = a7;
+        call->ref = *NetVehIDRef ? **NetVehIDRef : -99999;
+    }
+    MoveCallCount++;
+}
+static void move_renumber() {
+    if (MoveScriptNow.renumber && *NetVehIDRef && **NetVehIDRef > 0) {
+        (**NetVehIDRef)--;
+    }
+}
+static int __fastcall move_path_move(void *This, void *, int veh_id, int faction_id) {
+    move_record(MF_PATH_MOVE, This == Paths, veh_id, faction_id);
+    return MoveScriptNow.path_dir;
+}
+static int __fastcall move_path_find(void *This, void *, int x_src, int y_src, int x_dst, int y_dst,
+                                     int unk1, int unk2, int flags, int unk3) {
+    move_record(MF_PATH_FIND, x_src, y_src, x_dst, y_dst, unk1, unk2, flags,
+        unk3 * 2 + (This == Paths));
+    return MoveScriptNow.path_dir;
+}
+static int __cdecl move_order_veh(int veh_id, int dir, int flags) {
+    Veh *veh = &Vehs[veh_id];
+    move_record(MF_ORDER_VEH, veh_id, dir, flags, veh->order);
+    if (MoveScriptNow.order_to == 1 && dir >= 0 && dir < 8) {
+        int x = veh->x + RadiusBaseX[dir];
+        if (!(*MapIsFlat & 1)) {
+            x = (x < 0) ? x + *MapLongitudeBounds : ((x >= *MapLongitudeBounds) ? x - *MapLongitudeBounds : x);
+        }
+        veh->x = (int16_t)x;
+        veh->y = (int16_t)(veh->y + RadiusBaseY[dir]);
+    } else if (MoveScriptNow.order_to == 2) {
+        veh->x = veh->waypoint_x[0];
+        veh->y = veh->waypoint_y[0];
+    } else if (MoveScriptNow.order_to == 3) {
+        veh->x = veh->waypoint_x[1];
+        veh->y = veh->waypoint_y[1];
+    }
+    if (MoveScriptNow.order_clear) {
+        veh->order = ORDER_NONE;
+    }
+    return MoveScriptNow.order_ret;
+}
+static int __fastcall move_net_order_veh(void *This, void *, int veh_id, int dir, int flags) {
+    move_record(MF_NET_ORDER_VEH, This == NetDaemonVar, veh_id, dir, flags);
+    move_renumber();
+    return MoveScriptNow.net_ret;
+}
+static void __fastcall move_await_exec(void *This, void *, int msg_code) {
+    move_record(MF_AWAIT_EXEC, This == NetDaemonVar, msg_code);
+    move_renumber();
+}
+static int __fastcall move_await_synch(void *This, void *) {
+    move_record(MF_AWAIT_SYNCH, This == NetDaemonVar);
+    move_renumber();
+    return 0;
+}
+static int __fastcall move_unlock_veh(void *This, void *) {
+    move_record(MF_UNLOCK_VEH, This == NetDaemonVar);
+    return 0;
+}
+static void __cdecl move_synch_veh(int veh_id) {
+    move_record(MF_SYNCH_VEH, veh_id);
+}
+static void __cdecl move_message_data(int16_t type, int flags, int data1, int data2, int data3,
+                                      int data4) {
+    move_record(MF_MESSAGE_DATA, type, flags, data1, data2, data3, data4);
+}
+static void __cdecl move_terraform(int veh_id, int terraform_id, int unk) {
+    move_record(MF_TERRAFORM, veh_id, terraform_id, unk, Vehs[veh_id].order);
+    if (unk) {
+        Vehs[veh_id].order = (int8_t)(terraform_id + ORDER_FARM); // as action_terraform() does
+    }
+}
+static void __cdecl move_spot_all(int veh_id, int radius) {
+    move_record(MF_SPOT_ALL, veh_id, radius);
+}
+static void __cdecl move_veh_scoot(int veh_id, int x, int y, int dir, int unk) {
+    move_record(MF_VEH_SCOOT, veh_id, x, y, dir, unk);
+}
+static void __cdecl move_clock_wait(int ms) {
+    move_record(MF_CLOCK_WAIT, ms);
+}
+static void __fastcall move_cursor_next(void *This, void *, int x, int y) {
+    move_record(MF_CURSOR_NEXT, This == ConsoleVar, x, y);
+}
+static void __cdecl move_capture_base(int base_id, int faction_id, int unk) {
+    move_record(MF_CAPTURE_BASE, base_id, faction_id, unk, *VehIDCurrent);
+    if (MoveScriptNow.capture_id >= 0) {
+        *VehIDCurrent = MoveScriptNow.capture_id;
+    }
+}
+static int __cdecl move_goody_box(int veh_id, int goody) {
+    move_record(MF_GOODY_BOX, veh_id, goody);
+    return 0;
+}
+static SHORT WINAPI move_key_state(int key) {
+    move_record(MF_KEY_STATE, key);
+    return (SHORT)MoveScriptNow.key_state;
+}
+static void __cdecl move_ambience(int id) {
+    move_record(MF_AMBIENCE, id);
+}
+
+// Everything the movement tests stub besides NoticeStubs. Path finding is stubbed separately
+// (MovePathStubs): the live cases run the exe's. synch_veh(), message_data() and double_cross()
+// are DLL code (the exe's calls reach the DLL entry through the redirect); so is action_terraform
+// since the batch 32 merge (unitterra), stubbed at its DLL entry.
+struct MoveStubs {
+    JmpStub draw_tile_stub, order_stub, net_order_stub, await_exec_stub, await_synch_stub,
+        unlock_stub, synch_stub, message_stub, terraform_stub, spot_stub, scoot_stub, clock_stub,
+        cursor_stub, update_stub, capture_stub, goody_stub, double_cross_stub, ambience_stub;
+    void **key_exe, **key_dll;
+    void *key_exe_saved, *key_dll_saved;
+    MoveStubs()
+        : draw_tile_stub(0x0046AF40, (void *)unitact_draw_tile),
+          order_stub(0x005947C0, (void *)move_order_veh),
+          net_order_stub(0x00531780, (void *)move_net_order_veh),
+          await_exec_stub(0x00531300, (void *)move_await_exec),
+          await_synch_stub(0x00531480, (void *)move_await_synch),
+          unlock_stub(0x005310F0, (void *)move_unlock_veh),
+          synch_stub((uint32_t)&synch_veh, (void *)move_synch_veh),
+          message_stub((uint32_t)&message_data, (void *)move_message_data),
+          terraform_stub((uint32_t)action_terraform, (void *)move_terraform),
+          spot_stub(0x005B6260, (void *)move_spot_all),
+          scoot_stub(0x0055A150, (void *)move_veh_scoot),
+          clock_stub(0x0050DD90, (void *)move_clock_wait),
+          cursor_stub(0x005109B0, (void *)move_cursor_next),
+          update_stub(0x00514880, (void *)notice_console_update),
+          capture_stub(0x0050C510, (void *)move_capture_base),
+          goody_stub(0x0057A660, (void *)move_goody_box),
+          double_cross_stub((uint32_t)&double_cross, (void *)notice_double_cross),
+          ambience_stub(0x00446B40, (void *)move_ambience) {
+        key_exe = iat_slot(GetModuleHandle(NULL), "user32.dll", "GetAsyncKeyState");
+        key_dll = iat_slot(GetModuleHandle("OpenSMACX.dll"), "user32.dll", "GetAsyncKeyState");
+        key_exe_saved = key_exe ? iat_patch(key_exe, (void *)move_key_state) : NULL;
+        key_dll_saved = key_dll ? iat_patch(key_dll, (void *)move_key_state) : NULL;
+    }
+    ~MoveStubs() {
+        if (key_exe) {
+            iat_patch(key_exe, key_exe_saved);
+        }
+        if (key_dll) {
+            iat_patch(key_dll, key_dll_saved);
+        }
+    }
+    BOOL ok() const {
+        return draw_tile_stub.ok && order_stub.ok && net_order_stub.ok && await_exec_stub.ok
+            && await_synch_stub.ok && unlock_stub.ok && synch_stub.ok && message_stub.ok
+            && terraform_stub.ok && spot_stub.ok && scoot_stub.ok && clock_stub.ok
+            && cursor_stub.ok && update_stub.ok && capture_stub.ok && goody_stub.ok
+            && double_cross_stub.ok && ambience_stub.ok && key_exe && key_dll;
+    }
+};
+struct MovePathStubs {
+    JmpStub move_stub, find_stub;
+    MovePathStubs()
+        : move_stub(0x0059BC10, (void *)move_path_move),
+          find_stub(0x0059A530, (void *)move_path_find) {}
+    BOOL ok() const {
+        return move_stub.ok && find_stub.ok;
+    }
+};
+
+// A few bytes of the exe's code changed while a test runs, after checking what is there.
+struct CodeBytesPatch {
+    uint8_t *at;
+    uint8_t saved[8];
+    size_t size;
+    DWORD old_protect;
+    BOOL ok;
+    CodeBytesPatch(uint32_t address, const uint8_t *expected, const uint8_t *bytes, size_t n)
+        : at((uint8_t *)address), size(n), old_protect(0), ok(false) {
+        if (n > sizeof(saved) || memcmp(at, expected, n)
+            || !VirtualProtect(at, n, PAGE_EXECUTE_READWRITE, &old_protect)) {
+            logf("cannot patch %08X", address);
+            return;
+        }
+        memcpy(saved, at, n);
+        memcpy(at, bytes, n);
+        FlushInstructionCache(GetCurrentProcess(), at, n);
+        ok = true;
+    }
+    ~CodeBytesPatch() {
+        if (ok) {
+            memcpy(at, saved, size);
+            FlushInstructionCache(GetCurrentProcess(), at, size);
+            VirtualProtect(at, size, old_protect, &old_protect);
+        }
+    }
+};
+
+// What the movement orders leave besides GameSnapshot, NoticeState and UnitActExtra.
+struct MoveExtra {
+    MoveCall calls[MaxMoveCalls];
+    int call_count;
+    BOOL ref_set; // NetVehIDRef was set (it then points into the finished call's frame)
+    int lift[3]; // VehDropLiftVehID, VehLiftX, VehLiftY (veh_lift() and veh_drop())
+    BOOL bit_errors[2]; // VehBitError, BaseBitsErrorActive
+};
+static MoveExtra MoveOrig, MoveNew;
+
+static void move_take(MoveExtra *e) {
+    memcpy(e->calls, MoveCalls, sizeof(e->calls));
+    e->call_count = MoveCallCount;
+    e->ref_set = *NetVehIDRef != NULL;
+    *NetVehIDRef = NULL;
+    e->lift[0] = *VehDropLiftVehID;
+    e->lift[1] = *VehLiftX;
+    e->lift[2] = *VehLiftY;
+    e->bit_errors[0] = *VehBitError;
+    e->bit_errors[1] = *BaseBitsErrorActive;
+}
+
+static BOOL move_differs(const MoveExtra *o, const MoveExtra *n, const char *label) {
+    if (memcmp(o->lift, n->lift, sizeof(o->lift)) || memcmp(o->bit_errors, n->bit_errors, sizeof(o->bit_errors))) {
+        if (label) {
+            logf("  %s: lift globals orig %d %d %d new %d %d %d, bit errors orig %d %d new %d %d", label,
+                o->lift[0], o->lift[1], o->lift[2], n->lift[0], n->lift[1], n->lift[2], o->bit_errors[0],
+                o->bit_errors[1], n->bit_errors[0], n->bit_errors[1]);
+        }
+        return true;
+    }
+    if (o->call_count != n->call_count || o->ref_set != n->ref_set) {
+        if (label) {
+            logf("  %s: orig made %d calls (NetVehIDRef %s), new %d (%s)", label, o->call_count,
+                o->ref_set ? "set" : "not set", n->call_count, n->ref_set ? "set" : "not set");
+            for (int side = 0; side < 2; side++) {
+                const MoveExtra *e = side ? n : o;
+                for (int i = 0; i < e->call_count && i < 12; i++) {
+                    const MoveCall *a = &e->calls[i];
+                    logf("    %s call %d: %s(%d %d %d %d %d %d %d %d) ref %d", side ? "new" : "orig", i,
+                        MoveFnName[a->fn], a->args[0], a->args[1], a->args[2], a->args[3], a->args[4],
+                        a->args[5], a->args[6], a->args[7], a->ref);
+                }
+            }
+        }
+        return true;
+    }
+    for (int i = 0; i < o->call_count && i < MaxMoveCalls; i++) {
+        const MoveCall *a = &o->calls[i], *b = &n->calls[i];
+        if (a->fn != b->fn || a->ref != b->ref || memcmp(a->args, b->args, sizeof(a->args))) {
+            if (label) {
+                logf("  %s: call %d: orig %s(%d %d %d %d %d %d %d %d) ref %d, new %s(%d %d %d %d %d %d "
+                    "%d %d) ref %d", label, i, MoveFnName[a->fn], a->args[0], a->args[1], a->args[2],
+                    a->args[3], a->args[4], a->args[5], a->args[6], a->args[7], a->ref,
+                    MoveFnName[b->fn], b->args[0], b->args[1], b->args[2], b->args[3], b->args[4],
+                    b->args[5], b->args[6], b->args[7], b->ref);
+            }
+            return true;
+        }
+    }
+    return false;
+}
+
+static int move_calls(const MoveExtra *e, int fn) {
+    int count = 0;
+    for (int i = 0; i < e->call_count && i < MaxMoveCalls; i++) {
+        count += e->calls[i].fn == fn;
+    }
+    return count;
+}
+
+// The globals the movement tests vary, put back to their loaded values before every case (the
+// harness puts back the game state, FactionsStatus and the UnitActExtra globals itself).
+struct UnitMoveScope {
+    UnitActScope act;
+    int ctc, current, skip_wait, not_view;
+    uint32_t prefs;
+    int *ref;
+    uint32_t max_airdrop;
+    int roads_fungus, remove_fungus, magtube, cloudbase;
+    int rule_flags[MaxPlayerNum];
+    int lift[3];
+    BOOL bit_errors[2];
+    UnitMoveScope() {
+        lift[0] = *VehDropLiftVehID;
+        lift[1] = *VehLiftX;
+        lift[2] = *VehLiftY;
+        bit_errors[0] = *VehBitError;
+        bit_errors[1] = *BaseBitsErrorActive;
+        ctc = *ControlTurnC;
+        current = act.current_saved;
+        skip_wait = *MapWinUnk23BF0;
+        not_view = *MapWinUnitNotViewMode;
+        prefs = *GamePreferences;
+        ref = *NetVehIDRef;
+        max_airdrop = Rules->max_airdrop_sans_orb_insert;
+        roads_fungus = Rules->tech_build_roads_fungus;
+        remove_fungus = Terraforming[TERRA_REMOVE_FUNGUS].preq_tech;
+        magtube = Terraforming[TERRA_MAGTUBE].preq_tech;
+        cloudbase = SecretProject->cloudbase_academy;
+        for (int i = 0; i < MaxPlayerNum; i++) {
+            rule_flags[i] = Players[i].rule_flags;
+        }
+        reset();
+    }
+    void reset() const {
+        *IsMultiplayerNet = false;
+        *ControlTurnC = ctc;
+        *FactionIDCurrent = current;
+        *MapWinUnk23BF0 = skip_wait;
+        *MapWinUnitNotViewMode = not_view;
+        *GamePreferences = prefs;
+        *NetVehIDRef = NULL;
+        Rules->max_airdrop_sans_orb_insert = max_airdrop;
+        Rules->tech_build_roads_fungus = roads_fungus;
+        Terraforming[TERRA_REMOVE_FUNGUS].preq_tech = remove_fungus;
+        Terraforming[TERRA_MAGTUBE].preq_tech = magtube;
+        SecretProject->cloudbase_academy = cloudbase;
+        for (int i = 0; i < MaxPlayerNum; i++) {
+            Players[i].rule_flags = rule_flags[i];
+        }
+        *VehDropLiftVehID = lift[0];
+        *VehLiftX = lift[1];
+        *VehLiftY = lift[2];
+        *VehBitError = bit_errors[0];
+        *BaseBitsErrorActive = bit_errors[1];
+    }
+    ~UnitMoveScope() {
+        reset();
+        *NetVehIDRef = ref;
+    }
+};
+
+// One movement order call from the same state on both sides: unitact_run (NoticeHarness and
+// UnitActExtra) plus MoveExtra. setup() runs after the globals are put back and the script set.
+template <class S, class E, class D>
+static void unitmove_run(NoticeHarness &h, const UnitMoveScope &scope, const char *label,
+                         uint32_t seed, const MoveScript &script, S setup, E exe, D dll) {
+    int before = h.mismatches;
+    unitact_run(h, label, seed, [&] {
+            scope.reset();
+            MoveScriptNow = script;
+            MoveCallCount = 0;
+            memset(MoveCalls, 0, sizeof(MoveCalls));
+            setup();
+        },
+        [&] { int ret = exe(); move_take(&MoveOrig); return ret; },
+        [&] { int ret = dll(); move_take(&MoveNew); return ret; });
+    if (move_differs(&MoveOrig, &MoveNew, NULL)) {
+        if (h.mismatches == before) {
+            h.mismatches++;
+        }
+        if (h.mismatches <= MAX_DETAIL) {
+            move_differs(&MoveOrig, &MoveNew, label);
+            for (int side = 0; side < 2; side++) {
+                const NoticeState *e = side ? &h.now : &h.orig;
+                for (int i = 0; i < e->call_count && i < 12; i++) {
+                    const NoticeCall *a = &e->calls[i];
+                    logf("    %s notice %d: %s('%s' '%s' '%s' %d %d %d)", side ? "new" : "orig", i,
+                        NoticeFnName[a->fn], a->label, a->pic, a->file, a->args[0], a->args[1], a->args[2]);
+                }
+            }
+        }
+    }
+}
+
+static int wrap_x(int x) {
+    if (!(*MapIsFlat & 1)) {
+        if (x < 0) {
+            x += *MapLongitudeBounds;
+        } else if (x >= *MapLongitudeBounds) {
+            x -= *MapLongitudeBounds;
+        }
+    }
+    return x;
+}
+
+// Fill a unit's four waypoints with tiles 2, 4, 6 and 8 columns east of it (or a base's tile
+// for the first), so a scripted move can reach them.
+static void move_set_waypoints(int veh_id, int base_id) {
+    Veh *veh = &Vehs[veh_id];
+    for (int i = 0; i < 4; i++) {
+        veh->waypoint_x[i] = (int16_t)wrap_x(veh->x + 2 * (i + 1));
+        veh->waypoint_y[i] = veh->y;
+    }
+    if (base_id >= 0) {
+        veh->waypoint_x[0] = Bases[base_id].x;
+        veh->waypoint_y[0] = Bases[base_id].y;
+    }
+}
+
+static int test_action_go_to() {
+    static const uint8_t entry[6] = { 0x55, 0x8B, 0xEC, 0x56, 0x8B, 0x35 };
+    OriginalEntry vanilla(0x004CB310, entry);
+    NoticeStubs stubs;
+    MoveStubs stubs2;
+    if (!vanilla.ok || !stubs.ok() || !stubs2.ok()) {
+        return 1;
+    }
+    UnitMoveScope scope;
+    int total = 0;
+    char label[128];
+    // net: 0 single player, 1 network game, 2 network game with ControlTurnC set; dir: Path::move's
+    // answer (an ORDER_MOVE's first waypoint); multi: 1 the state bits 0x2000200 set, 2 only
+    // 0x200; human: -1 as loaded, 0 a computer faction, 1 human; base: the first waypoint is a base
+    struct GoToCase { int net, dir, ret, to, clear, net_ret, renumber, multi, count, pcp, human, base; };
+    static const GoToCase cases[] = {
+        // net dir ret to clr nret ren multi cnt pcp human base
+        { 0, -1, 0, 0, 0, 0, 0, 0, 0, 0, -1, 0 }, // no step: the order ends
+        { 1, -1, 0, 0, 0, 0, 0, 0, 0, 0, -1, 0 }, // the same in a network game
+        { 1, -1, 0, 0, 0, 0, 1, 0, 0, 0, -1, 0 }, // ... a lower unit dies during the waits
+        { 2, -1, 0, 0, 0, 0, 0, 0, 0, 0, -1, 0 }, // ... with ControlTurnC set
+        { 0, 3, 0, 1, 0, 0, 0, 0, 0, 0, -1, 0 },  // the move fails
+        { 0, 3, 1, 1, 0, 0, 0, 0, 0, 0, -1, 0 },  // a step on the way
+        { 0, 5, 1, 2, 0, 0, 0, 0, 0, 0, 0, 0 },   // arrives at the first waypoint, computer
+        { 0, 5, 1, 2, 0, 0, 0, 0, 0, 0, 1, 0 },   // ... human
+        { 0, 5, 1, 2, 0, 0, 0, 0, 0, 0, 0, 1 },   // arrives in a base, computer
+        { 0, 5, 1, 2, 0, 0, 0, 0, 0, 0, 1, 1 },   // ... human
+        { 0, 5, 1, 3, 0, 0, 0, 0, 0, 0, -1, 0 },  // arrives at the second waypoint
+        { 0, 5, 1, 2, 1, 0, 0, 0, 0, 0, -1, 0 },  // order_veh() ends the order
+        { 0, 7, 1, 2, 0, 0, 0, 1, 1, 0, 0, 1 },   // multi-waypoint go to, one more waypoint
+        { 0, 7, 1, 2, 0, 0, 0, 1, 2, 0, 1, 0 },   // ... two more
+        { 0, 7, 1, 2, 0, 0, 0, 1, 3, 1, -1, 0 },  // ... three more, one passed
+        { 0, 7, 1, 2, 0, 0, 0, 1, 3, 3, 0, 1 },   // ... all passed: no shift
+        { 0, 7, 1, 2, 0, 0, 0, 1, 4, 0, -1, 0 },  // ... four: the copy reads past the arrays
+        { 0, 7, 1, 2, 0, 0, 0, 2, 2, 0, -1, 0 },  // only the state bit 0x200
+        { 1, 2, 0, 0, 0, 0, 0, 0, 0, 0, -1, 0 },  // network: NetDaemon::order_veh() refuses
+        { 1, 2, 0, 0, 0, 1, 0, 0, 0, 0, -1, 0 },  // ... accepts
+        { 1, 2, 0, 0, 0, 1, 1, 0, 0, 0, -1, 0 },  // ... a lower unit dies during the waits
+        { 2, 2, 1, 2, 0, 0, 0, 0, 0, 0, 0, 1 },   // ControlTurnC set: order_veh() as alone
+        { 0, 8, 1, 0, 0, 0, 0, 0, 0, 0, -1, 0 },  // a direction past 7 is passed on
+    };
+    static const int orders[] = { ORDER_MOVE_TO, ORDER_MOVE, ORDER_AI_MOVE_TO, ORDER_ROAD_TO };
+    {
+        MovePathStubs path;
+        if (!path.ok()) {
+            return 1;
+        }
+        NoticeHarness h;
+        int arrived = 0, shifted = 0, skipped = 0, net_calls = 0, past_arrays = 0;
+        for (int veh_id = 0; veh_id < *VehCurrentCount; veh_id += 17) {
+            for (int c = 0; c < (int)(sizeof(cases) / sizeof(cases[0])); c++) {
+                const GoToCase &k = cases[c];
+                for (int order : orders) {
+                    if (order == ORDER_ROAD_TO && c % 4) {
+                        continue;
+                    }
+                    MoveScript script = { k.dir, k.ret, k.to, k.clear, k.net_ret, k.renumber, 0, -1 };
+                    sprintf_s(label, "action_go_to(%d) order %d case %d", veh_id, order, c);
+                    uint32_t f = Vehs[veh_id].faction_id;
+                    unitmove_run(h, scope, label, veh_id * 64 + c, script, [&] {
+                            Veh *veh = &Vehs[veh_id];
+                            *IsMultiplayerNet = k.net != 0;
+                            *ControlTurnC = k.net == 2;
+                            move_set_waypoints(veh_id,
+                                (k.base && *BaseCurrentCount) ? veh_id % *BaseCurrentCount : -1);
+                            if (order == ORDER_MOVE) {
+                                veh->waypoint_x[0] = (int16_t)k.dir;
+                            }
+                            veh->order = (int8_t)order;
+                            if (k.multi == 1) {
+                                veh->state |= VSTATE_UNK_2000000 | VSTATE_UNK_200;
+                            } else if (k.multi == 2) {
+                                veh->state = (veh->state & ~VSTATE_UNK_2000000) | VSTATE_UNK_200;
+                            }
+                            if (k.multi) {
+                                veh->waypoint_count = (uint8_t)k.count;
+                                veh->patrol_current_point = (uint8_t)k.pcp;
+                            }
+                            if (k.human == 0) {
+                                *FactionsStatus &= (uint8_t)~(1 << f);
+                            } else if (k.human == 1) {
+                                *FactionsStatus |= (uint8_t)(1 << f);
+                            }
+                        },
+                        [&] { ((func5 *)0x004CB310)(veh_id); return 0; },
+                        [&] { action_go_to(veh_id); return 0; });
+                    // what the DLL's call did, from the state it left
+                    arrived += move_calls(&MoveNew, MF_ORDER_VEH) && Vehs[veh_id].order == ORDER_NONE;
+                    shifted += k.multi == 1 && Vehs[veh_id].order == ORDER_MOVE_TO
+                        && move_calls(&MoveNew, MF_ORDER_VEH);
+                    skipped += h.after_new.vehs[veh_id].moves_expended != h.base.vehs[veh_id].moves_expended;
+                    net_calls += move_calls(&MoveNew, MF_NET_ORDER_VEH) + move_calls(&MoveNew, MF_SYNCH_VEH);
+                    past_arrays += k.count == 4 && order == ORDER_MOVE_TO && k.to == 2 && k.ret;
+                }
+            }
+        }
+        logf("action_go_to: %d compared (%d orders ended after a move, %d waypoints shifted, %d units "
+            "ended their turn, %d network calls, %d with four waypoints), %d mismatches", h.compared,
+            arrived, shifted, skipped, net_calls, past_arrays, h.mismatches);
+        total += h.mismatches;
+    }
+    {
+        // the exe's Path::move(): toward 3 and 9 columns east, a base of the unit's faction and
+        // off the map, for the unit's faction and (ORDER_AI_MOVE_TO) for none
+        NoticeHarness h;
+        int steps = 0;
+        for (int veh_id = 0; veh_id < *VehCurrentCount; veh_id += 23) {
+            const Veh *veh0 = &Vehs[veh_id];
+            int base_own = -1;
+            for (int i = 0; i < *BaseCurrentCount; i++) {
+                if (Bases[i].faction_id_current == veh0->faction_id) {
+                    base_own = i;
+                    break;
+                }
+            }
+            for (int t = 0; t < 4; t++) {
+                if (t == 2 && base_own < 0) {
+                    continue;
+                }
+                for (int order : { ORDER_MOVE_TO, ORDER_AI_MOVE_TO }) {
+                    MoveScript script = { 0, 1, 1, 0, 0, 0, 0, -1 };
+                    sprintf_s(label, "action_go_to(%d) live order %d target %d", veh_id, order, t);
+                    unitmove_run(h, scope, label, veh_id * 8 + t, script, [&] {
+                            Veh *veh = &Vehs[veh_id];
+                            move_set_waypoints(veh_id, -1);
+                            if (t == 0 || t == 1) {
+                                veh->waypoint_x[0] = (int16_t)wrap_x(veh->x + (t ? 18 : 6));
+                            } else if (t == 2) {
+                                veh->waypoint_x[0] = Bases[base_own].x;
+                                veh->waypoint_y[0] = Bases[base_own].y;
+                            } else {
+                                veh->waypoint_x[0] = -1;
+                            }
+                            veh->order = (int8_t)order;
+                        },
+                        [&] { ((func5 *)0x004CB310)(veh_id); return 0; },
+                        [&] { action_go_to(veh_id); return 0; });
+                    steps += move_calls(&MoveNew, MF_ORDER_VEH);
+                }
+            }
+        }
+        logf("action_go_to (the exe's Path::move): %d compared (%d steps taken), %d mismatches",
+            h.compared, steps, h.mismatches);
+        total += h.mismatches;
+    }
+    return total;
+}
+
+// The unit's own tile for the road to cases: 0 as loaded, 1 bare land, 2 road, 3 road and
+// magtube, 4 fungus, 5 fungus and road, 6 the unit's faction's base, 7 a base bit without an
+// owner, 8 sea.
+static void road_tile_kind(int veh_id, int kind) {
+    Map *tile = map_loc(Vehs[veh_id].x, Vehs[veh_id].y);
+    if (!kind) {
+        return;
+    }
+    tile->bit &= ~(BIT_BASE_IN_TILE | BIT_ROAD | BIT_MAGTUBE | BIT_FUNGUS);
+    tile->climate = (uint8_t)((tile->climate & 0x1F) | ((kind == 8) ? 0x20 : 0x60));
+    if (kind == 2 || kind == 3 || kind == 5) {
+        tile->bit |= BIT_ROAD;
+    }
+    if (kind == 3) {
+        tile->bit |= BIT_MAGTUBE;
+    }
+    if (kind == 4 || kind == 5) {
+        tile->bit |= BIT_FUNGUS;
+    }
+    if (kind == 6 || kind == 7) {
+        tile->bit |= BIT_BASE_IN_TILE;
+        tile->val2 = (uint8_t)((tile->val2 & 0xF0) | ((kind == 6) ? Vehs[veh_id].faction_id : 0xF));
+    }
+}
+
+// The techs for the road to cases (roads in fungus, fungus removal, magtubes): 0 as loaded,
+// 1 removal and magtubes only, 2 roads in fungus and magtubes, 3 none, 4 all.
+static void road_techs(int techs) {
+    if (!techs) {
+        return;
+    }
+    static const int known[5][3] = { { 0, 0, 0 }, { 0, 1, 1 }, { 1, 0, 1 }, { 0, 0, 0 }, { 1, 1, 1 } };
+    Rules->tech_build_roads_fungus = known[techs][0] ? TechNone : TechDisabled;
+    Terraforming[TERRA_REMOVE_FUNGUS].preq_tech = known[techs][1] ? TechNone : TechDisabled;
+    Terraforming[TERRA_MAGTUBE].preq_tech = known[techs][2] ? TechNone : TechDisabled;
+}
+
+static int test_action_road_to() {
+    static const uint8_t entry[6] = { 0x55, 0x8B, 0xEC, 0x83, 0xEC, 0x18 };
+    OriginalEntry vanilla(0x004CB580, entry);
+    NoticeStubs stubs;
+    MoveStubs stubs2;
+    if (!vanilla.ok || !stubs.ok() || !stubs2.ok()) {
+        return 1;
+    }
+    UnitMoveScope scope;
+    int total = 0;
+    char label[128];
+    // dst: 0 the unit's own tile, 1 four columns east, 2 x off the map, 3 y off the map
+    auto set_target = [](int veh_id, int dst, int order) {
+        Veh *veh = &Vehs[veh_id];
+        veh->order = (int8_t)order;
+        veh->waypoint_x[0] = veh->x;
+        veh->waypoint_y[0] = veh->y;
+        if (dst == 1) {
+            veh->waypoint_x[0] = (int16_t)wrap_x(veh->x + 8);
+        } else if (dst == 2) {
+            veh->waypoint_x[0] = -1;
+        } else if (dst == 3) {
+            veh->waypoint_y[0] = (int16_t)*MapLatitudeBounds;
+        }
+    };
+    {
+        MovePathStubs path;
+        if (!path.ok()) {
+            return 1;
+        }
+        NoticeHarness h;
+        int built = 0, cleared = 0, steps = 0, done = 0, ended = 0;
+        // every tile kind, tech set, order and target; Path::find() answers 2
+        for (int veh_id = 0; veh_id < *VehCurrentCount; veh_id += 41) {
+            for (int kind = 0; kind < 9; kind++) {
+                for (int techs = 0; techs < 5; techs++) {
+                    for (int order : { ORDER_ROAD_TO, ORDER_MAGTUBE_TO }) {
+                        for (int dst = 0; dst < 3; dst++) {
+                            MoveScript script = { 2, 1, 1, 0, 0, 0, 0, -1 };
+                            sprintf_s(label, "action_road_to(%d) order %d tile %d techs %d target %d",
+                                veh_id, order, kind, techs, dst);
+                            unitmove_run(h, scope, label, veh_id * 512 + kind * 32 + techs * 4 + dst,
+                                script, [&] {
+                                    road_tile_kind(veh_id, kind);
+                                    road_techs(techs);
+                                    set_target(veh_id, dst, order);
+                                },
+                                [&] { ((func5 *)0x004CB580)(veh_id); return 0; },
+                                [&] { action_road_to(veh_id); return 0; });
+                            for (int i = 0; i < MoveNew.call_count && i < MaxMoveCalls; i++) {
+                                built += MoveNew.calls[i].fn == MF_TERRAFORM
+                                    && MoveNew.calls[i].args[1] == TERRA_ROAD;
+                                cleared += MoveNew.calls[i].fn == MF_TERRAFORM
+                                    && MoveNew.calls[i].args[1] == TERRA_REMOVE_FUNGUS;
+                            }
+                            steps += move_calls(&MoveNew, MF_ORDER_VEH);
+                            ended += Vehs[veh_id].order == ORDER_NONE;
+                        }
+                    }
+                }
+            }
+        }
+        logf("action_road_to: %d compared (%d roads or tubes started, %d fungus removals, %d steps, "
+            "%d orders ended), %d mismatches", h.compared, built, cleared, steps, ended, h.mismatches);
+        total += h.mismatches;
+    }
+    {
+        // the paths and modes: no path, a direction past 7, the ends of the range; a network game
+        // (refused, accepted, a lower unit dying during the waits, ControlTurnC set); arrival with
+        // the unit's faction at the controls (alone, with the state bit 0x200, in a network game);
+        // a network game knowing fungus removal but not roads in fungus (the "remove fungus"
+        // message), and knowing neither (the unit moves on)
+        MovePathStubs path;
+        if (!path.ok()) {
+            return 1;
+        }
+        struct RoadCase { int net, dir, net_ret, renumber, current, bit200, techs; };
+        static const RoadCase cases[] = {
+            { 0, -1, 0, 0, 0, 0, 4 }, { 0, 8, 0, 0, 0, 0, 4 }, { 0, 0, 0, 0, 0, 0, 4 },
+            { 0, 7, 0, 0, 0, 0, 4 }, { 1, 3, 0, 0, 0, 0, 4 }, { 1, 3, 1, 0, 0, 0, 4 },
+            { 1, 3, 1, 1, 1, 0, 4 }, { 2, 3, 0, 0, 0, 0, 4 }, { 0, 3, 0, 0, 1, 0, 4 },
+            { 0, 3, 0, 0, 1, 1, 4 }, { 1, -1, 1, 0, 1, 0, 4 }, { 1, -1, 0, 1, 1, 0, 4 },
+            { 1, 3, 1, 0, 0, 0, 1 }, { 1, 3, 1, 0, 0, 0, 3 },
+        };
+        static const int kinds[] = { 1, 2, 3, 4, 6, 8 };
+        NoticeHarness h;
+        int notices = 0, net_calls = 0, fungus_messages = 0;
+        for (int veh_id = 5; veh_id < *VehCurrentCount; veh_id += 41) {
+            for (int c = 0; c < (int)(sizeof(cases) / sizeof(cases[0])); c++) {
+                const RoadCase &k = cases[c];
+                for (int kind : kinds) {
+                    for (int order : { ORDER_ROAD_TO, ORDER_MAGTUBE_TO }) {
+                        for (int dst = 0; dst < 4; dst++) {
+                            if (dst >= 2 && kind != 1) {
+                                continue;
+                            }
+                            MoveScript script = { k.dir, 1, 1, 0, k.net_ret, k.renumber, 0, -1 };
+                            sprintf_s(label, "action_road_to(%d) order %d tile %d target %d case %d",
+                                veh_id, order, kind, dst, c);
+                            unitmove_run(h, scope, label, veh_id * 512 + c * 32 + kind * 4 + dst,
+                                script, [&] {
+                                    *IsMultiplayerNet = k.net != 0;
+                                    *ControlTurnC = k.net == 2;
+                                    if (k.current) {
+                                        *FactionIDCurrent = Vehs[veh_id].faction_id;
+                                        if (k.bit200) {
+                                            Vehs[veh_id].state |= VSTATE_UNK_200;
+                                        } else {
+                                            Vehs[veh_id].state &= ~VSTATE_UNK_200;
+                                        }
+                                    }
+                                    road_tile_kind(veh_id, kind);
+                                    road_techs(k.techs);
+                                    set_target(veh_id, dst, order);
+                                },
+                                [&] { ((func5 *)0x004CB580)(veh_id); return 0; },
+                                [&] { action_road_to(veh_id); return 0; });
+                            notices += h.now.call_count > 0;
+                            net_calls += move_calls(&MoveNew, MF_NET_ORDER_VEH)
+                                + move_calls(&MoveNew, MF_MESSAGE_DATA) + move_calls(&MoveNew, MF_SYNCH_VEH);
+                            for (int i = 0; i < MoveNew.call_count && i < MaxMoveCalls; i++) {
+                                fungus_messages += MoveNew.calls[i].fn == MF_MESSAGE_DATA
+                                    && MoveNew.calls[i].args[3] == ORDER_REMOVE_FUNGUS;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        logf("action_road_to (paths and network): %d compared (%d with a notice, %d network calls, %d "
+            "\"remove fungus\" messages), %d mismatches", h.compared, notices, net_calls, fungus_messages,
+            h.mismatches);
+        total += h.mismatches;
+    }
+    {
+        // the exe's Path::find(): along a road toward 4, 9 and 20 columns east and a base, with and
+        // without roads in fungus
+        NoticeHarness h;
+        int steps = 0, no_path = 0;
+        for (int veh_id = 3; veh_id < *VehCurrentCount; veh_id += 29) {
+            for (int t = 0; t < 4; t++) {
+                for (int techs : { 0, 3, 4 }) {
+                    MoveScript script = { 0, 1, 1, 0, 0, 0, 0, -1 };
+                    sprintf_s(label, "action_road_to(%d) live target %d techs %d", veh_id, t, techs);
+                    unitmove_run(h, scope, label, veh_id * 16 + t * 4 + techs, script, [&] {
+                            Veh *veh = &Vehs[veh_id];
+                            road_tile_kind(veh_id, 2);
+                            road_techs(techs);
+                            set_target(veh_id, 1, ORDER_ROAD_TO);
+                            if (t < 3) {
+                                veh->waypoint_x[0] = (int16_t)wrap_x(veh->x + ((t == 0) ? 8 : (t == 1) ? 18 : 40));
+                            } else if (*BaseCurrentCount) {
+                                veh->waypoint_x[0] = Bases[veh_id % *BaseCurrentCount].x;
+                                veh->waypoint_y[0] = Bases[veh_id % *BaseCurrentCount].y;
+                            }
+                        },
+                        [&] { ((func5 *)0x004CB580)(veh_id); return 0; },
+                        [&] { action_road_to(veh_id); return 0; });
+                    steps += move_calls(&MoveNew, MF_ORDER_VEH);
+                    no_path += !move_calls(&MoveNew, MF_ORDER_VEH) && Vehs[veh_id].order == ORDER_NONE;
+                }
+            }
+        }
+        logf("action_road_to (the exe's Path::find): %d compared (%d steps, %d without a path), "
+            "%d mismatches", h.compared, steps, no_path, h.mismatches);
+        total += h.mismatches;
+    }
+    return total;
+}
+
+// Treaties of a faction with everyone: 1 vendetta, 2 treaty, 3 pact (both directions).
+static void drop_treaties(uint32_t faction_id, int kind) {
+    for (uint32_t i = 0; i < MaxPlayerNum; i++) {
+        if (i == faction_id) {
+            continue;
+        }
+        for (int side = 0; side < 2; side++) {
+            uint32_t *t = side ? &PlayersData[i].diplo_treaties[faction_id]
+                : &PlayersData[faction_id].diplo_treaties[i];
+            *t &= ~(DTREATY_PACT | DTREATY_TREATY | DTREATY_TRUCE | DTREATY_VENDETTA);
+            *t |= (kind == 1) ? DTREATY_VENDETTA : ((kind == 2) ? DTREATY_TREATY
+                : (DTREATY_PACT | DTREATY_TREATY));
+        }
+    }
+}
+
+// The base the "air drop near $BASENAME0" notice names: the shipped exe asks base_find() for the
+// base nearest the drop that faction 1 owns or has seen and reads Bases[-1] when there is none;
+// OpenSMACX asks for the player at the controls and leaves the name blank when there is none.
+static int AirdropShipped, AirdropIntended;
+static void airdrop_notice_bases(int x, int y) {
+    int dist_saved = *BaseFindDist;
+    AirdropShipped = base_find(x, y, -1, -1, -1, 1);
+    AirdropIntended = base_find(x, y, -1, -1, -1, *FactionIDCurrent);
+    *BaseFindDist = dist_saved;
+}
+static BOOL airdrop_notice_made(const NoticeState *s) {
+    for (int i = 0; i < s->call_count && i < MaxNoticeCalls; i++) {
+        if (s->calls[i].fn == NF_POPP && !strncmp(s->calls[i].label, "MADE", 4)) {
+            return true;
+        }
+    }
+    return false;
+}
+static LPCSTR airdrop_intended_name() {
+    return (AirdropIntended >= 0) ? Bases[AirdropIntended].name_string : "";
+}
+// Would the shipped exe's notice show another name than OpenSMACX's?
+static BOOL airdrop_names_differ() {
+    return strcmp(Bases[AirdropShipped].name_string, airdrop_intended_name()) != 0;
+}
+
+static int test_action_airdrop() {
+    static const uint8_t entry[6] = { 0x55, 0x8B, 0xEC, 0x83, 0xEC, 0x1C };
+    OriginalEntry vanilla(0x004CC360, entry);
+    NoticeStubs stubs;
+    MoveStubs stubs2;
+    if (!vanilla.ok || !stubs.ok() || !stubs2.ok() || !*BaseCurrentCount) {
+        return (vanilla.ok && stubs.ok() && stubs2.ok()) ? 0 : 1;
+    }
+    UnitMoveScope scope;
+    int total = 0;
+    char label[128];
+    // tiles at 0 to 8 steps (RadiusOffsetX/Y), half the map away, a base of another faction, one
+    // of the unit's own and the tile two columns east of a base of the save's player
+    static const int offsets[] = { 0, 1, 4, 9, 14, 21, 26, 37, 50, 63, 82, 121, 170, 230, 288 };
+    const int offset_count = (int)(sizeof(offsets) / sizeof(offsets[0]));
+    const int target_count = offset_count + 4;
+    auto target = [&](int veh_id, int t, int *x, int *y) -> BOOL {
+        const Veh *veh = &Vehs[veh_id];
+        if (t < offset_count) {
+            *x = wrap_x(veh->x + RadiusOffsetX[offsets[t]]);
+            *y = veh->y + RadiusOffsetY[offsets[t]];
+        } else if (t == offset_count) {
+            *x = wrap_x(veh->x + *MapLongitudeBounds / 2);
+            *y = veh->y;
+        } else {
+            BOOL own = t == offset_count + 2;
+            BOOL player = t == offset_count + 3;
+            int found = -1;
+            for (int i = 0; i < *BaseCurrentCount; i++) {
+                int b = (i + veh_id * 7) % *BaseCurrentCount;
+                if (player ? Bases[b].faction_id_current == scope.current
+                    : (Bases[b].faction_id_current == veh->faction_id) == own) {
+                    found = b;
+                    break;
+                }
+            }
+            if (found < 0) {
+                return false;
+            }
+            *x = player ? wrap_x(Bases[found].x + 2) : Bases[found].x;
+            *y = Bases[found].y;
+        }
+        return *y >= 0 && *y < *MapLatitudeBounds && *x >= 0 && *x < *MapLongitudeBounds;
+    };
+    // case: 0 as loaded; 1 the unit's faction at the controls, flags 1 (checks with notices);
+    // 2 ... flags 0; 3 as loaded, flags 2 (drops without notices); flags 3 from here on: 4 another
+    // faction at the controls, quick moves off (flight shown, 200 ms pause); 5 ... quick moves on,
+    // shift held; 6 ... MapWinUnk23BF0 set; 7 omniscient view; 8 the unit's faction at the controls
+    // at vendetta with everyone, drop range 500 (air defenses); 9 ... a treaty with everyone, the
+    // player agrees to break it; 10 ... declines; 11 a pact with everyone; 12 the unit selected in
+    // the map view, its faction human, capture_base() renumbering it, drop range 500, the player
+    // agreeing to break a treaty; 13 a network game, another faction at the controls; 14 a
+    // non-combat unit (Formers), its faction at the controls; 15 the Cloudbase Academy in a base of
+    // a faction at vendetta; 16 the faction alien, at the controls; 17 alien, another faction at
+    // the controls, omniscient view; 18 a computer faction's drop into a base whose tile has no
+    // unit bit (a capture), another faction at the controls, drop range 500; 19 a faction that
+    // neither owns nor has seen a base at the controls, omniscient view (the notice finds no base);
+    // 20 Formers into a tile without the unit bit, at the controls; 21 as loaded, drop range 500
+    // (the save's player watching drops anywhere). In 4, 6 and 13 a unit of the controlling faction
+    // is moved next to the target (the drop is seen); in 5 it is the target tile's owner when that
+    // is another faction. 12, 18 and 20 clear the target's unit bit.
+    const int case_count = 22;
+    int baseless = -1; // faction 0 only when every other faction owns a base
+    for (int i = 1; i <= MaxPlayerNum && baseless < 0; i++) {
+        baseless = i % MaxPlayerNum;
+        for (int b = 0; b < *BaseCurrentCount; b++) {
+            if (Bases[b].faction_id_current == baseless) {
+                baseless = -1;
+                break;
+            }
+        }
+    }
+    auto setup_case = [&](int veh_id, int c, int x, int y) {
+        uint32_t f = Vehs[veh_id].faction_id;
+        uint32_t other = f % 7 + 1;
+        Map *tile = map_loc(x, y);
+        MoveScriptNow.key_state = (c == 5) ? 0x8000 : 0;
+        MoveScriptNow.capture_id = (c == 12 && veh_id > 0) ? veh_id - 1 : -1;
+        if (c == 1 || c == 2 || (c >= 8 && c <= 12) || c == 14 || c == 15 || c == 16 || c == 20) {
+            *FactionIDCurrent = f;
+        } else if (c == 19) {
+            *FactionIDCurrent = (baseless >= 0) ? baseless : other;
+            for (int b = 0; b < *BaseCurrentCount && baseless >= 0; b++) {
+                Bases[b].visibility &= (uint8_t)~(1 << baseless); // nor has it seen one
+            }
+        } else if (c >= 4) {
+            *FactionIDCurrent = other;
+        }
+        if (c == 5 && (tile->bit & (BIT_BASE_IN_TILE | BIT_VEH_IN_TILE)) && (tile->val2 & 0xF) < 8
+            && (tile->val2 & 0xF) != f) {
+            *FactionIDCurrent = tile->val2 & 0xF;
+        }
+        if (c == 4 || c == 6 || c == 13) { // a unit of the controlling faction moved next to the target
+            int x_near = wrap_x(x + RadiusBaseX[2]), y_near = y + RadiusBaseY[2];
+            if (y_near >= 0 && y_near < *MapLatitudeBounds && x_near >= 0 && x_near < *MapLongitudeBounds) {
+                for (int i = 0; i < *VehCurrentCount; i++) {
+                    int v = (i + veh_id * 13) % *VehCurrentCount;
+                    if (v != veh_id && Vehs[v].faction_id == other) {
+                        veh_drop(veh_lift(v), x_near, y_near);
+                        break;
+                    }
+                }
+            }
+        }
+        if (c == 12 || c == 18 || c == 20) {
+            tile->bit &= ~BIT_VEH_IN_TILE;
+        }
+        if (c == 18) {
+            *FactionsStatus &= (uint8_t)~(1 << f);
+        }
+        if (c == 13) {
+            *IsMultiplayerNet = true;
+        }
+        if (c == 4 || c == 6 || c == 13) {
+            *GamePreferences |= PREF_BSC_DONT_QUICK_MOVE_ENEMY_VEH | PREF_BSC_DONT_QUICK_MOVE_ALLY_VEH;
+        } else if (c == 5) {
+            *GamePreferences &= ~(PREF_BSC_DONT_QUICK_MOVE_ENEMY_VEH | PREF_BSC_DONT_QUICK_MOVE_ALLY_VEH);
+        }
+        if (c >= 4) {
+            *MapWinUnk23BF0 = (c == 6);
+        }
+        if (c == 7 || c == 17 || c == 19) {
+            *GameState |= STATE_OMNISCIENT_VIEW;
+        } else if (c >= 4) {
+            *GameState &= ~STATE_OMNISCIENT_VIEW;
+        }
+        if (c == 21) {
+            Rules->max_airdrop_sans_orb_insert = 500;
+        }
+        if (c == 12 || c == 18) {
+            Rules->max_airdrop_sans_orb_insert = 500;
+            NoticeAnswer[NF_POPP] = 1;
+        }
+        if (c == 8 || c == 15) {
+            drop_treaties(f, 1);
+            Rules->max_airdrop_sans_orb_insert = 500;
+        } else if (c == 9 || c == 10) {
+            drop_treaties(f, 2);
+            NoticeAnswer[NF_POPP] = (c == 9);
+        } else if (c == 11) {
+            drop_treaties(f, 3);
+        }
+        if (c == 12) {
+            *MapWinVehIDSelected = veh_id;
+            *MapWinUnitNotViewMode = true;
+            *FactionsStatus |= (uint8_t)(1 << f);
+        }
+        if (c == 14 || c == 20) {
+            Vehs[veh_id].proto_id = BSC_FORMERS;
+        }
+        if (c == 15) {
+            for (int i = 0; i < *BaseCurrentCount; i++) {
+                if (Bases[i].faction_id_current != f) {
+                    SecretProject->cloudbase_academy = i;
+                    break;
+                }
+            }
+        }
+        if (c == 16 || c == 17) {
+            Players[f].rule_flags ^= RFLAG_ALIEN;
+        }
+        airdrop_notice_bases(x, y);
+    };
+    auto flags_of = [](int c) { return (c == 1) ? 1 : ((c == 2) ? 0 : ((c == 3) ? 2 : 3)); };
+    int made = 0, shipped_differs = 0, minus_one = 0, dropped = 0, captured = 0, flights = 0,
+        pauses = 0, pods = 0, made_19 = 0, minus_one_other = 0, made_0 = 0, differs_0 = 0,
+        blank_nonempty = 0;
+    int refused[5] = {};
+    static const char *const refusals[5] = { "DROPRANGE", "DROPSEA", "DROPUNIT", "NONCOMDROP",
+        "AIRDEFENSES" };
+    {
+        // the exe's code with its base_find() call asking for the player at the controls: the push 1
+        // at 0x4CCC4C made push ecx, which holds FactionIDCurrent there (loaded at 0x4CCC35)
+        static const uint8_t shipped[2] = { 0x6A, 0x01 }, intended[2] = { 0x51, 0x90 };
+        CodeBytesPatch notice_fix(0x004CCC4C, shipped, intended, 2);
+        if (!notice_fix.ok) {
+            return 1;
+        }
+        NoticeHarness h;
+        for (int veh_id = 0; veh_id < *VehCurrentCount; veh_id += 53) {
+            for (int t = 0; t < target_count; t++) {
+                int x, y;
+                if (!target(veh_id, t, &x, &y)) {
+                    continue;
+                }
+                for (int c = 0; c < case_count; c++) {
+                    MoveScript script = { 0, 0, 0, 0, 0, 0, 0, -1 };
+                    int flags = flags_of(c);
+                    sprintf_s(label, "action_airdrop(%d, %d, %d, %d) case %d", veh_id, x, y, flags, c);
+                    int before = h.mismatches;
+                    unitmove_run(h, scope, label, veh_id * 1024 + t * 32 + c, script,
+                        [&] { setup_case(veh_id, c, x, y); },
+                        [&] { return ((int(__cdecl *)(int, int, int, int))0x004CC360)(veh_id, x, y, flags); },
+                        [&] { return (int)action_airdrop(veh_id, x, y, flags); });
+                    // no base found: this pass's exe reads Bases[-1], OpenSMACX shows a blank, so they
+                    // differ by design only if that memory doesn't start with a 0 byte
+                    if (airdrop_notice_made(&h.now) && AirdropIntended < 0 && Bases[-1].name_string[0]) {
+                        blank_nonempty++;
+                        if (h.mismatches > before) {
+                            h.mismatches--;
+                        }
+                    }
+                    for (int i = 0; i < h.now.call_count && i < MaxNoticeCalls; i++) {
+                        for (int r = 0; r < 5; r++) {
+                            refused[r] += h.now.calls[i].fn == NF_NETMSG_POP
+                                && !strcmp(h.now.calls[i].label, refusals[r]);
+                        }
+                    }
+                    if (airdrop_notice_made(&h.now) && c == 19) {
+                        made_19++;
+                        minus_one += AirdropIntended < 0;
+                    } else if (airdrop_notice_made(&h.now)) {
+                        made++;
+                        minus_one_other += AirdropIntended < 0;
+                        made_0 += c == 0 || c == 21; // as loaded: the save's player at the controls
+                        differs_0 += (c == 0 || c == 21) && airdrop_names_differ();
+                        if (airdrop_names_differ() && shipped_differs++ < 5) {
+                            logf("  action_airdrop(%d, %d, %d) case %d: the shipped notice names base %d "
+                                "'%s', OpenSMACX's base %d '%s'", veh_id, x, y, c, AirdropShipped,
+                                Bases[AirdropShipped].name_string, AirdropIntended,
+                                airdrop_intended_name());
+                        }
+                    }
+                    dropped += (flags & 2) && UnitActNew.ret;
+                    captured += move_calls(&MoveNew, MF_CAPTURE_BASE);
+                    flights += move_calls(&MoveNew, MF_VEH_SCOOT);
+                    pauses += move_calls(&MoveNew, MF_CLOCK_WAIT);
+                    pods += move_calls(&MoveNew, MF_GOODY_BOX);
+                }
+            }
+        }
+        logf("action_airdrop: %d compared (%d drops made; refused %d out of range, %d at sea, %d onto "
+            "units, %d non-combat, %d by air defenses; %d captures, %d flights shown, %d pauses, %d pods, "
+            "%d \"air drop near\" notices), %d mismatches", h.compared, dropped, refused[0], refused[1],
+            refused[2], refused[3], refused[4], captured, flights, pauses, pods, made + made_19,
+            h.mismatches);
+        logf("action_airdrop: all cases but 19: in %d of the %d notices the shipped exe (base_find() for "
+            "faction 1) names another base; %d found no base; case 19: %d notices, %d found no base; "
+            "every no-base notice is blank, the exe's Bases[-1] read ('%.24s') was non-empty in %d; as "
+            "loaded (cases 0 and 21): %d notices, %d name another base", shipped_differs, made,
+            minus_one_other, made_19, minus_one, Bases[-1].name_string, blank_nonempty, made_0, differs_0);
+        const uint8_t *before_bases = (const uint8_t *)Bases[-1].name_string;
+        logf("action_airdrop: Bases[-1].name_string at %08X starts %02X %02X %02X %02X; faction without a "
+            "base for case 19: %d", (uint32_t)before_bases, before_bases[0], before_bases[1],
+            before_bases[2], before_bases[3], baseless);
+        total += h.mismatches;
+    }
+    {
+        // the shipped exe as it is: it must differ from OpenSMACX exactly where the notice names
+        // another base (counted, not logged in detail)
+        NoticeHarness h;
+        h.mismatches = MAX_DETAIL; // no detail lines for the expected differences
+        int runs = 0, predicted = 0, predicted_19 = 0, inconsistent = 0;
+        for (int veh_id = 0; veh_id < *VehCurrentCount; veh_id += 53) {
+            for (int t = 0; t < target_count; t++) {
+                int x, y;
+                if (!target(veh_id, t, &x, &y)) {
+                    continue;
+                }
+                for (int c : { 4, 7, 17, 19, 21 }) {
+                    MoveScript script = { 0, 0, 0, 0, 0, 0, 0, -1 };
+                    sprintf_s(label, "action_airdrop(%d, %d, %d, 3) shipped case %d", veh_id, x, y, c);
+                    int before = h.mismatches;
+                    unitmove_run(h, scope, label, veh_id * 1024 + t * 32 + c, script,
+                        [&] { setup_case(veh_id, c, x, y); },
+                        [&] { return ((int(__cdecl *)(int, int, int, int))0x004CC360)(veh_id, x, y, 3); },
+                        [&] { return (int)action_airdrop(veh_id, x, y, 3); });
+                    BOOL expect = airdrop_notice_made(&h.now) && airdrop_names_differ();
+                    runs++;
+                    predicted += expect;
+                    predicted_19 += expect && c == 19;
+                    if (expect != (h.mismatches > before) && inconsistent++ < 5) {
+                        logf("  %s: %s", label, expect ? "the notice was expected to differ"
+                            : "differs elsewhere");
+                    }
+                }
+            }
+        }
+        logf("action_airdrop (the shipped exe): %d compared, %d differ in the notice's base as "
+            "predicted (%d of them in case 19), %d otherwise", runs, predicted, predicted_19, inconsistent);
+        total += inconsistent;
+    }
+    return total;
+}
+
+// The group's tests (trigger "unitmove", or a function's name).
+static int test_unitmove() {
+    int total = 0;
+    if (test_enabled("unitmove", "action_go_to")) {
+        total += test_action_go_to();
+    }
+    if (test_enabled("unitmove", "action_road_to")) {
+        total += test_action_road_to();
+    }
+    if (test_enabled("unitmove", "action_airdrop")) {
+        total += test_action_airdrop();
+    }
+    return total;
+}
+
+// ---------------------------------------------------------------- batch 32: unit terraforming
+
+// The exe functions the terraforming actions reach that the notice recorders don't cover: their
+// calls go to a list of their own, compared after each run.
+enum TerraFn {
+    TC_DRAW_TILES, TC_DRAW_RADIUS, TC_CHECK_VEH, TC_CHECK_LOC, TC_CHECK_BASE, TC_REDRAW, TC_TUT_MAP,
+    TC_WAVE_IT, TC_AMBIENCE, TC_ORDER_VEH, TC_BASE_KILL, TC_CLEAR_TERRAIN, TC_COUNT
+};
+static const char *const TerraFnName[TC_COUNT] = { "draw_tiles", "draw_radius", "BaseWin::check_veh",
+    "BaseWin::check_loc", "BaseWin::check_base", "GraphicWin::redraw", "TutWin::tut_map", "wave_it",
+    "ambience", "order_veh", "base_kill", "MapWin/WorldWin::clear_terrain" };
+struct TerraCall {
+    int fn;
+    int args[4];
+    char label[24];
+};
+const int MaxTerraCalls = 48;
+static TerraCall TerraCalls[MaxTerraCalls];
+static int TerraCallCount;
+
+static void terra_record(int fn, LPCSTR label, int a0, int a1, int a2, int a3) {
+    if (TerraCallCount < MaxTerraCalls) {
+        TerraCall *call = &TerraCalls[TerraCallCount];
+        memset(call, 0, sizeof(*call));
+        call->fn = fn;
+        strncpy_s(call->label, label ? label : "", _TRUNCATE);
+        call->args[0] = a0;
+        call->args[1] = a1;
+        call->args[2] = a2;
+        call->args[3] = a3;
+    }
+    TerraCallCount++;
+}
+static void __cdecl terra_draw_tiles(int x, int y, int mode) {
+    terra_record(TC_DRAW_TILES, NULL, x, y, mode, 0);
+}
+static void __cdecl terra_draw_radius(int x, int y, int radius, int mode) {
+    terra_record(TC_DRAW_RADIUS, NULL, x, y, radius, mode);
+}
+static void __fastcall terra_check_veh(void *This, void *, int veh_id) {
+    terra_record(TC_CHECK_VEH, NULL, This == BaseWinVar, veh_id, 0, 0);
+}
+static void __fastcall terra_check_loc(void *This, void *, int x, int y, int mode) {
+    terra_record(TC_CHECK_LOC, NULL, This == BaseWinVar, x, y, mode);
+}
+static void __fastcall terra_check_base(void *This, void *, int base_id) {
+    terra_record(TC_CHECK_BASE, NULL, This == BaseWinVar, base_id, 0, 0);
+}
+static void __fastcall terra_redraw(void *This, void *) {
+    terra_record(TC_REDRAW, NULL, This == BaseWinVar, 0, 0, 0);
+}
+static int __fastcall terra_tut_map(void *This, void *, LPCSTR label, int x, int y, int veh_id,
+                                    void *picture, int unk1, int unk2, int unk3) {
+    terra_record(TC_TUT_MAP, label, x * 0x10000 + y, veh_id, (int)picture,
+        (This == TutWinVar) * 0x1000000 + (unk1 & 0xFF) * 0x10000 + (unk2 & 0xFF) * 0x100 + (unk3 & 0xFF));
+    return 0;
+}
+static void __cdecl terra_wave_it(int wave) {
+    terra_record(TC_WAVE_IT, NULL, wave, 0, 0, 0);
+}
+static void __cdecl terra_ambience(int sound) {
+    terra_record(TC_AMBIENCE, NULL, sound, 0, 0, 0);
+}
+static int __cdecl terra_order_veh(int veh_id, int dir, int flags) {
+    terra_record(TC_ORDER_VEH, NULL, veh_id, dir, flags, Vehs[veh_id].order);
+    return 0;
+}
+// a base sunk by raising or lowering the land (its removal opens dialogs for the owner)
+static void __cdecl terra_base_kill(uint32_t base_id) {
+    terra_record(TC_BASE_KILL, NULL, base_id, 0, 0, 0);
+}
+// world_climate() ends by clearing the map views' terrain
+static void __fastcall terra_clear_terrain(void *This, void *) {
+    terra_record(TC_CLEAR_TERRAIN, NULL, (int)This, 0, 0, 0);
+}
+
+struct TerraStubs {
+    NoticeStubs notices;
+    JmpStub draw_tile_stub, focus_stub, boom_stub, draw_map_stub, fight_stub, draw_tiles_stub,
+        draw_radius_stub, check_veh_stub, check_loc_stub, check_base_stub, redraw_stub, tut_map_stub,
+        wave_stub, ambience_stub, order_veh_stub, base_kill_stub, mapwin_clear_stub, worldwin_clear_stub;
+    TimeGetTimePin pin; // world_climate() ends by reseeding from the clock
+    TerraStubs()
+        : draw_tile_stub(0x0046AF40, (void *)unitact_draw_tile),
+          focus_stub(0x005108A0, (void *)unitact_console_focus),
+          boom_stub(0x00504AA0, (void *)unitact_boom),
+          draw_map_stub(0x0046B190, (void *)unitact_draw_map),
+          fight_stub(0x00506AF0, (void *)unitact_battle_fight_2),
+          draw_tiles_stub(0x0046B140, (void *)terra_draw_tiles),
+          draw_radius_stub(0x0046AEF0, (void *)terra_draw_radius),
+          check_veh_stub(0x0041A8B0, (void *)terra_check_veh),
+          check_loc_stub(0x0041A7E0, (void *)terra_check_loc),
+          check_base_stub(0x0041A7A0, (void *)terra_check_base),
+          redraw_stub(0x005D5A70, (void *)terra_redraw),
+          tut_map_stub(0x004BE650, (void *)terra_tut_map),
+          wave_stub(0x004455F0, (void *)terra_wave_it),
+          ambience_stub(0x00446B40, (void *)terra_ambience),
+          order_veh_stub(0x005947C0, (void *)terra_order_veh),
+          base_kill_stub((uint32_t)&base_kill, (void *)terra_base_kill), // DLL code since batch 30
+          mapwin_clear_stub(0x0046FD90, (void *)terra_clear_terrain),
+          worldwin_clear_stub(0x004C45E0, (void *)terra_clear_terrain) {}
+    BOOL ok() const {
+        return notices.ok() && draw_tile_stub.ok && focus_stub.ok && boom_stub.ok && draw_map_stub.ok
+            && fight_stub.ok && draw_tiles_stub.ok && draw_radius_stub.ok && check_veh_stub.ok
+            && check_loc_stub.ok && check_base_stub.ok && redraw_stub.ok && tut_map_stub.ok
+            && wave_stub.ok && ambience_stub.ok && order_veh_stub.ok && base_kill_stub.ok
+            && mapwin_clear_stub.ok && worldwin_clear_stub.ok && pin.ok();
+    }
+};
+
+// What the terraforming actions change besides GameSnapshot, NoticeState and UnitActExtra (the
+// base globals there include BaseFindDist): the recorded calls, the tutorial's "MADE..." bits, the
+// completion sound's flag and what world_rainfall() leaves.
+struct TerraState {
+    TerraCall calls[MaxTerraCalls];
+    int call_count;
+    uint32_t tut_shown[2];
+    int sound_played;
+    int rain_base, rain_faction;
+};
+static TerraState TerraSaved, TerraOrig, TerraNew;
+
+static void terra_take(TerraState *s) {
+    memcpy(s->calls, TerraCalls, sizeof(s->calls));
+    s->call_count = TerraCallCount;
+    s->tut_shown[0] = TutTerraformShown[0];
+    s->tut_shown[1] = TutTerraformShown[1];
+    s->sound_played = *TerraformSoundPlayed;
+    s->rain_base = *MapRainfallChangeBaseID;
+    s->rain_faction = *MapRainfallChangeFactionID;
+}
+
+static void terra_restore() {
+    TutTerraformShown[0] = TerraSaved.tut_shown[0];
+    TutTerraformShown[1] = TerraSaved.tut_shown[1];
+    *TerraformSoundPlayed = TerraSaved.sound_played;
+    *MapRainfallChangeBaseID = TerraSaved.rain_base;
+    *MapRainfallChangeFactionID = TerraSaved.rain_faction;
+    TerraCallCount = 0;
+}
+
+static const char *terra_differs(const TerraState *o, const TerraState *n, char *detail, size_t size) {
+    detail[0] = 0;
+    if (o->call_count != n->call_count) {
+        sprintf_s(detail, size, "orig %d calls, new %d", o->call_count, n->call_count);
+        return "recorded calls";
+    }
+    for (int i = 0; i < o->call_count && i < MaxTerraCalls; i++) {
+        const TerraCall *a = &o->calls[i], *b = &n->calls[i];
+        if (a->fn != b->fn || strcmp(a->label, b->label) || memcmp(a->args, b->args, sizeof(a->args))) {
+            sprintf_s(detail, size, "call %d: orig %s('%s' %d %d %d %d) new %s('%s' %d %d %d %d)", i,
+                TerraFnName[a->fn], a->label, a->args[0], a->args[1], a->args[2], a->args[3],
+                TerraFnName[b->fn], b->label, b->args[0], b->args[1], b->args[2], b->args[3]);
+            return "recorded calls";
+        }
+    }
+    if (memcmp(o->tut_shown, n->tut_shown, sizeof(o->tut_shown))) {
+        sprintf_s(detail, size, "orig %X/%X new %X/%X", o->tut_shown[0], o->tut_shown[1], n->tut_shown[0],
+            n->tut_shown[1]);
+        return "tutorial bits";
+    }
+    if (o->sound_played != n->sound_played) {
+        return "completion sound flag";
+    }
+    if (o->rain_base != n->rain_base || o->rain_faction != n->rain_faction) {
+        return "rainfall change globals";
+    }
+    return NULL;
+}
+
+// Saves what terra_restore() puts back, and the preferences the variants change.
+struct TerraScope {
+    uint32_t preferences_saved;
+    TerraScope() {
+        TerraCallCount = 0;
+        terra_take(&TerraSaved);
+        preferences_saved = *GamePreferences;
+    }
+    ~TerraScope() {
+        terra_restore();
+        *GamePreferences = preferences_saved;
+    }
+};
+
+// One byte of the exe's code changed while this lives (the expected byte is checked first).
+struct ExeCodeByte {
+    uint8_t *at;
+    uint8_t saved;
+    DWORD old_protect;
+    BOOL ok;
+    ExeCodeByte(uint32_t address, uint8_t expected, uint8_t value)
+        : at((uint8_t *)address), saved(0), old_protect(0), ok(false) {
+        if (*at != expected) {
+            logf("unexpected byte %02X at %08X (expected %02X)", *at, address, expected);
+            return;
+        }
+        if (!VirtualProtect(at, 1, PAGE_EXECUTE_READWRITE, &old_protect)) {
+            logf("cannot unprotect %08X (%u)", address, GetLastError());
+            return;
+        }
+        saved = *at;
+        *at = value;
+        FlushInstructionCache(GetCurrentProcess(), at, 1);
+        ok = true;
+    }
+    ~ExeCodeByte() {
+        if (ok) {
+            *at = saved;
+            FlushInstructionCache(GetCurrentProcess(), at, 1);
+            VirtualProtect(at, 1, old_protect, &old_protect);
+        }
+    }
+};
+
+// Kinds of input where the shipped game does otherwise than action_terraform() / action_home()
+// (Kiousu's decisions, see their Status notes): set by the test before a call or by the patched
+// original while it runs. The probes only watch the units-lost message.
+enum TerraSlip {
+    SLIP_ENRICHER_TECH = 1, // a farm ordered on a land farm; Farm's and Soil Enricher's techs differ
+    SLIP_SLOT = 2,          // raising or lowering the land moved another unit into the unit's slot
+    SLIP_HOME_AIRBASE = 4,  // action_home(): the airbase-at-home path taken
+    PROBE_LOST = 0x100,     // units of the player at the controls lost to the land changes
+    PROBE_LOST_AT_CHECK = 0x200, // and still on record when the message is checked
+};
+static const char *const TerraSlipName[3] = { "farm to soil enricher technology",
+    "unit slot after the land changes", "home airbase: distance kept" };
+static int TerraFlags;
+
+// The original with the slips fixed in its own code (P1: the Soil Enricher's technology; P5: the
+// unit's own state and order put into its slot after the land changes, through the altitude
+// wrappers; in action_home P4: the airbase's distance kept), and a probe at the units-lost check
+// (the original's two instructions, unchanged).
+static __declspec(naked) void terra_lost_probe() {
+    __asm {
+        mov ecx, 0x00939284
+        mov ecx, [ecx]                  // FactionIDCurrent
+        lea eax, [ecx * 4]
+        add eax, 0x009B22BC
+        mov eax, [eax]                  // MapBaseIdClosestSubmergedVeh[FactionIDCurrent]
+        test eax, eax
+        jl not_lost
+        or dword ptr [TerraFlags], 0x200 // PROBE_LOST_AT_CHECK
+    not_lost:
+        push 0x004CA473
+        ret
+    }
+}
+
+static int TerraFormer = -1; // the unit the patched original works with (-1: not running)
+static Veh TerraFormerVeh;   // as it was when the call began
+static int TerraSwapSlot = -1;
+static uint32_t TerraSwapState;
+static int8_t TerraSwapOrder;
+
+// After the land is raised or lowered: note whether another unit took the unit's slot and whether
+// units of the player at the controls were lost, then put the unit's own state and order (cleared
+// by now) into the slot for the rest of the run.
+static void terra_after_alt() {
+    if (TerraFormer < 0) {
+        return;
+    }
+    const Veh *f = &TerraFormerVeh;
+    Veh *slot = &Vehs[TerraFormer];
+    if (TerraFormer >= *VehCurrentCount || slot->x != f->x || slot->y != f->y
+        || slot->proto_id != f->proto_id || slot->faction_id != f->faction_id
+        || slot->home_base_id != f->home_base_id || slot->state != f->state
+        || slot->morale != f->morale || slot->dmg_incurred != f->dmg_incurred) {
+        TerraFlags |= SLIP_SLOT;
+    }
+    if (MapBaseIdClosestSubmergedVeh[*FactionIDCurrent] >= 0) {
+        TerraFlags |= PROBE_LOST;
+    }
+    TerraSwapSlot = TerraFormer;
+    TerraSwapState = slot->state;
+    TerraSwapOrder = slot->order;
+    slot->state = f->state;
+    slot->order = ORDER_NONE;
+}
+static void __cdecl terra_raise_alt(int x, int y) {
+    world_raise_alt(x, y);
+    terra_after_alt();
+}
+static void __cdecl terra_lower_alt(int x, int y) {
+    world_lower_alt(x, y);
+    terra_after_alt();
+}
+
+static int terra_intent_call(int veh_id, int terraform_id, BOOL execute) {
+    ExeCodeByte p1(0x004C9BBE, 0x80, 0xA0); // [ecx*4+0x691880] -> [ecx*4+0x6918A0]
+    JmpStub probe(0x004CA466, (void *)terra_lost_probe);
+    JmpStub raise(0x005C2380, (void *)terra_raise_alt); // the exe's calls only (redirect jumps)
+    JmpStub lower(0x005C23E0, (void *)terra_lower_alt);
+    if (!p1.ok || !probe.ok || !raise.ok || !lower.ok) {
+        return -12345;
+    }
+    TerraFormer = veh_id;
+    TerraFormerVeh = Vehs[veh_id];
+    int ret = ((int(__cdecl *)(int, int, int))0x004C9B00)(veh_id, terraform_id, execute);
+    if (TerraSwapSlot >= 0) {
+        Vehs[TerraSwapSlot].state = TerraSwapState;
+        Vehs[TerraSwapSlot].order = TerraSwapOrder;
+        TerraSwapSlot = -1;
+    }
+    TerraFormer = -1;
+    return ret;
+}
+
+static int HomeAirbaseTaken; // times the patched original took its airbase-at-home path
+static __declspec(naked) void home_airbase_cave() {
+    __asm {
+        mov dword ptr [ebp - 0x08], eax // the airbase's distance, which the original leaves out
+        mov dword ptr [ebp - 0x1C], ebx
+        mov dword ptr [ebp - 0x18], esi
+        inc dword ptr [HomeAirbaseTaken]
+        push 0x004CBEC0
+        ret
+    }
+}
+
+static int home_intent_call(int veh_id, int mode) {
+    JmpStub p4(0x004CC255, (void *)home_airbase_cave);
+    if (!p4.ok) {
+        return -12345;
+    }
+    int taken = HomeAirbaseTaken;
+    int ret = ((int(__cdecl *)(int, int))0x004CBAA0)(veh_id, mode);
+    if (HomeAirbaseTaken != taken) {
+        TerraFlags |= SLIP_HOME_AIRBASE;
+    }
+    return ret;
+}
+
+// The messages and other recorded calls of the last run (the patched original for action_terraform
+// and action_home, the DLL for action_destroy), by label: what the inputs reached.
+struct LabelTally {
+    char labels[48][24];
+    int counts[48];
+    int n;
+    LabelTally() : n(0) {}
+    void add(LPCSTR label) {
+        for (int i = 0; i < n; i++) {
+            if (!strcmp(labels[i], label)) {
+                counts[i]++;
+                return;
+            }
+        }
+        if (n < 48) {
+            strncpy_s(labels[n], label, _TRUNCATE);
+            counts[n++] = 1;
+        }
+    }
+    void take() {
+        for (int c = 0; c < NoticeCallCount && c < MaxNoticeCalls; c++) {
+            const NoticeCall *call = &NoticeCalls[c];
+            if (call->fn == NF_NETMSG_POP || call->fn == NF_POPP || call->fn == NF_X_POP_2) {
+                add(call->label);
+            } else if (call->fn == NF_BATTLE_FIGHT_2 || call->fn == NF_BOOM
+                || call->fn == NF_CONSOLE_FOCUS) {
+                add(NoticeFnName[call->fn]);
+            }
+        }
+        for (int c = 0; c < TerraCallCount && c < MaxTerraCalls; c++) {
+            const TerraCall *call = &TerraCalls[c];
+            if (call->fn == TC_TUT_MAP) {
+                add(call->label);
+            } else if (call->fn == TC_WAVE_IT || call->fn == TC_ORDER_VEH || call->fn == TC_BASE_KILL
+                || call->fn == TC_DRAW_RADIUS) {
+                add(TerraFnName[call->fn]);
+            }
+        }
+    }
+    void report(const char *name) {
+        char line[2400] = "";
+        for (int i = 0; i < n; i++) {
+            char item[48];
+            sprintf_s(item, "%s%s %d", i ? ", " : "", labels[i], counts[i]);
+            if (strlen(line) + strlen(item) < sizeof(line)) {
+                strcat_s(line, item);
+            }
+        }
+        logf("%s: reached (calls in the last runs): %s", name, n ? line : "nothing");
+    }
+};
+
+// Counts of one terraforming test: the patched original against the DLL (mismatches), and the
+// shipped original against the patched one (where the shipped game does otherwise, by kind).
+struct TerraTally {
+    int compared, mismatches, shipped, unexplained, completed, lost, lost_at_check;
+    int kinds[3], kinds_changed[3];
+    LabelTally labels;
+    TerraTally() : compared(0), mismatches(0), shipped(0), unexplained(0), completed(0), lost(0),
+                   lost_at_check(0) {
+        memset(kinds, 0, sizeof(kinds));
+        memset(kinds_changed, 0, sizeof(kinds_changed));
+    }
+};
+
+// One run pair through NoticeHarness h with UnitActExtra and TerraState compared; returns true on a
+// difference (logged while h has fewer than MAX_DETAIL).
+template <class S, class E, class D>
+static BOOL terra_pair(NoticeHarness &h, const char *label, uint32_t seed, S setup, E first, D second) {
+    REGRESS_CTX("%s", label);
+    int before = h.mismatches;
+    h.run(label, [&] { TerraFlags = 0; unitact_restore(seed); terra_restore(); setup(); },
+        [&] { int r = first(); unitact_take(&UnitActOrig, r); terra_take(&TerraOrig); return 0; },
+        [&] { int r = second(); unitact_take(&UnitActNew, r); terra_take(&TerraNew); return 0; });
+    char detail[200];
+    const char *what = unitact_differs(&UnitActOrig, &UnitActNew);
+    if (!what) {
+        what = terra_differs(&TerraOrig, &TerraNew, detail, sizeof(detail));
+    } else {
+        detail[0] = 0;
+    }
+    if (what) {
+        if (h.mismatches == before) {
+            h.mismatches++;
+        }
+        if (h.mismatches <= MAX_DETAIL) {
+            logf("  %s: %s differs (orig returned %d, new %d) %s", label, what, UnitActOrig.ret,
+                UnitActNew.ret, detail);
+        }
+    }
+    return h.mismatches != before;
+}
+
+// The patched original against the DLL, then the shipped original against the patched one.
+template <class S, class P, class I, class D>
+static void terra_compare(TerraTally *t, NoticeHarness &h, NoticeHarness &h2, const char *label,
+                          uint32_t seed, S setup, P shipped, I intent, D dll) {
+    t->compared++;
+    if (terra_pair(h, label, seed, setup, intent, dll)) {
+        t->mismatches++;
+    }
+    t->completed += UnitActNew.ret == 1;
+    char label2[160];
+    sprintf_s(label2, "shipped/intended %s", label);
+    BOOL differs = terra_pair(h2, label2, seed, setup, shipped, intent);
+    t->labels.take();
+    int flags = TerraFlags; // set by the setup and the patched original's run
+    t->lost += (flags & PROBE_LOST) != 0;
+    t->lost_at_check += (flags & PROBE_LOST_AT_CHECK) != 0;
+    flags &= 0xFF;
+    for (int k = 0; k < 3; k++) {
+        if (flags & (1 << k)) {
+            t->kinds[k]++;
+            t->kinds_changed[k] += differs;
+        }
+    }
+    if (differs) {
+        t->shipped++;
+        if (!flags) {
+            t->unexplained++;
+            logf("  %s: the shipped original differs with no known slip", label);
+        }
+    }
+}
+
+static void terra_report(const char *name, const TerraTally &t, int slip_first, int slip_count) {
+    logf("%s: %d compared (%d returned 1), %d mismatches (the original with the slips fixed against "
+        "the DLL)", name, t.compared, t.completed, t.mismatches);
+    for (int k = slip_first; k < slip_first + slip_count; k++) {
+        logf("%s: shipped game differs: %s: %d inputs, %d changed the outcome", name, TerraSlipName[k],
+            t.kinds[k], t.kinds_changed[k]);
+    }
+    logf("%s: shipped game differs in %d of %d, %d with no known slip", name, t.shipped, t.compared,
+        t.unexplained);
+    if (!strcmp(name, "action_terraform")) {
+        logf("%s: units of the player at the controls lost to the land changes in %d inputs, still on "
+            "record at the units-lost message in %d", name, t.lost, t.lost_at_check);
+    }
+    LabelTally labels = t.labels;
+    labels.report(name);
+}
+
+static BOOL terra_is_former(int veh_id) {
+    return Weapon[VehPrototypes[Vehs[veh_id].proto_id].weapon_id].mode == WPN_MODE_TERRAFORMER;
+}
+
+// another unit in the unit's stack, or -1
+static int terra_stack_mate(int veh_id) {
+    for (int v = stack_fix(veh_at(Vehs[veh_id].x, Vehs[veh_id].y)); v >= 0; v = Vehs[v].next_veh_id_stack) {
+        if (v != veh_id) {
+            return v;
+        }
+    }
+    return -1;
+}
+
+// a faction other than f with a unit next to (x, y), or -1
+static int terra_neighbour_faction(int x, int y, uint32_t f) {
+    for (int i = 1; i < 9; i++) {
+        int x2 = x + RadiusOffsetX[i], y2 = y + RadiusOffsetY[i];
+        if (!(*MapIsFlat & 1)) {
+            x2 = (x2 + *MapLongitudeBounds) % *MapLongitudeBounds;
+        }
+        if (y2 < 0 || y2 >= *MapLatitudeBounds || x2 < 0 || x2 >= *MapLongitudeBounds) {
+            continue;
+        }
+        int v = stack_fix(veh_at(x2, y2));
+        if (v >= 0 && Vehs[v].faction_id != f && Vehs[v].faction_id > 0) {
+            return Vehs[v].faction_id;
+        }
+    }
+    return -1;
+}
+
+static int test_action_terraform() {
+    static const uint8_t entry[6] = { 0x55, 0x8B, 0xEC, 0x83, 0xEC, 0x34 };
+    OriginalEntry vanilla(0x004C9B00, entry);
+    TerraStubs stubs;
+    if (!vanilla.ok || !stubs.ok()) {
+        logf("action_terraform: cannot restore the original or stub its calls");
+        return 1;
+    }
+    for (int i = 0; i < RadiusRange[8]; i++) { // action_home() and action_destroy() use the DLL's copy
+        if (RadiusOffsetX[i] != ((int *)0x0066EFBC)[i] || RadiusOffsetY[i] != ((int *)0x0066F440)[i]) {
+            logf("action_terraform: the radius tables differ from the exe's at %d", i);
+            return 1;
+        }
+    }
+    UnitActScope scope;
+    TerraScope tscope;
+    logf("action_terraform: MapBaseIdClosestSubmergedVeh at the start: %d %d %d %d %d %d %d %d",
+        MapBaseIdClosestSubmergedVeh[0], MapBaseIdClosestSubmergedVeh[1], MapBaseIdClosestSubmergedVeh[2],
+        MapBaseIdClosestSubmergedVeh[3], MapBaseIdClosestSubmergedVeh[4], MapBaseIdClosestSubmergedVeh[5],
+        MapBaseIdClosestSubmergedVeh[6], MapBaseIdClosestSubmergedVeh[7]);
+    // the units: formers spread over the table, then some others
+    int units[48];
+    int unit_count = 0;
+    int formers = 0;
+    for (int v = 0; v < *VehCurrentCount; v++) {
+        formers += terra_is_former(v);
+    }
+    int step = formers / 36 + 1;
+    for (int v = 0, k = 0; v < *VehCurrentCount && unit_count < 36; v++) {
+        if (terra_is_former(v) && k++ % step == 0) {
+            units[unit_count++] = v;
+        }
+    }
+    for (int v = 41; v < *VehCurrentCount && unit_count < 48; v += *VehCurrentCount / 12 + 1) {
+        if (!terra_is_former(v)) {
+            units[unit_count++] = v;
+        }
+    }
+    NoticeHarness h, h2;
+    TerraTally t;
+    char label[128];
+    for (int n = 0; n < unit_count; n++) {
+        const int veh_id = units[n];
+        const uint32_t f = Vehs[veh_id].faction_id;
+        const int x = Vehs[veh_id].x, y = Vehs[veh_id].y;
+        const int mate = terra_stack_mate(veh_id);
+        const BOOL land = alt_at(x, y) >= ALT_SHORE_LINE;
+        const int neighbour = terra_neighbour_faction(x, y, f);
+        for (int id = 0; id < MaxTerrainNum; id++) {
+            // world_climate() follows these: completed only for the first dozen units
+            const BOOL heavy = id == TERRA_CONDENSER || id == TERRA_THERMAL_BORE || id == TERRA_AQUIFER
+                || id == TERRA_RAISE_LAND || id == TERRA_LOWER_LAND;
+            // 0 estimate; 1 estimate with a stack mate on the job; 2 as loaded; 3 completing; 4 at the
+            // controls, human, automated, tutorial on; 5 at the controls, human, not automated, a
+            // forest on the tile; 6 a stack mate on the job, a computer faction at difficulty 5;
+            // 7 a farm or road already there (farm and road jobs); 8 the player is a neighbour's
+            // faction (raise and lower); 9 units lost on record for every faction (condenser)
+            for (int v = 0; v < 10; v++) {
+                const BOOL execute = v >= 2;
+                const BOOL complete = v == 3 || v == 4 || v == 5 || v >= 7;
+                if ((v == 1 || v == 6) && mate < 0) {
+                    continue;
+                }
+                if (v == 5 && !land) {
+                    continue;
+                }
+                if ((v == 7 && id != TERRA_FARM && id != TERRA_ROAD) || (v == 8 && (neighbour < 0
+                    || (id != TERRA_RAISE_LAND && id != TERRA_LOWER_LAND))) || (v == 9 && id != TERRA_CONDENSER)) {
+                    continue;
+                }
+                if (heavy && complete && n >= 12) {
+                    continue;
+                }
+                auto setup = [&] {
+                    Veh *veh = &Vehs[veh_id];
+                    Map *tile = map_loc(x, y);
+                    if (complete) {
+                        veh->terraforming_turns = 200;
+                    }
+                    if (v == 1 || v == 6) {
+                        Vehs[mate].order = (int8_t)(id + ORDER_FARM);
+                        Vehs[mate].terraforming_turns = 3;
+                    }
+                    if (v == 4 || v == 5) {
+                        *FactionIDCurrent = f;
+                        *FactionsStatus |= (uint8_t)(1 << f);
+                        *TerraformSoundPlayed = 0;
+                    }
+                    if (v == 4) {
+                        veh->state |= VSTATE_UNK_200;
+                        *GamePreferences |= PREF_BSC_TUTORIAL_MSGS;
+                        TutTerraformShown[0] = 0;
+                        TutTerraformShown[1] = 0;
+                    } else if (v == 5) {
+                        veh->state &= ~VSTATE_UNK_200;
+                        tile->bit |= BIT_FOREST;
+                    } else if (v == 6) {
+                        *FactionsStatus &= (uint8_t)~(1 << f);
+                        *DiffLevelCurrent = 5;
+                    } else if (v == 7) {
+                        tile->bit |= (id == TERRA_FARM) ? BIT_FARM : BIT_ROAD;
+                        *FactionIDCurrent = f;
+                    } else if (v == 8) {
+                        *FactionIDCurrent = neighbour;
+                    } else if (v == 9) {
+                        for (int k = 0; k < MaxPlayerNum; k++) {
+                            MapBaseIdClosestSubmergedVeh[k] = k % *BaseCurrentCount;
+                        }
+                        *FactionIDCurrent = f;
+                    }
+                    if (id == TERRA_FARM && tile->bit & BIT_FARM && (tile->climate & 0xE0) >= ALT_BIT_SHORE_LINE
+                        && has_tech(Terraforming[TERRA_FARM].preq_tech, f)
+                            != has_tech(Terraforming[TERRA_SOIL_ENR].preq_tech, f)) {
+                        TerraFlags |= SLIP_ENRICHER_TECH;
+                    }
+                };
+                sprintf_s(label, "action_terraform(%d, %d, %d) variant %d", veh_id, id, execute, v);
+                terra_compare(&t, h, h2, label, veh_id * 32 + id, setup,
+                    [&] { return ((int(__cdecl *)(int, int, int))0x004C9B00)(veh_id, id, execute); },
+                    [&] { return terra_intent_call(veh_id, id, execute); },
+                    [&] { return action_terraform(veh_id, id, execute); });
+            }
+        }
+    }
+    terra_report("action_terraform", t, 0, 2);
+    return t.mismatches + t.unexplained;
+}
+
+static int test_action_destroy() {
+    static const uint8_t entry[6] = { 0x55, 0x8B, 0xEC, 0x83, 0xEC, 0x1C };
+    OriginalEntry vanilla(0x004CAA50, entry);
+    TerraStubs stubs;
+    if (!vanilla.ok || !stubs.ok()) {
+        logf("action_destroy: cannot restore the original or stub its calls");
+        return 1;
+    }
+    UnitActScope scope;
+    TerraScope tscope;
+    NoticeHarness h;
+    LabelTally labels;
+    char label[128];
+    int climate = 0, shellings = 0, fights = 0, messages = 0;
+    // the units: a spread over the table, natives and aircraft
+    int units[160];
+    int unit_count = 0, natives = 0, aircraft = 0;
+    for (int v = 0; v < *VehCurrentCount && unit_count < 160; v++) {
+        uint8_t triad = Chassis[VehPrototypes[Vehs[v].proto_id].chassis_id].triad;
+        if (v % 23 == 5 || (!Vehs[v].faction_id && natives++ < 30) || (triad == TRIAD_AIR && aircraft++ < 30)) {
+            units[unit_count++] = v;
+        }
+    }
+    for (int n = 0; n < unit_count; n++) {
+        const int veh_id = units[n];
+        const uint32_t f = Vehs[veh_id].faction_id;
+        const int x0 = Vehs[veh_id].x, y0 = Vehs[veh_id].y;
+        // targets: the unit's own tile (off-map coordinates) and tiles two steps around
+        for (int i = -1; i < 25; i += (i < 0) ? 1 : 4) {
+            int x = -1, y = -1;
+            if (i >= 0) {
+                x = x0 + RadiusOffsetX[i];
+                y = y0 + RadiusOffsetY[i];
+                if (!(*MapIsFlat & 1)) {
+                    x = (x + *MapLongitudeBounds) % *MapLongitudeBounds;
+                }
+                if (y < 0 || y >= *MapLatitudeBounds) {
+                    continue;
+                }
+            }
+            const int xt = (i < 0) ? x0 : x, yt = (i < 0) ? y0 : y;
+            const int owner = map_loc(xt, yt)->territory;
+            // 0 as loaded, any improvement (on every other unit a borehole, mostly not there); 1 the
+            // attacker at the controls, a mine, road and farm on the tile, bits for the road and farm;
+            // 2 a forest and a sensor array, the owner at the controls with the map revealed; 3 the
+            // owner in contact and at the controls (its notice); 4 a forest, the unit a spore
+            // launcher on every other native (natives) or bits -1; 5 a condenser (the climate, every
+            // 9th unit)
+            for (int v = 0; v < 6; v++) {
+                if (v == 5 && n % 9) {
+                    continue;
+                }
+                int bits = (v == 1) ? (BIT_ROAD | BIT_FARM) : ((v == 0 && n % 2) ? BIT_THERMAL_BORE : 0);
+                if (v == 4 && f) {
+                    bits = -1;
+                }
+                auto setup = [&] {
+                    Map *tile = map_loc(xt, yt);
+                    if (v == 1) {
+                        *FactionIDCurrent = f;
+                        tile->bit |= BIT_MINE | BIT_ROAD | BIT_FARM;
+                    } else if (v == 2) {
+                        tile->bit |= BIT_FOREST | BIT_SENSOR_ARRAY;
+                        if (owner > 0) {
+                            *FactionIDCurrent = owner;
+                            PlayersData[owner].flags |= PFLAG_MAP_REVEALED;
+                        }
+                    } else if (v == 3 && owner > 0) {
+                        *FactionIDCurrent = owner;
+                        PlayersData[f].diplo_treaties[owner] |= DTREATY_COMMLINK;
+                        tile->visibility |= (uint8_t)(1 << owner);
+                        tile->bit |= BIT_SOLAR_TIDAL;
+                    } else if (v == 4 && !f) {
+                        if (n % 2) {
+                            Vehs[veh_id].proto_id = BSC_SPORE_LAUNCHER;
+                        }
+                        tile->bit |= BIT_FOREST;
+                        if (owner > 0) {
+                            *FactionIDCurrent = owner;
+                        }
+                    } else if (v == 5) {
+                        tile->bit |= BIT_CONDENSER;
+                        *FactionIDCurrent = f;
+                    }
+                };
+                sprintf_s(label, "action_destroy(%d, %d, %d, %d) variant %d", veh_id, bits, x, y, v);
+                terra_pair(h, label, veh_id * 64 + (i + 1) * 4 + v, setup,
+                    [&] { ((void(__cdecl *)(int, int, int, int))0x004CAA50)(veh_id, bits, x, y); return 0; },
+                    [&] { action_destroy(veh_id, bits, x, y); return 0; });
+                labels.take();
+                for (int c = 0; c < TerraCallCount && c < MaxTerraCalls; c++) {
+                    climate += TerraCalls[c].fn == TC_CLEAR_TERRAIN;
+                }
+                for (int c = 0; c < NoticeCallCount && c < MaxNoticeCalls; c++) {
+                    fights += NoticeCalls[c].fn == NF_BATTLE_FIGHT_2;
+                    shellings += NoticeCalls[c].fn == NF_BOOM;
+                    messages += NoticeCalls[c].fn == NF_NETMSG_POP || NoticeCalls[c].fn == NF_POPP;
+                }
+            }
+        }
+    }
+    logf("action_destroy: %d compared (%d changed state, %d with notices; the DLL's runs: %d explosions "
+        "shown, %d counter-battery fights, %d messages, %d map view clears by the climate), %d mismatches",
+        h.compared, h.changed, h.with_calls, shellings, fights, messages, climate, h.mismatches);
+    labels.report("action_destroy");
+    return h.mismatches;
+}
+
+// a tile among the offsets [first, last) around (x, y), from the k-th on, with neither a base nor a
+// unit (and not (x_not, y_not)); false if none
+static BOOL home_free_tile(int x, int y, int first, int last, int k, int x_not, int y_not, int *x_out,
+                           int *y_out) {
+    for (int j = 0; j < last - first; j++) {
+        int i = first + (k + j) % (last - first);
+        int x2 = x + RadiusOffsetX[i], y2 = y + RadiusOffsetY[i];
+        if (!(*MapIsFlat & 1)) {
+            x2 = (x2 + *MapLongitudeBounds) % *MapLongitudeBounds;
+        }
+        if (y2 >= 0 && y2 < *MapLatitudeBounds && x2 >= 0 && x2 < *MapLongitudeBounds
+            && (x2 != x_not || y2 != y_not)
+            && !(map_loc(x2, y2)->bit & (BIT_BASE_IN_TILE | BIT_VEH_IN_TILE))) {
+            *x_out = x2;
+            *y_out = y2;
+            return true;
+        }
+    }
+    return false;
+}
+
+static int test_action_home() {
+    static const uint8_t entry[6] = { 0x55, 0x8B, 0xEC, 0x83, 0xEC, 0x2C };
+    OriginalEntry vanilla(0x004CBAA0, entry);
+    TerraStubs stubs;
+    if (!vanilla.ok || !stubs.ok()) {
+        logf("action_home: cannot restore the original or stub its calls");
+        return 1;
+    }
+    UnitActScope scope;
+    TerraScope tscope;
+    NoticeHarness h, h2;
+    TerraTally t;
+    char label[128];
+    int units[200];
+    int unit_count = 0, aircraft = 0;
+    for (int v = 0; v < *VehCurrentCount && unit_count < 200; v++) {
+        uint8_t triad = Chassis[VehPrototypes[Vehs[v].proto_id].chassis_id].triad;
+        if ((triad == TRIAD_AIR && aircraft++ < 120) || v % 29 == 3) {
+            units[unit_count++] = v;
+        }
+    }
+    static const int modes[] = { -1, 0, 1, 2, 4 };
+    int moved = 0, stayed = 0;
+    for (int n = 0; n < unit_count; n++) {
+        const int veh_id = units[n];
+        const uint32_t f = Vehs[veh_id].faction_id;
+        const int x = Vehs[veh_id].x, y = Vehs[veh_id].y;
+        RulesChassis *chassis = &Chassis[VehPrototypes[Vehs[veh_id].proto_id].chassis_id];
+        // the nearest base of the faction, and a free tile one step away for an airbase
+        int base_near = base_find(x, y, f);
+        int x_air = -1, y_air = -1;
+        home_free_tile(x, y, 1, 9, n, -1, -1, &x_air, &y_air);
+        // the unit out in the field: three steps away, with an airbase next to it
+        int x_far = -1, y_far = -1, x_air_far = -1, y_air_far = -1;
+        if (chassis->triad == TRIAD_AIR
+            && home_free_tile(x, y, RadiusRange[2], RadiusRange[3], n, -1, -1, &x_far, &y_far)) {
+            home_free_tile(x_far, y_far, 1, 9, n, x, y, &x_air_far, &y_air_far);
+        }
+        // 0 as loaded; 1 human; 2 on alert heading home to its nearest base; 3 on alert heading home
+        // to an airbase next to it; 4 the same, human, nearly out of fuel and moves; 5 damaged after a
+        // turn aloft; 6 the nearest base with state bit 0x200000; 7 as 3, human; 8 as 3, a computer
+        // faction with the airbase in its territory and its unit there on record; 9 and 10 as 7 and 8
+        // with the aircraft three steps away (not parked at a base)
+        for (int v = 0; v < 11; v++) {
+            if ((v == 2 || v == 6) && base_near < 0) {
+                continue;
+            }
+            if ((v == 3 || v == 4 || v == 7 || v == 8) && x_air < 0) {
+                continue;
+            }
+            if (v >= 9 && x_air_far < 0) {
+                continue;
+            }
+            const int xa = (v >= 9) ? x_air_far : x_air, ya = (v >= 9) ? y_air_far : y_air;
+            for (int mode : modes) {
+                auto setup = [&] {
+                    Veh *veh = &Vehs[veh_id];
+                    if (v >= 9) {
+                        veh->x = (int16_t)x_far;
+                        veh->y = (int16_t)y_far;
+                    }
+                    if (v == 1 || v == 4 || v == 7 || v == 9) {
+                        *FactionsStatus |= (uint8_t)(1 << f);
+                    } else if (v == 8 || v == 10) {
+                        *FactionsStatus &= (uint8_t)~(1 << f);
+                        Map *tile = map_loc(xa, ya);
+                        tile->territory = (int8_t)f;
+                        tile->val2 = (uint8_t)((tile->val2 & 0xF0) | f);
+                    }
+                    if ((v >= 2 && v <= 4) || v >= 7) {
+                        veh->state |= VSTATE_UNK_200;
+                        veh->order_auto_type = ORDERA_ON_ALERT;
+                        veh->dmg_incurred = 0;
+                    }
+                    if (v == 2) {
+                        veh->waypoint_x[1] = Bases[base_near].x;
+                        veh->waypoint_y[1] = Bases[base_near].y;
+                    } else if (v == 3 || v == 4 || v >= 7) {
+                        map_loc(xa, ya)->bit |= BIT_AIRBASE;
+                        veh->waypoint_x[1] = (int16_t)xa;
+                        veh->waypoint_y[1] = (int16_t)ya;
+                    }
+                    if (v == 4) {
+                        veh->terraforming_turns = (uint8_t)(chassis->range ? chassis->range - 1 : 0);
+                        int s = (int)speed(veh_id, false);
+                        int rate = (int)Rules->move_rate_roads;
+                        veh->moves_expended = (uint8_t)(s > rate ? s - rate : 0);
+                    } else if (v == 5) {
+                        veh->dmg_incurred = 3;
+                        veh->terraforming_turns = 1;
+                    } else if (v == 6) {
+                        Bases[base_near].state |= BSTATE_UNK_200000;
+                    }
+                };
+                sprintf_s(label, "action_home(%d, %d) variant %d", veh_id, mode, v);
+                terra_compare(&t, h, h2, label, veh_id * 16 + v, setup,
+                    [&] { return ((int(__cdecl *)(int, int))0x004CBAA0)(veh_id, mode); },
+                    [&] { return home_intent_call(veh_id, mode); },
+                    [&] { return action_home(veh_id, mode); });
+                moved += Vehs[veh_id].order == ORDER_MOVE_TO && UnitActNew.ret == 1;
+                stayed += Vehs[veh_id].order == ORDER_NONE && UnitActNew.ret == 1;
+            }
+        }
+    }
+    terra_report("action_home", t, 2, 1);
+    logf("action_home: the patched original gave %d move orders and kept %d units where they are", moved,
+        stayed);
+    return t.mismatches + t.unexplained;
 }
 
 // ---------------------------------------------------------------- batch 30: base removal
@@ -15659,8 +18731,10 @@ static void CALLBACK regress_auto_timer(HWND, UINT, UINT_PTR, DWORD) {
 // directly whether Ctrl, Shift, Alt or a mouse button is down and where the cursor is, which
 // posted messages don't change, so a message hook on the game's thread notes what the messages
 // it takes off the queue say, and the exe's GetKeyState, GetAsyncKeyState and GetCursorPos
-// imports add that to the real state. Mouse messages from the real mouse are noted the same way,
-// so the two agree while someone uses the game window by hand.
+// imports answer from that alone: a test game runs the same way whatever the real keyboard and
+// mouse do meanwhile (focusguard.h). Until the first mouse message the cursor stands in the middle
+// of the main window's client area. (A real mouse message, which only comes while the real cursor
+// is over a part of the game window no other window covers, is noted like a posted one.)
 static BOOL VirtualKeyDown[256];
 static POINT VirtualCursor; // client coordinates of the last mouse message
 static HWND VirtualCursorWindow = NULL;
@@ -15716,18 +18790,26 @@ static BOOL virtual_key_down(int vk) {
 }
 
 static SHORT WINAPI input_get_key_state(int vk) {
-    SHORT state = GetKeyState(vk);
-    return virtual_key_down(vk) ? (SHORT)(state | 0x8000) : state;
+    return virtual_key_down(vk) ? (SHORT)0x8000 : (SHORT)0; // (not the real keyboard's)
 }
 
 static SHORT WINAPI input_get_async_key_state(int vk) {
-    SHORT state = GetAsyncKeyState(vk);
-    return virtual_key_down(vk) ? (SHORT)(state | 0x8000) : state;
+    return virtual_key_down(vk) ? (SHORT)0x8000 : (SHORT)0;
 }
 
+static HWND *const InputMainWindow = (HWND *)0x009B7B28; // set from CreateWindowExA() at 0x5F0312
+
 static BOOL WINAPI input_get_cursor_pos(LPPOINT point) {
-    if (!VirtualCursorWindow) {
-        return GetCursorPos(point);
+    if (!VirtualCursorWindow) { // (not the real cursor: before the first mouse message, the middle)
+        RECT client;
+        if (*InputMainWindow && GetClientRect(*InputMainWindow, &client)) {
+            point->x = client.right / 2;
+            point->y = client.bottom / 2;
+            return ClientToScreen(*InputMainWindow, point);
+        }
+        point->x = 0;
+        point->y = 0;
+        return true;
     }
     *point = VirtualCursor;
     return ClientToScreen(VirtualCursorWindow, point);
@@ -15758,6 +18840,16 @@ static void install_input_hooks() {
     input_hook_import(ImportGetKeyState, (FARPROC)input_get_key_state);
     input_hook_import(ImportGetAsyncKeyState, (FARPROC)input_get_async_key_state);
     input_hook_import(ImportGetCursorPos, (FARPROC)input_get_cursor_pos);
+    // this DLL's own calls too (the replaced functions, such as base.cpp's Shift check), so that both
+    // games of a click pass read the same input
+    HMODULE dll = NULL;
+    GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+        (LPCSTR)&install_input_hooks, &dll);
+    if (dll) {
+        iat_patch(iat_slot(dll, "user32.dll", "GetKeyState"), (void *)input_get_key_state);
+        iat_patch(iat_slot(dll, "user32.dll", "GetAsyncKeyState"), (void *)input_get_async_key_state);
+        iat_patch(iat_slot(dll, "user32.dll", "GetCursorPos"), (void *)input_get_cursor_pos);
+    }
 }
 
 static int __cdecl regress_auto_top_menu(int unk) {
@@ -15815,6 +18907,8 @@ void regress_init() {
         clickpass_guard_install(AutoOutsideFolder); // before the game itself runs
     }
     if (AutoLoadPath[0]) {
+        FocusGuardOn = true; // a test game: never the foreground, never the real cursor (focusguard.h)
+        focus_guard_install();
         AutoMenuStub = new JmpStub(0x0058E360, (void *)regress_auto_top_menu);
         CreateThread(NULL, 0, regress_hang_watchdog, NULL, 0, NULL);
         return; // no watcher: the timer runs the tests
@@ -15851,6 +18945,10 @@ void regress_run() {
     DWORD t0 = GetTickCount();
     logf("OpenSMACX regression run: turn %d, %d bases, %d vehs, filter='%s'",
         *TurnCurrentNum, *BaseCurrentCount, *VehCurrentCount, regress_filter);
+    if (RegressNotes[0]) {
+        fputs(RegressNotes, regress_log); // (the notes from before this run's log)
+        fflush(regress_log);
+    }
     log_survey();
     int total = 0;
     if (test_enabled("value_of_base")) total += run_guarded("value_of_base", test_value_of_base);
@@ -16029,9 +19127,17 @@ void regress_run() {
     if (test_enabled("unitact", "action_gate")) total += run_guarded("action_gate", test_action_gate);
     if (test_enabled("unitact", "action_staple")) total += run_guarded("action_staple", test_action_staple);
     if (test_enabled("unitact", "action_destruct")) total += run_guarded("action_destruct", test_action_destruct);
+    if (test_enabled("unitfx", "action_oblit")) total += run_guarded("action_oblit", test_action_oblit);
+    if (test_enabled("unitfx", "action_tectonic")) total += run_guarded("action_tectonic", test_action_tectonic);
+    if (test_enabled("unitfx", "action_fungal")) total += run_guarded("action_fungal", test_action_fungal);
+    if (test_enabled("unitfx", "action_give")) total += run_guarded("action_give", test_action_give);
     if (test_enabled("unitact", "action_sat_attack")) total += run_guarded("action_sat_attack", test_action_sat_attack);
     if (test_enabled("unitact", "action_build")) total += run_guarded("action_build", test_action_build);
     if (test_enabled("unitact", "action_arty")) total += run_guarded("action_arty", test_action_arty);
+    if (test_enabled("unitmove", "action_go_to") || test_enabled("action_road_to") || test_enabled("action_airdrop")) total += run_guarded("unitmove", test_unitmove);
+    if (test_enabled("unitterra", "action_terraform")) total += run_guarded("action_terraform", test_action_terraform);
+    if (test_enabled("unitterra", "action_destroy")) total += run_guarded("action_destroy", test_action_destroy);
+    if (test_enabled("unitterra", "action_home")) total += run_guarded("action_home", test_action_home);
     if (test_enabled("baselife", "base_kill")) total += run_guarded("base_kill", test_base_kill);
     if (test_enabled("baselife", "give_a_base")) total += run_guarded("give_a_base", test_give_a_base);
     if (test_enabled("baselife", "base_swap")) total += run_guarded("base_swap", test_base_swap);

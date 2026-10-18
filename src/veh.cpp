@@ -28,6 +28,8 @@
 #include "log.h"
 #include "map.h"
 #include "net.h"
+#include "path.h"
+#include "probe.h"
 #include "strings.h"
 #include "technology.h"
 #include "terraforming.h"
@@ -5497,14 +5499,21 @@ int __cdecl veh_init(int proto_id, uint32_t faction_id, int x, int y) {
     return veh_id;
 }
 
+// Unit ids a DLL function follows while the code it calls may kill units: veh_kill() renumbers
+// them as it does its own references, -1 once killed (only give_units(), see action_give()).
+static int *VehKillWatch = NULL;
+static int VehKillWatchNum = 0;
+
 /*
 Purpose: Remove the specified unit from the game: the faction's unit counts, its stack and its
          slot in the unit table. The later units move down one slot, so every unit id kept
          elsewhere (stack links, the transport of sentried/boarded units, the selection globals)
-         that is above it is decremented; references to the unit itself are cleared.
+         that is above it is decremented; references to the unit itself are cleared. The ids in
+         VehKillWatch (none unless action_give() is handing units over) are treated the same way.
 Original Offset: 005C08C0
 Return Value: n/a
-Status: Complete
+Status: Complete. Not in the original: the renumbering of the ids in VehKillWatch, which only
+        action_give() registers (its deliberate change, chosen by Kiousu 2026-10-18).
 */
 void __cdecl veh_kill(int veh_id) {
     if (veh_id < 0) {
@@ -5551,6 +5560,13 @@ void __cdecl veh_kill(int veh_id) {
             *refs[i] = -1;
         } else if (*refs[i] > veh_id) {
             (*refs[i])--;
+        }
+    }
+    for (int i = 0; i < VehKillWatchNum; i++) { // not in the original, see VehKillWatch
+        if (VehKillWatch[i] == veh_id) {
+            VehKillWatch[i] = -1;
+        } else if (VehKillWatch[i] > veh_id) {
+            VehKillWatch[i]--;
         }
     }
     // a current unit id equal to the killed one moves down too (0 is never decremented)
@@ -6469,6 +6485,470 @@ void __cdecl action_destruct(int veh_id) {
 }
 
 /*
+Purpose: A planet buster obliterates a base: the notice's parse slots are filled first (the base's
+         size in thousands, its name, the title of the player at the controls, the former owner's
+         faction name, the attacker's title and name), then the base is removed and the map
+         redrawn. The attacker at the controls is told OBLITTED; the player at the controls is told
+         OBLITTED2 if the base was or had been theirs or they could see it. With the #RULES toggle
+         "obliterating a base counts as an atrocity" the attacker commits one against the former
+         owner.
+Original Offset: 004CD4E0
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-18-council-batch32-unitfx.log)
+*/
+void __cdecl action_oblit(int veh_id, int base_id) {
+    uint32_t faction_id = Vehs[veh_id].faction_id;
+    Base *base = &Bases[base_id];
+    uint32_t faction_id_former = base->faction_id_former;
+    parse_num(0, base->population_size * 10);
+    parse_says(0, base->name_string, -1, -1);
+    *PluralityDefault = false;
+    *GenderDefault = Players[*FactionIDCurrent].is_leader_female;
+    parse_says(1, Players[*FactionIDCurrent].title_leader, -1, -1);
+    parse_says(2, Players[faction_id_former].adj_name_faction, -1, -1);
+    *PluralityDefault = false;
+    *GenderDefault = Players[faction_id].is_leader_female;
+    parse_says(3, Players[faction_id].title_leader, -1, -1);
+    *GenderDefault = Players[faction_id].is_leader_female;
+    *PluralityDefault = false;
+    parse_says(4, Players[faction_id].name_leader, -1, -1);
+    BOOL seen = base->faction_id_current == *FactionIDCurrent
+        || (base->visibility & (uint8_t)(1 << *FactionIDCurrent));
+    base_kill(base_id);
+    draw_map(1);
+    if (faction_id == (uint32_t)*FactionIDCurrent) {
+        popp(ScriptTxtID, "OBLITTED", 0, "baseobl_sm.pcx", NULL);
+    } else if (faction_id_former == (uint32_t)*FactionIDCurrent || seen) {
+        popp(ScriptTxtID, "OBLITTED2", 0, "baseobl_sm.pcx", NULL);
+    }
+    if (Rules->tgl_oblit_base_atrocity) {
+        atrocity(faction_id, faction_id_former, 2, false);
+    }
+}
+
+/*
+Purpose: Let the factions near a tectonic or fungal payload's target try to shoot it down
+         (shoot_it(): orbital defense pods, flechette defense): the owner of the top unit of each
+         stack on the first radius tiles around it (RadiusOffsetX/Y order) that isn't the attacker
+         or its pact partner, each faction once, then the owner of the target's territory unless it
+         already tried. Asking stops once one has shot it down: the original goes on to ask the territory
+         owner even then, and takes that second answer as the result (see action_tectonic()).
+Return Value: Non-zero if the missile was shot down
+*/
+static int missile_shot_down(uint32_t faction_id, int x, int y, int radius, int is_fungal) {
+    int shot = 0;
+    BOOL tried[MaxPlayerNum] = {};
+    for (int i = 0; i < radius; i++) {
+        int x_radius = x + RadiusOffsetX[i];
+        if (!(*MapIsFlat & 1)) {
+            if (x_radius < 0) {
+                x_radius += *MapLongitudeBounds;
+            } else if (x_radius >= *MapLongitudeBounds) {
+                x_radius -= *MapLongitudeBounds;
+            }
+        }
+        int y_radius = y + RadiusOffsetY[i];
+        if (y_radius < 0 || y_radius >= *MapLatitudeBounds || x_radius < 0
+            || x_radius >= *MapLongitudeBounds) {
+            continue;
+        }
+        int veh_id_tgt = stack_fix(veh_at(x_radius, y_radius));
+        if (veh_id_tgt < 0) {
+            continue;
+        }
+        uint32_t faction_id_tgt = Vehs[veh_id_tgt].faction_id;
+        if (faction_id_tgt == faction_id
+            || (PlayersData[faction_id].diplo_treaties[faction_id_tgt] & DTREATY_PACT)
+            || tried[faction_id_tgt]) {
+            continue;
+        }
+        shot = shoot_it(faction_id, faction_id_tgt, x, y, is_fungal);
+        if (shot) {
+            return shot;
+        }
+        tried[faction_id_tgt] = true;
+    }
+    int owner = whose_territory(faction_id, x, y, NULL, false);
+    if (owner >= 0 && (uint32_t)owner != faction_id && !tried[owner]) {
+        shot = shoot_it(faction_id, owner, x, y, is_fungal);
+    }
+    return shot;
+}
+
+/*
+Purpose: Detonate a tectonic payload at the specified tile. If the target's nearest base is the
+         player's and the player can see the tile, the map view goes there; the missile is used up
+         and, if another faction fired it, the player is told (TECTONICMISSILE). Unless the
+         factions around shoot it down (see missile_shot_down(); radius by its reactor), the tile
+         is raised once per reactor level, the climate redone and the map redrawn, the player
+         whose base it was is told (TECMOFIED) and the attacker's tectonic detonation count goes
+         up (native life fights it harder, and a human player's bases suffer more ecological
+         damage).
+Original Offset: 004CE210
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-18-council-batch32-unitfx.log).
+        Two deliberate changes from the v2.1 exe, chosen by Kiousu (2026-10-18): the exe reads the
+        attacker for the TECMOFIED notice and the detonation count from the unit slot it has just
+        freed (the unit after the missile in the table, or a later one), this credits the faction
+        that fired; and the exe asks the territory owner again after the missile was shot down and
+        takes that answer, here a payload once shot down stays down.
+*/
+void __cdecl action_tectonic(int veh_id, int x, int y) {
+    BOOL notify = false;
+    FX_play2(FXVar, NULL, 0x53, Vehs[veh_id].x, Vehs[veh_id].y);
+    uint32_t reactor_id = VehPrototypes[Vehs[veh_id].proto_id].reactor_id;
+    // the exe's own copy of RadiusRange[] (0x0066F8C4), as in action_arty()
+    int radius = ((int *)0x0066F8C4)[reactor_id];
+    int base_id = base_find(x, y);
+    uint32_t faction_id = Vehs[veh_id].faction_id;
+    if (faction_id != (uint32_t)*FactionIDCurrent
+        && ((PlayersData[*FactionIDCurrent].flags & PFLAG_MAP_REVEALED)
+            || (map_loc(x, y)->visibility & (uint8_t)(1 << *FactionIDCurrent)))
+        && base_id >= 0 && Bases[base_id].faction_id_current == *FactionIDCurrent) {
+        Console_focus(ConsoleVar, NULL, x, y, faction_id);
+        notify = true;
+    }
+    kill(veh_id);
+    if (faction_id != (uint32_t)*FactionIDCurrent && base_id >= 0) {
+        Player *player = &Players[faction_id];
+        *PluralityDefault = false;
+        *GenderDefault = player->is_leader_female;
+        parse_says(0, player->title_leader, -1, -1);
+        *GenderDefault = player->is_leader_female;
+        *PluralityDefault = false;
+        parse_says(1, player->name_leader, -1, -1);
+        *GenderDefault = player->noun_gender;
+        *PluralityDefault = player->is_noun_plural;
+        parse_says(2, player->noun_faction, -1, -1);
+        parse_says(3, Bases[base_id].name_string, -1, -1);
+        popp(ScriptTxtID, "TECTONICMISSILE", 0, "tectonic_sm.pcx", NULL);
+    }
+    if (missile_shot_down(faction_id, x, y, radius, false)) {
+        return;
+    }
+    for (int i = (int)reactor_id; i > 0; i--) {
+        world_raise_alt(x, y);
+    }
+    world_climate();
+    draw_map(1);
+    if (notify) {
+        // the exe reads this faction from Vehs[veh_id] again, after kill() freed the slot
+        Player *player = &Players[faction_id];
+        parse_says(0, Bases[base_id].name_string, -1, -1);
+        *PluralityDefault = false;
+        *GenderDefault = player->is_leader_female;
+        parse_says(1, player->title_leader, -1, -1);
+        *PluralityDefault = false;
+        *GenderDefault = player->is_leader_female;
+        parse_says(2, player->name_leader, -1, -1);
+        *GenderDefault = player->noun_gender;
+        *PluralityDefault = player->is_noun_plural;
+        parse_says(3, player->noun_faction, -1, -1);
+        popp(ScriptTxtID, "TECMOFIED", 0, "tectonic_sm.pcx", NULL);
+    }
+    TectonicDetonationCount[faction_id]++; // the exe: Vehs[veh_id].faction_id after kill()
+    *UnkBitfield1 |= 4;
+}
+
+/*
+Purpose: Detonate a fungal payload at the specified tile. The missile is used up and, if another
+         faction fired it, the player is told (FUNGALMISSILE). Unless the factions around shoot it
+         down (see missile_shot_down(); radius 1), the target and then random neighbours, twice the
+         reactor level in all, turn to fungus: on each, half the time, mind worms are born where no
+         base or unit of any faction stands, natives included (by the tile's flags, or its owner
+         nibble unset). A tile with fungus already at ocean shelf level or above (shelf, shore or
+         land) is left alone, which also leaves it out of the map view and the notice; otherwise
+         improvements fungus removes are cleared and deep ocean is raised to the shelf; the player
+         sees the change if the tile is visible (and is shown it, with a FUNGMOTIZED notice at the
+         end, if the target's nearest base is theirs). A fungal tower grows on a land target.
+Original Offset: 004CE790
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-18-council-batch32-unitfx.log).
+        Two deliberate changes from the v2.1 exe, chosen by Kiousu (2026-10-18): the exe reads the
+        reactor (the number of fungus tiles) and the attacker (the player's notice) from the unit
+        slot it has just freed, this uses the missile's own; and the exe asks the territory owner
+        again after the missile was shot down, here a payload once shot down stays down.
+*/
+void __cdecl action_fungal(int veh_id, int x, int y) {
+    BOOL notify = false;
+    uint32_t faction_id = Vehs[veh_id].faction_id;
+    int base_id = base_find(x, y);
+    // the exe reads its own RadiusRange[1] (0x0066F8C8): 9, the target and its neighbours
+    int radius = RadiusRange[1];
+    FX_play2(FXVar, NULL, 0x54, Vehs[veh_id].x, Vehs[veh_id].y);
+    int proto_id = Vehs[veh_id].proto_id; // the exe reads it from the freed slot, after kill()
+    kill(veh_id);
+    if (faction_id != (uint32_t)*FactionIDCurrent && base_id >= 0) {
+        Player *player = &Players[faction_id];
+        *PluralityDefault = false;
+        *GenderDefault = player->is_leader_female;
+        parse_says(0, player->title_leader, -1, -1);
+        *GenderDefault = player->is_leader_female;
+        *PluralityDefault = false;
+        parse_says(1, player->name_leader, -1, -1);
+        *GenderDefault = player->noun_gender;
+        *PluralityDefault = player->is_noun_plural;
+        parse_says(2, player->noun_faction, -1, -1);
+        parse_says(3, Bases[base_id].name_string, -1, -1);
+        popp(ScriptTxtID, "FUNGALMISSILE", 0, "fungpayld_sm.pcx", NULL);
+    }
+    if (missile_shot_down(faction_id, x, y, radius, true)) {
+        return;
+    }
+    int count = VehPrototypes[proto_id].reactor_id * 2;
+    for (int i = 0; i < count; i++) {
+        int offset = i ? _rand() % 8 + 1 : 0;
+        int x_radius = x + RadiusOffsetX[offset];
+        if (!(*MapIsFlat & 1)) {
+            if (x_radius < 0) {
+                x_radius += *MapLongitudeBounds;
+            } else if (x_radius >= *MapLongitudeBounds) {
+                x_radius -= *MapLongitudeBounds;
+            }
+        }
+        int y_radius = y + RadiusOffsetY[offset];
+        if (y_radius < 0 || y_radius >= *MapLatitudeBounds || x_radius < 0
+            || x_radius >= *MapLongitudeBounds) {
+            continue;
+        }
+        if (_rand() % 2) {
+            Map *tile = map_loc(x_radius, y_radius);
+            if (!(tile->bit & (BIT_BASE_IN_TILE | BIT_VEH_IN_TILE)) || (tile->val2 & 0xF) >= 8) {
+                veh_init(BSC_MIND_WORMS, 0, x_radius, y_radius);
+            }
+        }
+        Map *tile = map_loc(x_radius, y_radius);
+        if ((tile->bit & BIT_FUNGUS) && (tile->climate & 0xE0) >= ALT_BIT_OCEAN_SHELF) {
+            continue;
+        }
+        // the exe reads this faction from Vehs[veh_id] again, after kill() freed the slot
+        if (faction_id != (uint32_t)*FactionIDCurrent
+            && ((PlayersData[*FactionIDCurrent].flags & PFLAG_MAP_REVEALED)
+                || (tile->visibility & (uint8_t)(1 << *FactionIDCurrent)))
+            && base_id >= 0 && Bases[base_id].faction_id_current == *FactionIDCurrent) {
+            Console_focus(ConsoleVar, NULL, x_radius, y_radius, faction_id);
+            notify = true;
+        }
+        bit_set(x_radius, y_radius, BIT_FUNGUS, true);
+        bit_set(x_radius, y_radius, BIT_FOREST | BIT_SOIL_ENRICHER | BIT_FARM | BIT_SOLAR_TIDAL
+            | BIT_MINE | BIT_MAGTUBE | BIT_ROAD, false); // 0x28805C
+        bit_set(x_radius, y_radius, *TerrainBitsFungusClears, false);
+        if ((map_loc(x_radius, y_radius)->climate & 0xE0) < ALT_BIT_OCEAN_SHELF) {
+            world_alt_set(x_radius, y_radius, ALT_OCEAN_SHELF, false);
+        }
+        if ((PlayersData[*FactionIDCurrent].flags & PFLAG_MAP_REVEALED)
+            || (map_loc(x_radius, y_radius)->visibility & (uint8_t)(1 << *FactionIDCurrent))
+            || (*GameState & STATE_OMNISCIENT_VIEW)) {
+            synch_bit(x_radius, y_radius, *FactionIDCurrent);
+            draw_tile(x_radius, y_radius, 2);
+        }
+    }
+    if ((map_loc(x, y)->climate & 0xE0) >= ALT_BIT_SHORE_LINE) {
+        veh_init(BSC_FUNGAL_TOWER, 0, x, y);
+    }
+    *UnkBitfield1 |= 4;
+    if (notify) {
+        Player *player = &Players[faction_id]; // the exe: Vehs[veh_id].faction_id after kill()
+        parse_says(0, Bases[base_id].name_string, -1, -1);
+        *PluralityDefault = false;
+        *GenderDefault = player->is_leader_female;
+        parse_says(1, player->title_leader, -1, -1);
+        *PluralityDefault = false;
+        *GenderDefault = player->is_leader_female;
+        parse_says(2, player->name_leader, -1, -1);
+        *GenderDefault = player->noun_gender;
+        *PluralityDefault = player->is_noun_plural;
+        parse_says(3, player->noun_faction, -1, -1);
+        popp(ScriptTxtID, "FUNGMOTIZED", 0, "fungpayld_sm.pcx", NULL);
+    }
+}
+
+/*
+Purpose: Find the receiving faction's prototype for a unit it is given: its active design with the
+         same chassis, weapon, armor, abilities and reactor, else a design proposed for it with
+         those parts, else its first active design with the same chassis, weapon and armor, the
+         same plan or the same chassis, else the Transport Foil (sea chassis) or Scout Patrol.
+Return Value: Prototype id
+*/
+static int give_proto(int proto_id, uint32_t faction_id) {
+    VehPrototype *src = &VehPrototypes[proto_id];
+    const int first = faction_id * MaxVehProtoFactionNum;
+    for (int i = 0; i < MaxVehProtoFactionNum; i++) {
+        VehPrototype *proto = &VehPrototypes[first + i];
+        if ((proto->flags & PROTO_ACTIVE) && proto->chassis_id == src->chassis_id
+            && proto->weapon_id == src->weapon_id && proto->armor_id == src->armor_id
+            && proto->ability_flags == src->ability_flags && proto->reactor_id == src->reactor_id) {
+            return first + i;
+        }
+    }
+    int result = propose_proto(faction_id, src->chassis_id, src->weapon_id, src->armor_id,
+        src->ability_flags, src->reactor_id, (uint8_t)src->unk_1, NULL);
+    if (result >= 0) {
+        return result;
+    }
+    for (int i = 0; i < MaxVehProtoFactionNum; i++) {
+        VehPrototype *proto = &VehPrototypes[first + i];
+        if ((proto->flags & PROTO_ACTIVE) && proto->chassis_id == src->chassis_id
+            && proto->weapon_id == src->weapon_id && proto->armor_id == src->armor_id) {
+            return first + i;
+        }
+    }
+    for (int i = 0; i < MaxVehProtoFactionNum; i++) {
+        VehPrototype *proto = &VehPrototypes[first + i];
+        if ((proto->flags & PROTO_ACTIVE) && proto->plan == src->plan) {
+            return first + i;
+        }
+    }
+    for (int i = 0; i < MaxVehProtoFactionNum; i++) {
+        VehPrototype *proto = &VehPrototypes[first + i];
+        if ((proto->flags & PROTO_ACTIVE) && proto->chassis_id == src->chassis_id) {
+            return first + i;
+        }
+    }
+    return (Chassis[src->chassis_id].triad == TRIAD_SEA) ? BSC_TRANSPORT_FOIL : BSC_SCOUT_PATROL;
+}
+
+/*
+Purpose: Give the units in the list (unit ids, in stack order) to the faction: each keeps a basic
+         design or gets the receiver's matching one (give_proto()) and is counted against it (the
+         giver's count of its old design down, the receiver's of the new one up, as give_a_base()
+         does), loses its orders and a few state flags and is homed at the receiver's nearest base,
+         and the tile's owner becomes the receiver unless a base with an owner stands there.
+         Proposing a design can retire another and disband its units (retire_proto()), which
+         moves the later units down the table, so veh_kill() renumbers the first watch_count ids
+         meanwhile (VehKillWatch) and a unit disbanded on the way (-1) is skipped. The watch is
+         cleared in a __finally block, which also runs when a crash is caught further up (the
+         regression harness's __except); a guard object's destructor would not, as /EHsc doesn't
+         unwind C++ objects for structured exceptions.
+Return Value: n/a
+*/
+static void give_units(int *ids, int count, int watch_count, int faction_id, int x, int y) {
+    VehKillWatch = ids;
+    VehKillWatchNum = watch_count;
+    __try {
+        for (int n = 0; n < count; n++) {
+            if (ids[n] < 0) {
+                continue;
+            }
+            int proto_id = Vehs[ids[n]].proto_id;
+            if (proto_id >= MaxVehProtoFactionNum) {
+                proto_id = give_proto(proto_id, faction_id);
+            }
+            const int i = ids[n]; // after give_proto(): renumbered, or -1 if disbanded
+            if (i < 0) {
+                continue;
+            }
+            // counted against its new design as give_a_base() counts units changing sides (the exe
+            // doesn't), so a design just made for it isn't the unused one the next proposal retires
+            PlayersData[Vehs[i].faction_id].proto_id_active[Vehs[i].proto_id]--;
+            Vehs[i].faction_id = (uint8_t)faction_id;
+            Vehs[i].proto_id = (int16_t)proto_id;
+            PlayersData[faction_id].proto_id_active[proto_id]++;
+            Vehs[i].order = ORDER_NONE;
+            Vehs[i].state &= ~(VSTATE_UNK_200 | VSTATE_EXPLORE | VSTATE_UNK_1000000
+                | VSTATE_UNK_2000000);
+            int base_id = base_find(x, y, (uint32_t)faction_id);
+            Vehs[i].home_base_id = (int16_t)((base_id < 0) ? -1 : base_id);
+            Map *tile = map_loc(x, y);
+            if (!(tile->bit & BIT_BASE_IN_TILE) || (tile->val2 & 0xF) >= 8) {
+                owner_set(x, y, faction_id);
+            }
+        }
+    } __finally {
+        VehKillWatch = NULL;
+        VehKillWatchNum = 0;
+    }
+}
+
+/*
+Purpose: Give a unit, with the units sentried aboard it, to another faction (0: release it into
+         the wild). Each one keeps a basic design or gets the receiver's matching one (see
+         give_proto()) and is counted against it, loses its orders and a few state flags and is
+         homed at the receiver's nearest base; the tile's owner becomes the receiver unless a base
+         with an owner stands there. The receiver at the controls is shown the unit and told about
+         it (GOTUNIT in a network game, from a human or in a translated game, else a dialog that
+         depends on whether the unit or the plan of the region is defensive), the giver at the
+         controls is told GAVEUNIT or GAVEWILD.
+Original Offset: 004CEDE0
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-18-council-batch32-unitfx.log).
+        Deliberate changes from the v2.1 exe, chosen by Kiousu (2026-10-18): the exe finds the units
+        as it goes, walking the stack with slot numbers that proposing a design can make stale (a
+        retired design disbands its units), and then gives away the wrong unit; this takes the
+        units aboard first and follows them through veh_kill() (give_units()), so the units
+        actually given go over. That includes the rest of the cargo when the given transport
+        itself is disbanded on the way (converted before its cargo, then its new design retired),
+        which the exe leaves with the giver even with the right slot numbers (veh_kill() clears
+        their orders): one gift is never split between the two factions. And each unit given is
+        counted against its new design (proto_id_active) as give_a_base() counts units changing
+        sides; the exe never updates these counts, so the design just made for a given unit looked
+        unused and was the one the next unit's proposal retired, disbanding the unit just given.
+*/
+void __cdecl action_give(int veh_id, int faction_id) {
+    int y = Vehs[veh_id].y;
+    int x = Vehs[veh_id].x;
+    uint32_t faction_id_from = Vehs[veh_id].faction_id;
+    const int veh_id_given = veh_id;
+    if (veh_id >= 0) {
+        // the unit and the units aboard it, in stack order, taken before any is given (the given
+        // unit's id is valid here, so a unit sentried outside a transport, waypoint_x[0] -1, never
+        // counts); ids[count] keeps the given unit's id through the kills
+        static int ids[MaxVehNum + 2];
+        int count = 0;
+        int top = veh_id;
+        for (int prev = Vehs[veh_id].prev_veh_id_stack; prev >= 0;
+            prev = Vehs[prev].prev_veh_id_stack) {
+            top = prev;
+        }
+        for (int i = top; i >= 0 && count <= MaxVehNum; i = Vehs[i].next_veh_id_stack) {
+            if (i == veh_id
+                || (Vehs[i].order == ORDER_SENTRY_BOARD && Vehs[i].waypoint_x[0] == veh_id)) {
+                ids[count++] = i;
+            }
+        }
+        ids[count] = veh_id;
+        give_units(ids, count, count + 1, faction_id, x, y);
+        veh_id = ids[count];
+    }
+    if (veh_id < 0) {
+        veh_id = veh_id_given; // disbanded on the way: read its old slot, as the exe does
+    }
+    draw_radius(x, y, 3, 2);
+    if (faction_id == *FactionIDCurrent) {
+        parse_says(0, VehPrototypes[Vehs[veh_id].proto_id].veh_name, -1, -1);
+        Player *player = &Players[faction_id_from];
+        *PluralityDefault = false;
+        *GenderDefault = player->is_leader_female;
+        parse_says(1, player->title_leader, -1, -1);
+        *GenderDefault = player->is_leader_female;
+        *PluralityDefault = false;
+        parse_says(2, player->name_leader, -1, -1);
+        *GenderDefault = player->noun_gender;
+        *PluralityDefault = player->is_noun_plural;
+        parse_says(3, player->noun_faction, -1, -1);
+        Console_focus(ConsoleVar, NULL, x, y, faction_id_from);
+        int base_id = base_find(x, y);
+        if (base_id < 0) {
+            return;
+        }
+        parse_says(4, Bases[base_id].name_string, -1, -1);
+        if (*Language || (*FactionsStatus & (uint8_t)(1 << faction_id_from))) {
+            NetMsg_pop(NetMsgVar, NULL, "GOTUNIT", 5000, 0, 0);
+        } else if (PlayersData[faction_id].region_base_plan[map_loc(x, y)->region] == PLAN_DEFENSIVE
+            || VehPrototypes[Vehs[veh_id].proto_id].plan == PLAN_DEFENSIVE) {
+            X_pop("GOTUNITDEFEND", NULL);
+        } else {
+            X_pop("GOTUNITOFFEND", NULL);
+        }
+    } else if (faction_id_from == (uint32_t)*FactionIDCurrent) {
+        *GenderDefault = Players[faction_id].noun_gender;
+        *PluralityDefault = Players[faction_id].is_noun_plural;
+        parse_says(3, Players[faction_id].noun_faction, -1, -1);
+        NetMsg_pop(NetMsgVar, NULL, faction_id ? "GAVEUNIT" : "GAVEWILD", 5000, 0, 0);
+    }
+}
+
+/*
 Purpose: A faction's orbital defense pods shoot at another faction's satellite (sat_type 0..3:
          nutrient, mineral, energy satellites, orbital defense pods) or at a base's Geosynchronous
          Survey Pod (sat_type 4). Unless already at vendetta the attacker double crosses the target
@@ -6603,6 +7083,717 @@ int __cdecl action_build(int veh_id, LPCSTR name) {
     return base_id;
 }
 
+// The pictures of the tutorial's "MADE..." messages for a farm, a soil enricher, a mine and a solar
+// collector (the sea versions use the farm, mine and solar ones): picture objects in the exe.
+static void *const TutTerraformPicture[4] = { (void *)0x0079204C, (void *)0x0079A794,
+    (void *)0x00776A50, (void *)0x007991F8 };
+
+/*
+Purpose: Work on a unit's terraforming job (terraform_id: TERRA_FARM .. TERRA_MONOLITH) on its tile.
+         A road ordered on a road becomes a mag tube, and a farm ordered on a land farm a soil
+         enricher, when the faction has that technology. A job takes twice its rate in work: solar
+         collectors more on rocky ground; roads and tubes their own rate (a tube's once a road is
+         there) plus 1 across a river, 2 for fungus (not deep sea) and 2 for a forest or else the
+         rockiness; fungus removal half for a fungicidal unit; one less (rates over 3) for computer
+         factions above Librarian. Each unit works 2 a turn (4 for super formers; x1.5 with the
+         Weather Paradigm, or x2 on fungus with the Xenoempathy Dome) and the stack's units on the
+         same job add theirs. With execute false only the turns still needed are worked out (the
+         unit's own work counted only while it can still move). With execute true the unit takes the
+         order, gathers the stack's past work on the job and uses its turn; no work is done on a base
+         tile. A finished job ends the stack's orders for it, puts the improvement in place of those
+         it excludes and brings its effects: sites, the climate and the map for the big works, the
+         land raised, lowered or levelled, nearby bases' yields recomputed, a forest cleared on land
+         handing its minerals to the unit's home (or nearest) base, a computer faction whose base got
+         drier taking offence at a human terraformer, the player at the controls told of a borehole,
+         the harvest and rainfall changes (and of units lost, a message the climate update before it
+         keeps from ever showing), the tutorial's first "MADE..." message for an automated unit and,
+         once a turn, the completion sound for a unit that isn't.
+Original Offset: 004C9B00
+Return Value: execute false: the turns still needed; execute true: 1 if the job was completed, else 0
+Status: Complete (verified vs original: docs/regression-runs/2026-10-18-sweep-batch32-unitterra.log).
+        Two deliberate changes from the v2.1 exe, chosen by Kiousu (2026-10-18). A farm ordered on a
+        land farm becomes a soil enricher only with the Soil Enricher's technology; the exe checks
+        the Farm's, which has none (in play Console::terraform already refuses that order with
+        HASFARM by the enricher's technology, so the exe's slip only showed in the turn estimate
+        next to "Farm" on a farm tile, which counted the enricher's work). After raising or lowering
+        land the rest of the job reads the former's own state and order; the exe reads its slot
+        again, which another unit moves into when the change loses units listed before it on the
+        neighbouring tiles (ships where coastal sea is lifted into land, land units and bases where
+        land sinks below sea level), so the completion chime went by that other unit.
+*/
+int __cdecl action_terraform(int veh_id, int terraform_id, BOOL execute) {
+    const int veh_count = *VehCurrentCount;
+    Veh *veh = &Vehs[veh_id];
+    const int x = veh->x;
+    const int y = veh->y;
+    const uint32_t faction_id = veh->faction_id;
+    const uint32_t state = veh->state; // the unit's own (see the end)
+    Map *tile = map_loc(x, y);
+    const BOOL is_sea = (tile->climate & 0xE0) < ALT_BIT_SHORE_LINE;
+    if (terraform_id == TERRA_ROAD) {
+        if (tile->bit & BIT_ROAD
+            && has_tech(*(&Terraforming[TERRA_MAGTUBE].preq_tech + is_sea), faction_id)) {
+            terraform_id = TERRA_MAGTUBE;
+        }
+    } else if (terraform_id == TERRA_FARM && tile->bit & BIT_FARM && !is_sea
+        && has_tech(Terraforming[TERRA_SOIL_ENR].preq_tech, faction_id)) {
+        terraform_id = TERRA_SOIL_ENR; // the exe checks Terraforming[TERRA_FARM].preq_tech
+    }
+    if (execute) {
+        veh->order = (int8_t)(terraform_id + ORDER_FARM);
+    }
+    int rate = Terraforming[terraform_id].rate;
+    switch (terraform_id) {
+      case TERRA_SOLAR_TIDAL:
+        rate += (int)(tile->val3 >> 6) * rate / 2;
+        break;
+      case TERRA_ROAD:
+      case TERRA_MAGTUBE:
+      {
+        uint32_t bit = tile->bit;
+        rate = Terraforming[(bit & BIT_ROAD) ? TERRA_MAGTUBE : TERRA_ROAD].rate;
+        if (bit & BIT_RIVER) {
+            rate++;
+        }
+        if (bit & BIT_FUNGUS && (tile->climate & 0xE0) >= ALT_BIT_OCEAN_SHELF) {
+            rate += 2;
+        }
+        rate += (bit & BIT_FOREST) ? 2 : tile->val3 >> 6;
+        break;
+      }
+      case TERRA_REMOVE_FUNGUS:
+        if (has_abil(veh->proto_id, ABL_FUNGICIDAL)) {
+            rate /= 2;
+        }
+        break;
+      default:
+        break;
+    }
+    if (!(*FactionsStatus & (1 << faction_id)) && *DiffLevelCurrent > 3 && rate > 3) {
+        rate--;
+    }
+    int work = 0; // this turn's, of every unit on the job
+    int done = 0; // so far
+    if (veh_id >= 0) {
+        int veh_id_top = veh_id;
+        while (Vehs[veh_id_top].prev_veh_id_stack >= 0) {
+            veh_id_top = Vehs[veh_id_top].prev_veh_id_stack;
+        }
+        for (int v = veh_id_top; v >= 0; v = Vehs[v].next_veh_id_stack) {
+            if (v == veh_id || Vehs[v].order != terraform_id + ORDER_FARM) {
+                continue;
+            }
+            if (!execute) {
+                work += contribution(v, terraform_id);
+                done += Vehs[v].terraforming_turns;
+            } else {
+                veh->terraforming_turns += Vehs[v].terraforming_turns;
+                Vehs[v].terraforming_turns = 0;
+            }
+        }
+    }
+    work += contribution(veh_id, terraform_id);
+    done += veh->terraforming_turns;
+    if (!execute) {
+        if ((int)(speed(veh_id, false) - veh->moves_expended) > 0) {
+            done += work;
+        }
+        int left = rate * 2 - done;
+        if (work < 1) {
+            work = 1;
+        } else if (work > 255) {
+            return (left + 254) / 255;
+        }
+        return (left + work - 1) / work;
+    }
+    veh_skip(veh_id);
+    uint8_t turns = (uint8_t)(veh->terraforming_turns + work);
+    veh->terraforming_turns = turns;
+    tile = map_loc(x, y);
+    if (tile->bit & BIT_BASE_IN_TILE && (tile->val2 & 0xF) < 8) {
+        veh->order = ORDER_NONE;
+        return 0;
+    }
+    if (turns < rate * 2) {
+        draw_tile(x, y, 2);
+        BaseWin_check_veh(BaseWinVar, NULL, veh_id);
+        return 0;
+    }
+    veh->terraforming_turns = 0;
+    if (veh_id >= 0) {
+        int veh_id_top = veh_id;
+        while (Vehs[veh_id_top].prev_veh_id_stack >= 0) {
+            veh_id_top = Vehs[veh_id_top].prev_veh_id_stack;
+        }
+        for (int v = veh_id_top; v >= 0; v = Vehs[v].next_veh_id_stack) {
+            if (Vehs[v].order == terraform_id + ORDER_FARM) {
+                Vehs[v].order = ORDER_NONE;
+            }
+        }
+    }
+    // Raising or lowering the land can lose units on the neighbouring tiles; one listed before this
+    // unit moves another unit into its slot. What follows reads the unit's own order and state (the
+    // exe reads the slot again).
+    const int8_t order = veh->order;
+    const BOOL had_forest = (tile->bit & BIT_FOREST) != 0;
+    bit_set(x, y, Terraforming[terraform_id].bit_incompatible, false);
+    bit_set(x, y, Terraforming[terraform_id].bit, true);
+    synch_bit(x, y, faction_id);
+    switch (terraform_id) {
+      case TERRA_REMOVE_FUNGUS:
+      case TERRA_PLANT_FUNGUS:
+        site_radius(x, y, 0);
+        break;
+      case TERRA_CONDENSER:
+      case TERRA_THERMAL_BORE:
+        site_radius(x, y, 0);
+        world_climate();
+        draw_map(1);
+        break;
+      case TERRA_AQUIFER:
+        bit_set(x, y, BIT_RIVERBED, true);
+        world_climate();
+        draw_map(1);
+        break;
+      case TERRA_RAISE_LAND:
+        world_raise_alt(x, y);
+        world_climate();
+        draw_map(1);
+        break;
+      case TERRA_LOWER_LAND:
+        world_lower_alt(x, y);
+        world_climate();
+        draw_map(1);
+        break;
+      case TERRA_LEVEL_TERRAIN:
+      {
+        uint8_t val3 = map_loc(x, y)->val3;
+        if (val3 & 0xC0) {
+            rocky_set(x, y, (uint8_t)((val3 >> 6) - 1));
+            site_radius(x, y, 0);
+        }
+        break;
+      }
+      default:
+        break;
+    }
+    if (Terraforming[terraform_id].bit
+        & (BIT_THERMAL_BORE | BIT_FOREST | BIT_FARM | BIT_SOLAR_TIDAL | BIT_MINE)) {
+        int base_id = base_find(x, y, faction_id);
+        if (base_id >= 0 && *BaseFindDist <= 2) {
+            Bases[base_id].state |= BSTATE_UNK_100;
+        }
+        if (terraform_id == TERRA_THERMAL_BORE && faction_id == (uint32_t)*FactionIDCurrent
+            && base_id >= 0 && Bases[base_id].faction_id_current == faction_id) {
+            parse_says(0, Bases[base_id].name_string, -1, -1);
+            NetMsg_pop(NetMsgVar, NULL, "BOREHOLEMINE", 5000, 0, 0);
+        }
+    }
+    tile = map_loc(x, y);
+    if (had_forest && !(tile->bit & BIT_FOREST) && (tile->climate & 0xE0) >= ALT_BIT_SHORE_LINE
+        && terraform_id != TERRA_RAISE_LAND) {
+        int base_id = veh->home_base_id;
+        if (base_id >= 0 || (base_id = base_find(x, y, faction_id)) >= 0) {
+            Base *base = &Bases[base_id];
+            base->minerals_accumulated += Rules->minerals_harvesting_forest;
+            base->minerals_accumulated_2 = base->minerals_accumulated;
+            base->production_id_last = base->queue_production_id[0];
+            if (faction_id == (uint32_t)*FactionIDCurrent && *FactionsStatus & (1 << faction_id)
+                && Rules->minerals_harvesting_forest) {
+                parse_says(0, base->name_string, -1, -1);
+                parse_num(0, Rules->minerals_harvesting_forest);
+                NetMsg_pop(NetMsgVar, NULL, "HARVESTFOREST", 5000, 0, 0);
+            }
+            BaseWin_check_base(BaseWinVar, NULL, base_id);
+        }
+    }
+    if (terraform_id == TERRA_RAISE_LAND || terraform_id == TERRA_LOWER_LAND
+        || terraform_id == TERRA_CONDENSER) {
+        int faction_id_dry = *MapRainfallChangeFactionID; // a computer faction whose base got drier
+        if (faction_id_dry >= 0 && !(*FactionsStatus & (1 << faction_id_dry))
+            && *FactionsStatus & (1 << faction_id)
+            && !(PlayersData[faction_id].diplo_treaties[faction_id_dry]
+                & (DTREATY_PACT | DTREATY_VENDETTA))) {
+            if (PlayersData[faction_id_dry].diplo_treaties[faction_id] & DTREATY_WANT_REVENGE) {
+                set_treaty(faction_id_dry, faction_id, DTREATY_SHALL_BETRAY, true);
+            } else {
+                cause_friction(faction_id_dry, faction_id, 5);
+            }
+        }
+        if (*MapRainfallChangeBaseID >= 0) {
+            parse_says(0, Bases[*MapRainfallChangeBaseID].name_string, -1, -1);
+            parse_says(1, Players[faction_id].adj_name_faction, -1, -1);
+            NetMsg_pop(NetMsgVar, NULL, (faction_id == (uint32_t)*FactionIDCurrent) ? "TERRAMINE"
+                : "TERRAYOURS", 5000, 0, 0);
+        }
+        // Units of the player at the controls lost to the land changes. world_climate() above has
+        // already reset this record: world_shorelines() goes through world_alt_set() for nearly
+        // every tile, so it only holds what the last of those calls lost, practically nothing. The
+        // base is the one nearest the terraforming faction's losses, as in the original.
+        if (MapBaseIdClosestSubmergedVeh[*FactionIDCurrent] >= 0) {
+            parse_says(0, Bases[MapBaseIdClosestSubmergedVeh[faction_id]].name_string, -1, -1);
+            parse_says(1, Players[faction_id].adj_name_faction, -1, -1);
+            NetMsg_pop(NetMsgVar, NULL, (faction_id == (uint32_t)*FactionIDCurrent) ? "DROWNMINE"
+                : "DROWNYOURS", 5000, 0, 0);
+        }
+    }
+    synch_bit(x, y, faction_id);
+    draw_tiles(x, y, 2);
+    if (veh_count == *VehCurrentCount) {
+        BaseWin_check_veh(BaseWinVar, NULL, veh_id);
+        BaseWin_check_loc(BaseWinVar, NULL, x, y, 2);
+    } else {
+        GraphicWin_redraw(BaseWinVar, NULL);
+    }
+    if (faction_id != (uint32_t)*FactionIDCurrent) {
+        return 1;
+    }
+    if (state & VSTATE_UNK_200 && *GamePreferences & PREF_BSC_TUTORIAL_MSGS && !*IsMultiplayerNet) {
+        uint32_t mask = 1u << terraform_id;
+        uint32_t shown = TutTerraformShown[is_sea];
+        if (!(shown & mask)) {
+            TutTerraformShown[is_sea] = shown | mask;
+            LPCSTR label = NULL;
+            void *picture = NULL;
+            int veh_id_shown = veh_id;
+            if (!is_sea) {
+                switch (terraform_id) {
+                  case TERRA_FARM: label = "MADEFARM"; break;
+                  case TERRA_SOIL_ENR: label = "MADESOIL"; break;
+                  case TERRA_MINE: label = "MADEMINE"; break;
+                  case TERRA_SOLAR_TIDAL: label = "MADESOLAR"; break;
+                  case TERRA_FOREST: label = "MADEFOREST"; break;
+                  case TERRA_ROAD: label = "MADEROAD"; break;
+                  case TERRA_MAGTUBE: label = "MADETUBE"; break;
+                  case TERRA_SENSOR: label = "MADESENSOR"; break;
+                  case TERRA_CONDENSER: label = "MADECONDENSER"; break;
+                  case TERRA_THERMAL_BORE: label = "MADEBOREHOLE"; break;
+                  case TERRA_AQUIFER: label = "MADEAQUIFER"; break;
+                  default: break;
+                }
+            } else {
+                switch (terraform_id) {
+                  case TERRA_FARM: label = "MADESEAFARM"; break;
+                  case TERRA_MINE: label = "MADESEAMINE"; break;
+                  case TERRA_SOLAR_TIDAL: label = "MADESEASOLAR"; break;
+                  default: break;
+                }
+            }
+            if (terraform_id <= TERRA_SOLAR_TIDAL) {
+                picture = TutTerraformPicture[terraform_id]; // these point at the tile, not the unit
+                veh_id_shown = -1;
+            }
+            if (label) {
+                TutWin_tut_map(TutWinVar, NULL, label, x, y, veh_id_shown, picture, 1, -1, -1);
+            } else {
+                TutTerraformShown[is_sea] = shown; // only a message shown is remembered
+            }
+        }
+    }
+    if (faction_id == (uint32_t)*FactionIDCurrent && order == ORDER_NONE
+        && !(state & VSTATE_UNK_200) && !*TerraformSoundPlayed) {
+        *TerraformSoundPlayed = 1;
+        wave_it(20);
+        ambience(0xCF);
+    }
+    return 1;
+}
+
+/*
+Purpose: Fire a unit's artillery at a terrain improvement, or a bomber at the tile below, or let a
+         native unit or a unit without a target tile destroy one at its own tile: bits picks the
+         improvements (any when 0 or less). The unit uses its turn. Shelling a tile (x, y on the map)
+         at a base only shows the explosion to the attacker at the controls; half the time it fails;
+         otherwise the explosion shows when the attacker or the tile's owner is at the controls, and
+         when the tile lies in another faction's territory a stack of the attacker's enemies within
+         reach near the tile draws the fire instead (a battle in that direction). A bomber fails a
+         quarter of the time. The first improvement found (the sensor array first; fungus only for a
+         fungicidal unit) is removed and named (parse slot 2), every view of the tile updated and
+         the map redrawn (the climate for a condenser, mirror or borehole). A faction in contact
+         with the tile's owner which sees the tile makes that owner set a goal at the attacker, and
+         the owner at the controls hears of it; native units tell the player at the controls about
+         improvements in its territory near its bases. The unit's order is then cleared (order_veh,
+         left in the exe), except after a failed shelling or a battle.
+Original Offset: 004CAA50
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-18-sweep-batch32-unitterra.log)
+*/
+void __cdecl action_destroy(int veh_id, int bits, int x, int y) {
+    BOOL is_shelling = false;
+    BOOL ate_forest = false;
+    const uint32_t faction_id = Vehs[veh_id].faction_id;
+    veh_skip(veh_id);
+    Vehs[veh_id].state |= VSTATE_UNK_40;
+    if (y < 0 || y >= *MapLatitudeBounds || x < 0 || x >= *MapLongitudeBounds) {
+        x = Vehs[veh_id].x;
+        y = Vehs[veh_id].y;
+    } else {
+        Map *tile = map_loc(x, y);
+        if (tile->bit & BIT_BASE_IN_TILE && (tile->val2 & 0xF) < 8) {
+            if (faction_id == (uint32_t)*FactionIDCurrent) {
+                boom(x, y, 0x80);
+            }
+            return;
+        }
+        if (_rand() % 2) {
+            if (faction_id == (uint32_t)*FactionIDCurrent) {
+                NetMsg_pop(NetMsgVar, NULL, "ARTYBOMBFAILED", 5000, 0, 0);
+            }
+            return;
+        }
+        is_shelling = true;
+        if (faction_id == (uint32_t)*FactionIDCurrent
+            || whose_territory(*FactionIDCurrent, x, y, NULL, false) == *FactionIDCurrent) {
+            if (faction_id && faction_id != (uint32_t)*FactionIDCurrent) {
+                boom(x, y, 0x80);
+                boom(Vehs[veh_id].x, Vehs[veh_id].y, 0x80);
+            }
+            boom(x, y, 0x80);
+        }
+        int owner = whose_territory(faction_id, x, y, NULL, false);
+        if (owner != (int)faction_id) {
+            for (int i = 1; i < 25; i++) {
+                int x_radius = Vehs[veh_id].x + RadiusOffsetX[i];
+                if (!(*MapIsFlat & 1)) {
+                    if (x_radius < 0) {
+                        x_radius += *MapLongitudeBounds;
+                    } else if (x_radius >= *MapLongitudeBounds) {
+                        x_radius -= *MapLongitudeBounds;
+                    }
+                }
+                int y_radius = Vehs[veh_id].y + RadiusOffsetY[i];
+                if (y_radius < 0 || y_radius >= *MapLatitudeBounds || x_radius < 0
+                    || x_radius >= *MapLongitudeBounds) {
+                    continue;
+                }
+                int dist_x = abs(x_radius - x);
+                if (!(*MapIsFlat & 1) && dist_x > (int)*MapLongitude) {
+                    dist_x = *MapLongitudeBounds - dist_x;
+                }
+                if (((abs(y_radius - y) + dist_x) & ~1) > 4) {
+                    continue;
+                }
+                int veh_id_def = stack_fix(veh_at(x_radius, y_radius));
+                if (veh_id_def >= 0 && stack_check(veh_id_def, 15, owner, -1, -1)) {
+                    battle_fight(veh_id, i, true, 1, 0);
+                    return;
+                }
+            }
+        }
+    }
+    const RulesChassis *chassis = &Chassis[VehPrototypes[Vehs[veh_id].proto_id].chassis_id];
+    if (chassis->triad == TRIAD_AIR && !chassis->missile && !(_rand() % 4)) {
+        if (faction_id == (uint32_t)*FactionIDCurrent) {
+            NetMsg_pop(NetMsgVar, NULL, "BOMBFAILED", 5000, 0, 0);
+        }
+        order_veh(veh_id, -1, 3);
+        return;
+    }
+    uint32_t found_bits; // the improvements looked for
+    if (bits > 0) {
+        bits &= map_loc(x, y)->bit;
+        found_bits = bits;
+        if (!bits) {
+            order_veh(veh_id, -1, 3);
+            return;
+        }
+        bit_set(x, y, bits, false);
+    } else {
+        found_bits = map_loc(x, y)->bit;
+    }
+    if (!has_abil(Vehs[veh_id].proto_id, ABL_FUNGICIDAL)) {
+        found_bits &= ~BIT_FUNGUS;
+    }
+    int terraform_id = -1;
+    for (int i = -1; i < TERRA_MONOLITH; i++) {
+        int id = (i < 0) ? TERRA_SENSOR : i; // the sensor array first
+        if (Terraforming[id].bit & found_bits) {
+            terraform_id = id;
+            break;
+        }
+    }
+    if (terraform_id < 0) {
+        log_say("Arty Failed The Hard Way", bits, (int)found_bits, 0);
+        if (is_shelling) {
+            if (faction_id == (uint32_t)*FactionIDCurrent) {
+                NetMsg_pop(NetMsgVar, NULL, "ARTYBOMBFAILED", 5000, 0, 0);
+            }
+        } else if (chassis->triad == TRIAD_AIR && faction_id == (uint32_t)*FactionIDCurrent) {
+            NetMsg_pop(NetMsgVar, NULL, "BOMBFAILED", 5000, 0, 0);
+        }
+        order_veh(veh_id, -1, 3);
+        return;
+    }
+    bits |= Terraforming[terraform_id].bit;
+    bit_set(x, y, Terraforming[terraform_id].bit, false);
+    BOOL is_sea = (map_loc(x, y)->climate & 0xE0) < ALT_BIT_SHORE_LINE;
+    parse_says(2, StringTable->get((int)*(&Terraforming[terraform_id].name + is_sea)), -1, -1);
+    if (terraform_id == TERRA_FOREST) {
+        ate_forest = true;
+    }
+    if (chassis->triad == TRIAD_AIR && faction_id == (uint32_t)*FactionIDCurrent) {
+        NetMsg_pop(NetMsgVar, NULL, "BOMBSUCCEEDED", 5000, 0, 0);
+    }
+    synch_bit(x, y, faction_id);
+    int owner = whose_territory(faction_id ? faction_id : *FactionIDCurrent, x, y, NULL, false);
+    synch_bit(x, y, owner); // with no owner (-1) this writes the tile's own bits back to them
+    if (bits & (BIT_CONDENSER | BIT_ECH_MIRROR | BIT_THERMAL_BORE)) {
+        world_climate();
+        draw_map(1);
+    } else if (bits & BIT_SENSOR_ARRAY && owner == *FactionIDCurrent) {
+        draw_radius(x, y, 2, 2);
+    } else {
+        draw_tiles(x, y, 2);
+    }
+    if (faction_id) {
+        if (is_shelling && faction_id == (uint32_t)*FactionIDCurrent) {
+            NetMsg_pop(NetMsgVar, NULL, "BOMBARDSUCCEEDED", 5000, 0, 0);
+        }
+        if (owner >= 0 && owner != (int)faction_id
+            && PlayersData[faction_id].diplo_treaties[owner] & DTREATY_COMMLINK
+            && (PlayersData[owner].flags & PFLAG_MAP_REVEALED
+                || map_loc(x, y)->visibility & (1 << owner))) {
+            synch_bit(x, y, owner);
+            add_goal(owner, 0, 5, Vehs[veh_id].x, Vehs[veh_id].y, -1);
+            if (owner == *FactionIDCurrent) {
+                int base_id = base_find(x, y, -1, -1, -1, *FactionIDCurrent);
+                *GenderDefault = Players[faction_id].noun_gender;
+                *PluralityDefault = Players[faction_id].is_noun_plural;
+                parse_says(0, Players[faction_id].noun_faction, -1, -1);
+                parse_says(1, Bases[base_id].name_string, -1, -1); // the owner has a base here
+                parse_says(3, Players[faction_id].adj_name_faction, -1, -1);
+                NetMsg_pop(NetMsgVar, NULL, is_shelling ? "HAVEDESTROYED1" : "HAVEDESTROYED", 5000,
+                    0, 0);
+            }
+        }
+    } else {
+        int faction_id_cur = *FactionIDCurrent;
+        if ((PlayersData[faction_id_cur].flags & PFLAG_MAP_REVEALED
+            || map_loc(x, y)->visibility & (1 << faction_id_cur)) && owner == faction_id_cur) {
+            int base_id = base_find(x, y, -1, -1, -1, faction_id_cur);
+            if (base_id >= 0 && Bases[base_id].faction_id_current == faction_id_cur) {
+                parse_says(0, Bases[base_id].name_string, -1, -1);
+                parse_says(1, VehPrototypes[Vehs[veh_id].proto_id].veh_name, -1, -1);
+                Console_focus(ConsoleVar, NULL, x, y, 0);
+                BOOL is_spore = Vehs[veh_id].proto_id == BSC_SPORE_LAUNCHER;
+                if (is_spore) {
+                    popp(ScriptTxtID, ate_forest ? "SPOREFOREST" : "SPORESLAUNCHED", 0,
+                        "sporlnch_sm.pcx", NULL);
+                } else {
+                    NetMsg_pop(NetMsgVar, NULL, ate_forest ? "ATEFOREST" : "ATESTUFF", 5000, 0, 0);
+                }
+            }
+        }
+    }
+    order_veh(veh_id, -1, 3);
+}
+
+/*
+Purpose: Find where a unit should go to rest or refuel and send it there (a move order, or none
+         when it is there already; a computer faction's unit then skips its turn). Modes 1
+         (order_veh()) and -1 first ask whether the fuel left runs short and stop if not, -1 then
+         only answers; mode 4 gives up when the place is out of reach; mode 2 leaves out bases with
+         the state bit 0x200000. Bases of the unit's faction or a pact partner count (for land units
+         in their region, for ships on their sea or under them); the nearest wins, unless an
+         automated unit on alert can still reach its home spot (second waypoint). Aircraft also
+         count their faction's carriers and air supply units (in modes 1, -1 and 4 a computer
+         faction adds a carrier's own move, and a supply unit must be within this turn's moves)
+         and the airbases within the distance found that others' units don't hold (a computer
+         faction's only where the tile is its own, in its territory). Reach is what the fuel (and
+         for one-turn aircraft the hit points) leaves; a human player's aircraft isn't sent beyond.
+Original Offset: 004CBAA0
+Return Value: 1 when a place was found (the order given, mode -1 only answers), 0 when none, while
+              the fuel lasts (modes 1 and -1) or when it is out of reach (mode 4)
+Status: Complete (verified vs original: docs/regression-runs/2026-10-18-sweep-batch32-unitterra.log).
+        Deliberate change from the v2.1 exe, chosen by Kiousu (2026-10-18): an aircraft on alert
+        heading back to its home airbase is checked against that airbase's distance; the exe keeps
+        the shortest distance found before it (bases, carriers, air supply units and airbases
+        scanned earlier), which can be longer or shorter than the airbase's.
+*/
+int __cdecl action_home(int veh_id, int mode) {
+    Veh *veh = &Vehs[veh_id];
+    const int x = veh->x;
+    const int y = veh->y;
+    const uint32_t faction_id = veh->faction_id;
+    const uint32_t region = map_loc(x, y)->region;
+    int dist_best = 9999;
+    int x_best = -1;
+    int y_best = -1;
+    VehPrototype *proto = &VehPrototypes[veh->proto_id];
+    RulesChassis *chassis = &Chassis[proto->chassis_id];
+    int moves = range((int)speed(veh_id, false) - veh->moves_expended, 0, 999);
+    int reach = (int)speed(veh_id, false) * (chassis->range - veh->terraforming_turns - 1) + moves;
+    if (chassis->range == 1) {
+        int hp = (proto->plan == PLAN_ALIEN_ARTIFACT) ? 1 : range(proto->reactor_id, 1, 100) * 10;
+        hp = range(hp - veh->dmg_incurred, 0, 9999);
+        reach += (int)speed(veh_id, false) * ((hp - 1) / proto->reactor_id);
+    }
+    reach /= (int)Rules->move_rate_roads;
+    for (int i = 0; i < *BaseCurrentCount; i++) {
+        Base *base = &Bases[i];
+        if (base->faction_id_current != faction_id
+            && !(PlayersData[faction_id].diplo_treaties[base->faction_id_current] & DTREATY_PACT)) {
+            continue;
+        }
+        uint8_t triad = Chassis[VehPrototypes[veh->proto_id].chassis_id].triad;
+        if (triad == TRIAD_LAND) {
+            if (map_loc(base->x, base->y)->region != region) {
+                continue;
+            }
+        } else if (triad == TRIAD_SEA) {
+            if ((base->x != x || base->y != y) && !base_on_sea(i, region)) {
+                continue;
+            }
+        }
+        if (mode == 2 && base->state & BSTATE_UNK_200000) {
+            continue;
+        }
+        int dist_x = abs(x - base->x);
+        if (!(*MapIsFlat & 1) && dist_x > (int)*MapLongitude) {
+            dist_x = *MapLongitudeBounds - dist_x;
+        }
+        int dist = (abs(y - base->y) + dist_x) >> 1;
+        if (veh->state & VSTATE_UNK_200 && veh->order_auto_type == ORDERA_ON_ALERT
+            && base->x == veh->waypoint_x[1] && base->y == veh->waypoint_y[1] && dist <= reach) {
+            dist_best = dist;
+            x_best = base->x;
+            y_best = base->y;
+            goto found;
+        }
+        if (dist < dist_best) {
+            dist_best = dist;
+            y_best = base->y;
+            x_best = base->x;
+        }
+    }
+    if (Chassis[VehPrototypes[veh->proto_id].chassis_id].triad == TRIAD_AIR) {
+        for (int i = 0; i < *VehCurrentCount; i++) {
+            Veh *veh_dst = &Vehs[i];
+            if (veh_dst->faction_id != faction_id || i == veh_id) {
+                continue;
+            }
+            VehPrototype *proto_dst = &VehPrototypes[veh_dst->proto_id];
+            if (!has_abil(veh_dst->proto_id, ABL_CARRIER) && (proto_dst->plan != PLAN_SUPPLY_CONVOY
+                || Chassis[proto_dst->chassis_id].triad != TRIAD_AIR)) {
+                continue;
+            }
+            int dist_x = abs(x - veh_dst->x);
+            if (!(*MapIsFlat & 1) && dist_x > (int)*MapLongitude) {
+                dist_x = *MapLongitudeBounds - dist_x;
+            }
+            int dist = (abs(y - veh_dst->y) + dist_x) >> 1;
+            if (mode & 1 || mode == 4) {
+                if (!(*FactionsStatus & (1 << faction_id))) {
+                    dist += (int)speed(i, false) / (int)Rules->move_rate_roads; // it can come closer
+                }
+                if (proto_dst->plan == PLAN_SUPPLY_CONVOY) {
+                    int dist_x_dst = abs(x - veh_dst->x);
+                    if (!(*MapIsFlat & 1) && dist_x_dst > (int)*MapLongitude) {
+                        dist_x_dst = *MapLongitudeBounds - dist_x_dst;
+                    }
+                    int moves_left = range((int)speed(veh_id, false) - veh->moves_expended, 0, 999);
+                    if ((abs(y - veh_dst->y) + dist_x_dst) >> 1
+                        > moves_left / (int)Rules->move_rate_roads) {
+                        continue;
+                    }
+                }
+            }
+            if (dist < dist_best) {
+                dist_best = dist;
+                x_best = veh_dst->x;
+                y_best = veh_dst->y;
+            }
+        }
+        int radius = (dist_best >= 8) ? 8 : dist_best;
+        for (int i = 0; i < RadiusRange[radius]; i++) {
+            int x_radius = x + RadiusOffsetX[i];
+            if (!(*MapIsFlat & 1)) {
+                if (x_radius < 0) {
+                    x_radius += *MapLongitudeBounds;
+                } else if (x_radius >= *MapLongitudeBounds) {
+                    x_radius -= *MapLongitudeBounds;
+                }
+            }
+            int y_radius = y + RadiusOffsetY[i];
+            if (y_radius < 0 || y_radius >= *MapLatitudeBounds || x_radius < 0
+                || x_radius >= *MapLongitudeBounds) {
+                continue;
+            }
+            Map *tile = map_loc(x_radius, y_radius);
+            if (!(tile->bit & BIT_AIRBASE)) {
+                continue;
+            }
+            if (tile->bit & BIT_VEH_IN_TILE) {
+                uint32_t owner = tile->val2 & 0xF;
+                if (owner < 8 && owner != faction_id
+                    && !(PlayersData[faction_id].diplo_treaties[owner] & DTREATY_PACT)) {
+                    continue;
+                }
+            }
+            if (!(*FactionsStatus & (1 << faction_id))) {
+                if (whose_territory(faction_id, x_radius, y_radius, NULL, false) != (int)faction_id) {
+                    continue;
+                }
+                uint32_t owner = tile->val2 & 0xF;
+                if (owner >= 8 || owner != faction_id) {
+                    continue;
+                }
+            }
+            int dist_x = abs(x - x_radius);
+            if (!(*MapIsFlat & 1) && dist_x > (int)*MapLongitude) {
+                dist_x = *MapLongitudeBounds - dist_x;
+            }
+            int dist = (abs(y - y_radius) + dist_x) >> 1;
+            if (veh->state & VSTATE_UNK_200 && veh->order_auto_type == ORDERA_ON_ALERT
+                && !veh->dmg_incurred && x_radius == veh->waypoint_x[1]
+                && y_radius == veh->waypoint_y[1] && dist <= reach) {
+                dist_best = dist; // the exe keeps the shortest distance found before this one
+                x_best = x_radius;
+                y_best = y_radius;
+                goto found;
+            }
+            if (dist < dist_best) {
+                dist_best = dist;
+                x_best = x_radius;
+                y_best = y_radius;
+            }
+        }
+    }
+    if ((mode & 1 || mode == 4) && !Chassis[VehPrototypes[veh->proto_id].chassis_id].range) {
+        return 0;
+    }
+found:
+    if (y_best < 0 || y_best >= *MapLatitudeBounds || x_best < 0 || x_best >= *MapLongitudeBounds) {
+        return 0;
+    }
+    if (mode & 1 && dist_best + 1 <= reach - 1) {
+        return 0; // fuel enough for now
+    }
+    if (mode == 4) {
+        if (reach < dist_best) {
+            return 0;
+        }
+    } else if (mode < 0) {
+        return 1;
+    }
+    if (x_best == x && y_best == y) {
+        veh->order = ORDER_NONE;
+        if (!(*FactionsStatus & (1 << faction_id))) {
+            veh_skip(veh_id);
+        }
+        return 1;
+    }
+    veh->order = ORDER_MOVE_TO;
+    veh->waypoint_x[0] = (int16_t)x_best;
+    veh->waypoint_y[0] = (int16_t)y_best;
+    if (Chassis[VehPrototypes[veh->proto_id].chassis_id].range && *FactionsStatus & (1 << faction_id)
+        && reach < dist_best) {
+        veh->order = ORDER_NONE; // out of reach: a human player's unit doesn't go
+        veh->state &= ~(VSTATE_UNK_200 | VSTATE_EXPLORE | VSTATE_UNK_1000000 | VSTATE_UNK_2000000);
+    }
+    return 1;
+}
+
 /*
 Purpose: Fire a unit's artillery at a tile at most two steps away (the summed distances, rounded
          down to even, at most 4). A unit of the player at the controls must still be able to move.
@@ -6665,4 +7856,515 @@ void __cdecl action_arty(int veh_id, int x, int y) {
     }
     message_veh(0x2402, veh_id, offset, 0);
     NetDaemon_await_exec(NetDaemonVar, NULL, 1);
+}
+
+// The map tile at (x, y), computed as the exe does it (signed, without a bounds check).
+static inline Map *order_tile(int x, int y) {
+    return &(*MapTiles)[(int)*MapLongitude * y + (x >> 1)];
+}
+
+/*
+Purpose: Carry a unit's move order one step further. An ORDER_MOVE steps in the direction stored
+         in its first waypoint; the other move orders take Path::move()'s next step toward the first
+         waypoint (an order with the bit 0x40, the AI's, plans without a faction). Without a step the
+         order ends. After the step an ORDER_MOVE ends on its second waypoint and an ORDER_MOVE_TO on
+         its first; a multi-waypoint go to (state bits 0x2000200) then moves on to its next waypoint
+         instead, the waypoints shifted down by one (the copy reads index waypoint_count, past the
+         four-slot arrays when there are four, as in the original; the map view's waypoint mode
+         stops at three). A computer faction's unit whose chassis has a cargo rating (every chassis
+         but the missile) that arrives in a base ends its turn. In a network game the step goes
+         through NetDaemon::order_veh() and the unit id is kept where veh_kill() can renumber it.
+Original Offset: 004CB310
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-18-council-batch32-unitmove.log)
+*/
+void __cdecl action_go_to(int veh_id) {
+    if (*IsMultiplayerNet && !*ControlTurnC) {
+        *NetVehIDRef = &veh_id; // veh_kill() renumbers it; every later use reads it again
+    }
+    int dir;
+    if (Vehs[veh_id].order == ORDER_MOVE) {
+        dir = Vehs[veh_id].waypoint_x[0];
+    } else {
+        dir = Path_move(Paths, NULL, veh_id, (Vehs[veh_id].order & 0x40) ? -1 : Vehs[veh_id].faction_id);
+    }
+    if (dir < 0) {
+        Vehs[veh_id].order = ORDER_NONE;
+        if (*IsMultiplayerNet && !*ControlTurnC) {
+            synch_veh(veh_id);
+            NetDaemon_await_synch(NetDaemonVar, NULL);
+            NetDaemon_unlock_veh(NetDaemonVar, NULL);
+        }
+        return;
+    }
+    if (*IsMultiplayerNet && !*ControlTurnC) {
+        if (NetDaemon_order_veh(NetDaemonVar, NULL, veh_id, dir, 1)) {
+            NetDaemon_await_exec(NetDaemonVar, NULL, 1);
+        }
+        return;
+    }
+    if (!order_veh(veh_id, dir, 3)) {
+        return;
+    }
+    Veh *veh = &Vehs[veh_id];
+    if (veh->order == ORDER_MOVE) {
+        if (veh->x == veh->waypoint_x[1] && veh->y == veh->waypoint_y[1]) {
+            veh->order = ORDER_NONE;
+        }
+        return;
+    }
+    if (veh->order != ORDER_MOVE_TO || veh->x != veh->waypoint_x[0] || veh->y != veh->waypoint_y[0]) {
+        return;
+    }
+    veh->order = ORDER_NONE;
+    if ((veh->state & (VSTATE_UNK_2000000 | VSTATE_UNK_200)) == (VSTATE_UNK_2000000 | VSTATE_UNK_200)
+        && veh->patrol_current_point < veh->waypoint_count) {
+        int16_t *waypoint = veh->waypoint_x; // waypoint_y[i] is waypoint[i + 4]
+        for (int i = 0; i < veh->waypoint_count; i++) {
+            waypoint[i] = waypoint[i + 1];
+            waypoint[i + 4] = waypoint[i + 5];
+        }
+        veh->order = ORDER_MOVE_TO;
+        if (!--veh->waypoint_count) {
+            veh->state &= ~(VSTATE_UNK_2000000 | VSTATE_UNK_10000 | VSTATE_UNK_200);
+        }
+    }
+    if (!(*FactionsStatus & (uint8_t)(1 << veh->faction_id))
+        && Chassis[VehPrototypes[veh->proto_id].chassis_id].cargo) {
+        Map *tile = order_tile(veh->x, veh->y);
+        if ((tile->bit & BIT_BASE_IN_TILE) && (tile->val2 & 0xF) < 8) {
+            veh_skip(veh_id);
+        }
+    }
+}
+
+/*
+Purpose: Carry a unit's road to (ORDER_ROAD_TO) or tube to (ORDER_MAGTUBE_TO) order one step
+         further. The order ends when the unit is at sea or the target off the map. On its way,
+         outside bases, the unit first clears fungus it can't build roads through (if it knows how),
+         then builds a road where there is none and, for a tube to, a magtube where there is a road
+         but no tube (through action_terraform() with the order kept). On fungus it can't build in
+         it just moves on.
+         Otherwise it takes Path::find()'s next step toward the target (prototype 0, no faction,
+         flags 0x10 without the roads-in-fungus tech); without one (0 to 7) the order ends. On
+         arrival the order ends and the player is told if the unit is theirs and lacks the state
+         bit 0x200. In a network game the work and steps go through the network daemon.
+Original Offset: 004CB580
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-18-council-batch32-unitmove.log)
+*/
+void __cdecl action_road_to(int veh_id) {
+    if (*IsMultiplayerNet && !*ControlTurnC) {
+        *NetVehIDRef = &veh_id; // veh_kill() renumbers it; every later use reads it again
+    }
+    uint32_t faction_id = Vehs[veh_id].faction_id;
+    int x_dst = Vehs[veh_id].waypoint_x[0];
+    int y = Vehs[veh_id].y;
+    int y_dst = Vehs[veh_id].waypoint_y[0];
+    int x = Vehs[veh_id].x;
+    Map *tile = order_tile(x, y);
+    int altitude = tile->climate & 0xE0;
+    if (altitude < 0x60 || y_dst < 0 || y_dst >= *MapLatitudeBounds || x_dst < 0
+        || x_dst >= *MapLongitudeBounds) {
+        Vehs[veh_id].order = ORDER_NONE;
+        if (*IsMultiplayerNet && !*ControlTurnC) {
+            synch_veh(veh_id);
+            NetDaemon_await_synch(NetDaemonVar, NULL);
+            NetDaemon_unlock_veh(NetDaemonVar, NULL);
+        }
+        return;
+    }
+    if ((tile->bit & BIT_FUNGUS) && altitude >= 0x40
+        && !has_tech(Rules->tech_build_roads_fungus, faction_id)
+        && has_tech(Terraforming[TERRA_REMOVE_FUNGUS].preq_tech, faction_id)
+        && !((tile->bit & BIT_BASE_IN_TILE) && (tile->val2 & 0xF) < 8)) {
+        if (*IsMultiplayerNet && !*ControlTurnC) {
+            message_data(0x2405, 0, veh_id, ORDER_REMOVE_FUNGUS, Vehs[veh_id].order, 0);
+            NetDaemon_await_exec(NetDaemonVar, NULL, 1);
+            return;
+        }
+        int8_t order = Vehs[veh_id].order;
+        action_terraform(veh_id, TERRA_REMOVE_FUNGUS, 1);
+        Vehs[veh_id].order = order;
+        return;
+    }
+    BOOL stuck_in_fungus = (tile->bit & BIT_FUNGUS) && (tile->climate & 0xE0) >= 0x40
+        && !has_tech(Rules->tech_build_roads_fungus, faction_id);
+    if (!stuck_in_fungus && !((tile->bit & BIT_BASE_IN_TILE) && (tile->val2 & 0xF) < 8)) {
+        if (!(tile->bit & BIT_ROAD)) {
+            if (*IsMultiplayerNet && !*ControlTurnC) {
+                message_data(0x2405, 0, veh_id, ORDER_ROAD, Vehs[veh_id].order, 0);
+                NetDaemon_await_exec(NetDaemonVar, NULL, 1);
+                return;
+            }
+            int8_t order = Vehs[veh_id].order;
+            action_terraform(veh_id, TERRA_ROAD, 1);
+            Vehs[veh_id].order = order;
+            return;
+        }
+        // action_terraform() makes the road order a magtube where there is a road already
+        if (Vehs[veh_id].order == ORDER_MAGTUBE_TO && !(tile->bit & BIT_MAGTUBE)
+            && has_tech(Terraforming[TERRA_MAGTUBE].preq_tech, faction_id)) {
+            if (*IsMultiplayerNet && !*ControlTurnC) {
+                message_data(0x2405, 0, veh_id, ORDER_ROAD, ORDER_MAGTUBE_TO, 0);
+                NetDaemon_await_exec(NetDaemonVar, NULL, 1);
+                return;
+            }
+            action_terraform(veh_id, TERRA_ROAD, 1);
+            Vehs[veh_id].order = ORDER_MAGTUBE_TO;
+            return;
+        }
+    }
+    if (x == x_dst && y == y_dst) {
+        int8_t order = Vehs[veh_id].order;
+        Vehs[veh_id].order = ORDER_NONE;
+        if (*IsMultiplayerNet && !*ControlTurnC) {
+            synch_veh(veh_id);
+            NetDaemon_await_synch(NetDaemonVar, NULL);
+            NetDaemon_unlock_veh(NetDaemonVar, NULL);
+        }
+        if (Vehs[veh_id].state & VSTATE_UNK_200 || faction_id != (uint32_t)*FactionIDCurrent) {
+            return;
+        }
+        stringTemp->str[0] = 0;
+        say_loc(stringTemp->str, x_dst, y_dst, 0, 2, 0);
+        parse_says(0, stringTemp->str, -1, -1);
+        NetMsg_pop(NetMsgVar, NULL, (order == ORDER_ROAD_TO) ? "ROADTODONE" : "TUBETODONE", 5000, 0, 0);
+        return;
+    }
+    int dir = Path_find(Paths, NULL, x, y, x_dst, y_dst, 0, -1,
+        has_tech(Rules->tech_build_roads_fungus, faction_id) ? 0 : 0x10, -1);
+    if (dir >= 0 && dir < 8) {
+        if (*IsMultiplayerNet && !*ControlTurnC) {
+            if (NetDaemon_order_veh(NetDaemonVar, NULL, veh_id, dir, 1)) {
+                NetDaemon_await_exec(NetDaemonVar, NULL, 1);
+            }
+            return;
+        }
+        order_veh(veh_id, dir, 3);
+        return;
+    }
+    Vehs[veh_id].order = ORDER_NONE;
+    if (*IsMultiplayerNet && !*ControlTurnC) {
+        synch_veh(veh_id);
+        NetDaemon_await_synch(NetDaemonVar, NULL);
+        NetDaemon_unlock_veh(NetDaemonVar, NULL);
+    }
+}
+
+/*
+Purpose: Air drop a unit onto the tile (x, y). Flags (also stored in VehAttackFlags): 1 tells the
+         player at the controls why a drop is refused, 2 makes the drop (without it the call only
+         checks). A drop is refused farther than drop_range() (half the summed x and y distances),
+         into the sea, into a tile with another faction's units (unless pact), for a non-combat unit
+         into a zone of control or a foreign base, into a base whose owner the player at the
+         controls declines to break a treaty with, and within two tiles of a base at vendetta with
+         air defenses (an Aerospace Complex, its owner's Cloudbase Academy or an air superiority
+         unit). The unit comes in from a neighbouring tile scored with rand(): empty ones first,
+         then its own faction's, then a pact partner's, some directions favoured. The player at the
+         controls is told when another faction drops where they can see it, and the flight is shown
+         if the preferences allow. The unit is marked as having dropped, a non-combat unit ends its
+         turn, the units it carries end theirs, a foreign base without pact dropped into is
+         captured (an act of aggression; the unit is repaired), anywhere else the landing costs
+         twice the reactor in damage (never the last hit point). Then the tiles around are spotted
+         and a supply pod there is opened. Another faction's drop the player sees is followed by a
+         short pause (none in a network game or with shift held).
+Original Offset: 004CC360
+Return Value: true if the drop is allowed (flag 2 unset) or was made, otherwise false
+Status: Complete (verified vs original: docs/regression-runs/2026-10-18-council-batch32-unitmove.log).
+        Deliberate change from the v2.1 exe, chosen by Kiousu (2026-10-18): the "air drop near
+        $BASENAME0" notice names the base nearest the drop that the player at the controls owns or
+        has seen (the original passes faction 1 to base_find()), and an empty name when there is
+        none (the original reads Bases[-1]); see docs/regression-testing.md, "action_airdrop notice".
+*/
+BOOL __cdecl action_airdrop(int veh_id, int x, int y, int flags) {
+    *VehAttackFlags = flags;
+    uint32_t faction_id = Vehs[veh_id].faction_id;
+    int y_veh = Vehs[veh_id].y;
+    int dist_x = abs(Vehs[veh_id].x - x);
+    if (!(*MapIsFlat & 1) && dist_x > (int)*MapLongitude) {
+        dist_x = *MapLongitudeBounds - dist_x;
+    }
+    int dist = (dist_x + abs(y_veh - y)) >> 1;
+    if (dist > (int)drop_range(faction_id)) {
+        if ((*VehAttackFlags & 1) && faction_id == (uint32_t)*FactionIDCurrent) {
+            parse_num(0, Rules->max_airdrop_sans_orb_insert);
+            NetMsg_pop(NetMsgVar, NULL, "DROPRANGE", -5000, 0,
+                (Players[faction_id].rule_flags & RFLAG_ALIEN) ? "al_drop_sm.pcx" : "airdp_sm.pcx");
+        }
+        return false;
+    }
+    Map *tile = order_tile(x, y);
+    if ((tile->climate & 0xE0) < 0x60) {
+        if ((*VehAttackFlags & 1) && faction_id == (uint32_t)*FactionIDCurrent) {
+            NetMsg_pop(NetMsgVar, NULL, "DROPSEA", -5000, 0,
+                (Players[faction_id].rule_flags & RFLAG_ALIEN) ? "al_drop_sm.pcx" : "airdp_sm.pcx");
+        }
+        return false;
+    }
+    if (tile->bit & BIT_VEH_IN_TILE) {
+        uint32_t owner = tile->val2 & 0xF;
+        if (owner < 8 && owner != faction_id
+            && !(PlayersData[faction_id].diplo_treaties[owner] & DTREATY_PACT)) {
+            if ((*VehAttackFlags & 1) && faction_id == (uint32_t)*FactionIDCurrent) {
+                NetMsg_pop(NetMsgVar, NULL, "DROPUNIT", -5000, 0,
+                    (Players[faction_id].rule_flags & RFLAG_ALIEN) ? "al_drop_sm.pcx" : "airdp_sm.pcx");
+            }
+            return false;
+        }
+    }
+    if (!Weapon[VehPrototypes[Vehs[veh_id].proto_id].weapon_id].offense_rating
+        && zoc_move(x, y, faction_id)) {
+        if ((*VehAttackFlags & 1) && faction_id == (uint32_t)*FactionIDCurrent) {
+            NetMsg_pop(NetMsgVar, NULL, "NONCOMDROP", -5000, 0,
+                (Players[faction_id].rule_flags & RFLAG_ALIEN) ? "al_drop_sm.pcx" : "airdp_sm.pcx");
+        }
+        return false;
+    }
+    tile = order_tile(x, y);
+    if (tile->bit & BIT_BASE_IN_TILE) {
+        uint32_t owner = tile->val2 & 0xF;
+        if (owner < 8 && owner != faction_id
+            && !(PlayersData[faction_id].diplo_treaties[owner] & DTREATY_PACT)) {
+            if (!Weapon[VehPrototypes[Vehs[veh_id].proto_id].weapon_id].offense_rating) {
+                if ((*VehAttackFlags & 1) && faction_id == (uint32_t)*FactionIDCurrent) {
+                    NetMsg_pop(NetMsgVar, NULL, "NONCOMDROP", -5000, 0,
+                        (Players[faction_id].rule_flags & RFLAG_ALIEN) ? "al_drop_sm.pcx"
+                        : "airdp_sm.pcx");
+                }
+                return false;
+            }
+            if ((*VehAttackFlags & 1) && faction_id == (uint32_t)*FactionIDCurrent
+                && break_treaty(faction_id, owner, DTREATY_PACT | DTREATY_TREATY | DTREATY_TRUCE)) {
+                return false;
+            }
+        }
+    }
+    // air defenses: a base at vendetta within two tiles
+    for (int i = 0; i < 25; i++) {
+        int x_radius = x + RadiusOffsetX[i];
+        if (!(*MapIsFlat & 1)) {
+            if (x_radius < 0) {
+                x_radius += *MapLongitudeBounds;
+            } else if (x_radius >= *MapLongitudeBounds) {
+                x_radius -= *MapLongitudeBounds;
+            }
+        }
+        int y_radius = y + RadiusOffsetY[i];
+        if (y_radius < 0 || y_radius >= *MapLatitudeBounds || x_radius < 0
+            || x_radius >= *MapLongitudeBounds) {
+            continue;
+        }
+        Map *tile_radius = order_tile(x_radius, y_radius);
+        if (!(tile_radius->bit & BIT_BASE_IN_TILE)) {
+            continue;
+        }
+        int owner = tile_radius->val2 & 0xF;
+        if (owner >= 8 || owner <= 0 || owner == (int)faction_id
+            || !(PlayersData[faction_id].diplo_treaties[owner] & DTREATY_VENDETTA)) {
+            continue;
+        }
+        int base_id = base_at(x_radius, y_radius);
+        if (base_id < 0) {
+            continue;
+        }
+        uint32_t offset, mask;
+        bitmask(FAC_AEROSPACE_COMPLEX, &offset, &mask);
+        if ((Bases[base_id].facilities_built[offset] & (uint8_t)mask)
+            || (SecretProject->cloudbase_academy >= 0
+                && Bases[SecretProject->cloudbase_academy].faction_id_current == owner)
+            || stack_check(veh_at(x_radius, y_radius), 2, PLAN_AIR_SUPERIORITY, -1, -1)) {
+            if ((*VehAttackFlags & 1) && faction_id == (uint32_t)*FactionIDCurrent) {
+                parse_says(0, Bases[base_id].name_string, -1, -1);
+                NetMsg_pop(NetMsgVar, NULL, "AIRDEFENSES", -5000, 0,
+                    (Players[faction_id].rule_flags & RFLAG_ALIEN) ? "alair_sm.pcx" : "air_sm.pcx");
+            }
+            return false;
+        }
+    }
+    if (!(*VehAttackFlags & 2)) {
+        return true;
+    }
+    uint32_t goody = goody_at(x, y);
+    // seen: the player at the controls drops, or can see the target or a tile next to it
+    BOOL seen;
+    if (faction_id == (uint32_t)*FactionIDCurrent) {
+        seen = true;
+    } else {
+        tile = order_tile(x, y);
+        int owner = ((tile->bit & (BIT_BASE_IN_TILE | BIT_VEH_IN_TILE)) && (tile->val2 & 0xF) < 8)
+            ? (tile->val2 & 0xF) : -1;
+        seen = owner == *FactionIDCurrent || (*GameState & STATE_OMNISCIENT_VIEW);
+    }
+    if (!seen) {
+        for (int i = 0; i < 8; i++) {
+            int x_radius = x + RadiusBaseX[i];
+            if (!(*MapIsFlat & 1)) {
+                if (x_radius < 0) {
+                    x_radius += *MapLongitudeBounds;
+                } else if (x_radius >= *MapLongitudeBounds) {
+                    x_radius -= *MapLongitudeBounds;
+                }
+            }
+            int y_radius = y + RadiusBaseY[i];
+            if (y_radius < 0 || y_radius >= *MapLatitudeBounds || x_radius < 0
+                || x_radius >= *MapLongitudeBounds) {
+                continue;
+            }
+            Map *tile_radius = order_tile(x_radius, y_radius);
+            int owner = ((tile_radius->bit & (BIT_BASE_IN_TILE | BIT_VEH_IN_TILE))
+                && (tile_radius->val2 & 0xF) < 8) ? (tile_radius->val2 & 0xF) : -1;
+            if (owner == *FactionIDCurrent) {
+                seen = true;
+                break;
+            }
+        }
+    }
+    // animate: the player's own drop, or another's the preferences don't quick move
+    BOOL animate = false;
+    if (seen) {
+        if (faction_id == (uint32_t)*FactionIDCurrent) {
+            animate = true;
+        } else if ((PlayersData[faction_id].diplo_treaties[*FactionIDCurrent] & DTREATY_PACT)
+            ? (*GamePreferences & PREF_BSC_DONT_QUICK_MOVE_ALLY_VEH)
+            : (*GamePreferences & PREF_BSC_DONT_QUICK_MOVE_ENEMY_VEH)) {
+            animate = true;
+        }
+    }
+    // the neighbouring tile the unit comes in from
+    int score_best = 999999;
+    int dir_best = -1;
+    for (int i = 0; i < 8; i++) {
+        int x_radius = x + RadiusBaseX[i];
+        if (!(*MapIsFlat & 1)) {
+            if (x_radius < 0) {
+                x_radius += *MapLongitudeBounds;
+            } else if (x_radius >= *MapLongitudeBounds) {
+                x_radius -= *MapLongitudeBounds;
+            }
+        }
+        int y_radius = y + RadiusBaseY[i];
+        if (y_radius < 0 || y_radius >= *MapLatitudeBounds || x_radius < 0
+            || x_radius >= *MapLongitudeBounds) {
+            continue;
+        }
+        int score = _rand() % 10 + 50;
+        if (i >= 6 || i <= 0) {
+            score -= 25;
+        }
+        if (i == 5 || i == 1) {
+            score -= 10;
+        }
+        Map *tile_radius = order_tile(x_radius, y_radius);
+        if (tile_radius->bit & (BIT_BASE_IN_TILE | BIT_VEH_IN_TILE)) {
+            uint32_t owner = tile_radius->val2 & 0xF;
+            if (owner < 8) {
+                score += 100;
+                if (owner != faction_id) {
+                    score += 1000;
+                    if (!(PlayersData[faction_id].diplo_treaties[owner] & DTREATY_PACT)) {
+                        score += 10000;
+                    }
+                }
+            }
+        }
+        if (score < score_best) {
+            score_best = score;
+            dir_best = i;
+        }
+    }
+    if (dir_best < 0) {
+        return false;
+    }
+    if (seen && faction_id != (uint32_t)*FactionIDCurrent) {
+        // the original passes faction 1 here and reads Bases[-1] when nothing is found, see the
+        // function comment
+        int base_id_near = base_find(x, y, -1, -1, -1, *FactionIDCurrent);
+        parse_says(0, (base_id_near >= 0) ? Bases[base_id_near].name_string : "", -1, -1);
+        *GenderDefault = Players[faction_id].noun_gender;
+        *PluralityDefault = Players[faction_id].is_noun_plural;
+        parse_says(1, Players[faction_id].noun_faction, -1, -1);
+        if (Players[faction_id].rule_flags & RFLAG_ALIEN) {
+            popp(ScriptTxtID, ((int)drop_range(faction_id) > (int)Rules->max_airdrop_sans_orb_insert)
+                ? "MADEORBITAL" : "MADEAIRDROP", 0, "al_drop_sm.pcx", 0);
+        } else {
+            popp(ScriptTxtID, ((int)drop_range(faction_id) > (int)Rules->max_airdrop_sans_orb_insert)
+                ? "MADEORBITAL" : "MADEAIRDROP", 0, "airdp_sm.pcx", 0);
+        }
+    }
+    Vehs[veh_id].state |= VSTATE_MADE_AIRDROP;
+    if (!Weapon[VehPrototypes[Vehs[veh_id].proto_id].weapon_id].offense_rating) {
+        veh_skip(veh_id);
+    }
+    int x_from = Vehs[veh_id].x;
+    int y_from = Vehs[veh_id].y;
+    int x_in = x + RadiusBaseX[dir_best];
+    if (!(*MapIsFlat & 1)) {
+        if (x_in < 0) {
+            x_in += *MapLongitudeBounds;
+        } else if (x_in >= *MapLongitudeBounds) {
+            x_in -= *MapLongitudeBounds;
+        }
+    }
+    int y_in = y + RadiusBaseY[dir_best];
+    stack_veh(veh_id, 1);
+    draw_tile(x_from, y_from, 2);
+    if (seen && animate) {
+        veh_scoot(veh_id, x_in, y_in, dir_best ^ 4, 0);
+    }
+    unspot_stack(veh_id);
+    if (veh_id >= 0) { // the units it carries end their turn
+        int veh_id_top = veh_id;
+        while (Vehs[veh_id_top].prev_veh_id_stack >= 0) {
+            veh_id_top = Vehs[veh_id_top].prev_veh_id_stack;
+        }
+        for (int i = veh_id_top; i >= 0; i = Vehs[i].next_veh_id_stack) {
+            if (i != veh_id) {
+                veh_skip(i);
+            }
+        }
+    }
+    if (veh_id == *MapWinVehIDSelected && *MapWinUnitNotViewMode) {
+        Console_cursor_next(ConsoleVar, NULL, x, y);
+    }
+    stack_put(veh_id, x, y);
+    int base_id = base_at(x, y);
+    if (base_id >= 0) {
+        uint32_t owner = Bases[base_id].faction_id_current;
+        if (faction_id != owner && !(PlayersData[faction_id].diplo_treaties[owner] & DTREATY_PACT)) {
+            if (!(*FactionsStatus & (uint8_t)(1 << faction_id))) {
+                veh_skip(veh_id);
+            }
+            *VehIDCurrent = veh_id;
+            Vehs[veh_id].dmg_incurred = 0;
+            act_of_aggression(faction_id, Bases[base_id].faction_id_current);
+            capture_base(base_id, faction_id, 0);
+            veh_id = *VehIDCurrent; // capture_base() can renumber the unit
+        }
+    } else {
+        Veh *veh = &Vehs[veh_id];
+        veh->dmg_incurred += (uint8_t)(VehPrototypes[veh->proto_id].reactor_id * 2);
+        for (;;) { // the landing never takes the last hit point
+            VehPrototype *proto = &VehPrototypes[veh->proto_id];
+            int lethal = 1;
+            if (proto->plan != PLAN_ALIEN_ARTIFACT) {
+                int reactor = proto->reactor_id;
+                lethal = ((reactor < 1) ? 1 : ((reactor > 100) ? 100 : reactor)) * 10;
+            }
+            if (lethal - veh->dmg_incurred > 0) {
+                break;
+            }
+            veh->dmg_incurred--;
+        }
+    }
+    spot_all(veh_id, 1);
+    Console_update_data(ConsoleVar, NULL, 0);
+    if (goody) {
+        goody_box(veh_id, goody);
+    }
+    if (faction_id != (uint32_t)*FactionIDCurrent && !(*GameState & STATE_OMNISCIENT_VIEW) && seen
+        && !*MapWinUnk23BF0 && !(GetAsyncKeyState(VK_SHIFT) & 0xFF00) && !*IsMultiplayerNet) {
+        clock_wait((animate && !*MapWinUnk23BF0) ? 200 : 50);
+    }
+    return true;
 }

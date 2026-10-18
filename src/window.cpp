@@ -17,6 +17,7 @@
  */
 #include "stdafx.h"
 #include "window.h"
+#include "focusguard.h"
 
 /*
  * Windowed mode works the way Thinker's does. With DirectDraw off (prefs_get() answers 0 for the
@@ -25,7 +26,8 @@
  * as the screen size, so the game lays itself out for 1024x768, and the main window is created
  * with a caption and a client area of that size instead of as a popup covering the screen. The
  * game's own SetCursorPos() calls are dropped while its window is not in the foreground, so a
- * game running in the background never moves the mouse.
+ * game running in the background never moves the mouse. (A test game of the regression harness
+ * never takes the foreground or moves the mouse at all: focusguard.h.)
  */
 
 BOOL WindowedMode = false;
@@ -60,6 +62,11 @@ static HWND WINAPI windowed_create_window(DWORD ex_style, LPCSTR class_name, LPC
         y = WindowY;
         width = rect.right - rect.left;
         height = rect.bottom - rect.top;
+#ifdef OPENSMACX_REGRESS
+        if (FocusGuardOn) {
+            ex_style |= WS_EX_NOACTIVATE; // a test game: not activated even by a click (focusguard.h)
+        }
+#endif
     }
     return CreateWindowExA(ex_style, class_name, window_name, style, x, y, width, height, parent,
         menu, instance, param);
@@ -109,4 +116,7 @@ void window_hook_imports() {
     hook_import(ImportGetSystemMetrics, (FARPROC)windowed_get_system_metrics);
     hook_import(ImportCreateWindowExA, (FARPROC)windowed_create_window);
     hook_import(ImportSetCursorPos, (FARPROC)windowed_set_cursor_pos);
+#ifdef OPENSMACX_REGRESS
+    focus_guard_install(); // a test game's SetCursorPos stays the guard's (focusguard.h)
+#endif
 }
