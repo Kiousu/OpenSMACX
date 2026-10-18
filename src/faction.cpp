@@ -1133,12 +1133,15 @@ BOOL __cdecl spying(int faction_id) {
 }
 
 /*
-Purpose: Determine if the specified faction want to attack the target faction.
-Original Offset: 0055BC80
+Purpose: Body of wants_to_attack(). region_top_base_count[1..7] holds what the original finds in its
+         uninitialized stack buffer and is left with the values the original leaves there.
+Original Offset: n/a
 Return Value: Does the faction want to attack target? true/false
-Status: Complete (verified vs original: docs/regression-runs/2026-10-16-council-full.log)
+Status: Complete (verified vs original: docs/regression-runs/2026-10-17-council-wta-stack.log and
+        2026-10-17-sweep-wta-stack.log)
 */
-BOOL __cdecl wants_to_attack(uint32_t faction_id, uint32_t faction_id_tgt, int faction_id_unk) {
+static BOOL __cdecl wants_to_attack_body(uint32_t faction_id, uint32_t faction_id_tgt,
+    int faction_id_unk, int *region_top_base_count) {
     uint32_t peace_faction_id = 0;
     BOOL unk_tgl = false;
     if (Players[faction_id].rule_flags & RFLAG_ALIEN
@@ -1214,13 +1217,9 @@ BOOL __cdecl wants_to_attack(uint32_t faction_id, uint32_t faction_id_tgt, int f
     if (PlayersData[faction_id].ai_fight < 0 && !unk_tgl && FactionRankings[7] != faction_id_tgt) {
         return false;
     }
-    // The original never initializes this array (a 64-entry uint stack buffer at [ebp-0x134]):
-    // each [f] starts as stale stack data and is max()'d (signed) against the bases counts, so a
-    // stale value larger than the real maximum survives into the thresholds below. This is the
-    // source of the original's run-to-run instability. Zero matches the original whenever the
-    // stale value is <= the real maximum (e.g. left over from a previous call of this function,
-    // which leaves max - max / 4 in each slot); the garbage case cannot be reproduced.
-    int region_top_base_count[8] = { 0 };
+    // The original never initializes this array (7 slots at [ebp-0x130], faction 1 first): each
+    // slot starts with whatever the stack holds and is max()'d (signed) against the bases counts,
+    // so a leftover larger than the real maximum survives into the thresholds below.
     for (int region = 1; region < MaxRegionLandNum; region++) {
         for (uint32_t f = 1; f < MaxPlayerNum; f++) {
             int total_bases = PlayersData[f].region_total_bases[region];
@@ -1255,8 +1254,10 @@ BOOL __cdecl wants_to_attack(uint32_t faction_id, uint32_t faction_id_tgt, int f
                     = PlayersData[faction_id_tgt].region_total_combat_vehs[region];
                 uint32_t total_bases_tgt = PlayersData[faction_id_tgt].region_total_bases[region];
                 if (total_cmbt_vehs || total_bases_tgt) {
+                    // leftovers can be any value: the original's * 3 wraps before the signed / 4
                     if ((int)PlayersData[faction_id].region_total_bases[region]
-                        >= ((region_top_base_count[faction_id] * 3) / 4) || region == region_hq) {
+                        >= (int)((uint32_t)region_top_base_count[faction_id] * 3) / 4
+                        || region == region_hq) {
                         uint32_t compare = force_rating +
                             PlayersData[faction_id].region_total_combat_vehs[region] +
                             (faction_id_unk > 0 
@@ -1269,7 +1270,8 @@ BOOL __cdecl wants_to_attack(uint32_t faction_id, uint32_t faction_id_tgt, int f
                         factor_force_rating += force_rating + (faction_id_unk > 0
                             ? PlayersData[faction_id_unk].region_force_rating[region] / 2 : 0);
                     }
-                    if (((int)total_bases_tgt >= ((region_top_base_count[faction_id_tgt] * 3) / 4)
+                    if (((int)total_bases_tgt
+                        >= (int)((uint32_t)region_top_base_count[faction_id_tgt] * 3) / 4
                         || region == region_target_hq) && force_rating > total_cmbt_vehs) {
                         factor_force_rating += force_rating + (faction_id_unk > 0
                             ? PlayersData[faction_id_unk].region_force_rating[region] / 2 : 0);
@@ -1328,6 +1330,45 @@ BOOL __cdecl wants_to_attack(uint32_t faction_id, uint32_t faction_id_tgt, int f
         return false;
     }
     return true;
+}
+
+/*
+Purpose: Determine if the specified faction want to attack the target faction. The original reads a
+         buffer on its stack it never initializes (slot f at esp_entry - 0x138 + 4 * f), so what
+         ran before at the same stack depth sets some of its thresholds. The slots are copied in
+         before this DLL's own frame overwrites them and written back afterwards, where the
+         original leaves them for the next call.
+Original Offset: 0055BC80
+Return Value: Does the faction want to attack target? true/false
+Status: Complete (verified vs original: docs/regression-runs/2026-10-17-council-wta-stack.log and
+        2026-10-17-sweep-wta-stack.log)
+*/
+__declspec(naked) BOOL __cdecl wants_to_attack(uint32_t UNUSED(faction_id),
+    uint32_t UNUSED(faction_id_tgt), int UNUSED(faction_id_unk)) {
+    __asm {
+        sub esp, 32                         // slots[8] above where the original's frame would be
+        mov ecx, 7
+    copy_in:
+        mov eax, [esp + ecx * 4 - 0x118]    // esp_entry - 0x138 + 4 * f
+        mov [esp + ecx * 4], eax
+        dec ecx
+        jnz copy_in
+        mov eax, esp
+        push eax
+        push dword ptr [esp + 48]           // faction_id_unk
+        push dword ptr [esp + 48]           // faction_id_tgt
+        push dword ptr [esp + 48]           // faction_id
+        call wants_to_attack_body
+        add esp, 16
+        mov ecx, 7
+    copy_out:
+        mov edx, [esp + ecx * 4]
+        mov [esp + ecx * 4 - 0x118], edx
+        dec ecx
+        jnz copy_out
+        add esp, 32
+        ret
+    }
 }
 
 /*

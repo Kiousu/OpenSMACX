@@ -82,6 +82,8 @@ the `/ power ... / 8` chain divided unsigned where the original uses `idiv`.
 
 ### wants_to_attack
 
+Superseded on 2026-10-17 (see "wants_to_attack stack leftovers" below): the buffer is 7 slots,
+and a trace of the exe found large leftovers in most of them on the game's own call paths.
 The original never initialises a 64-entry buffer on its stack; on the game's own call paths the
 slots hold small leftovers and it behaves as if zero-filled, but between back-to-back harness
 calls the DLL leaves return addresses there, which is what made 16 of 378 inputs unstable. The
@@ -1137,3 +1139,43 @@ Original behaviour kept: the vendetta check compares the faction's own base coun
 so the first faction at vendetta is taken. Boot tests with the 680-redirect exe: Council.SAV
 advanced the turn 289 -> 290 (38 s) with the game alive; a Quick Start (Svensgaard) reached
 planetfall with FUNGBOY removed by `alien_start`, as the 678-redirect exe (exe code) also does.
+
+## wants_to_attack stack leftovers, 2026-10-17 (Council.SAV and 13 sweep saves, 680-redirect exe)
+
+`wants_to_attack` (0x55BC80) reads 7 slots on its stack (`[ebp-0x130]`, faction 1 first) that it
+never writes before reading: each starts with whatever the stack holds there and is raised to the
+faction's most bases in one region, and the thresholds that decide which regions count as a
+faction's core use that value. A trace of the exe on Council.SAV's turn 289 found a leftover above
+the real count in 132 of 187 calls (stack and return addresses such as 1,746,744), so in the game as
+shipped those checks mostly apply only to the headquarters region. The DLL used to start the
+buffer at zero; Kiousu chose to match the original instead. `wants_to_attack` is now a naked entry
+that copies slot f from `esp_entry - 0x138 + 4 * f` (where the original's frame puts it) before
+the DLL's own frame overwrites it, runs `wants_to_attack_body` on the copy and writes the values
+back, where the original leaves them for the next call. The `* 3 / 4` thresholds wrap like the
+original's `lea` before the signed divide, since a leftover can be any 32-bit value. The
+leftovers stay exact while the code that ran before at that stack depth is the exe's; DLL
+functions use the stack differently, so they leave different values behind.
+
+Trigger name `wants_to_attack` (replaces the 2026-10-16 test and its stack scrub). `OriginalEntry`
+puts the exe's first six bytes back so the original runs in the fully redirected exe;
+`wta_seeded_call` writes the seven slots where the callee's frame will find them, calls the entry
+and reads back what it left. Every attacker, target and third faction (-1..7), each with 18 seed
+sets: zero, the real maximum, one above and one below it, the traced Council values, what the
+previous call left (back-to-back calls), and four each of random values near the maximum, values
+whose `* 3` wraps (0x7FFFFFFF, 0x80000000, 0x2AAAAAAB, -1, ...) and any 32-bit value. Compared: the
+result and all seven slots afterwards.
+
+| | Council.SAV | 13 sweep saves | mismatches |
+|---|---|---|---|
+| compared | 6,804 | 88,452 | 0 |
+| a used slot above the real maximum | 4,458 | 57,670 | |
+| original's result changed by the leftovers | 91 | 199 | |
+
+The leftovers changed the original's answer on 5 of the 14 saves (Council.SAV 91, sw_bugged 70,
+sw_aki2120 64, sw_aki2247 34, sw_aki2213 31) and never on the other nine; on sw_urfl (turn 1)
+every call returns before the buffer. sw_council.SAV is no longer swept: it is the same game state as Council.SAV,
+and loading it made the test game write a save into the live game folder (vanilla's save path then
+copied stack junk into the game: year 2100, a junk Secret Project table, a crash in `rankings`).
+Logs: `regression-runs/2026-10-17-council-wta-stack.log` and
+`regression-runs/2026-10-17-sweep-wta-stack.log`. Boot test with the release DLL: Council.SAV
+advanced the turn 289 -> 290 (34 s, the AI calling the new entry) with the game alive.

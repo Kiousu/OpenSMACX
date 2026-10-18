@@ -244,49 +244,6 @@ static int test_battle_compute() {
     return mismatches;
 }
 
-// wants_to_attack() in the exe never initialises a 64-entry buffer on its stack; on the game's
-// own call paths the slots hold small leftovers and the function behaves as if zero-filled.
-// Between harness calls the DLL leaves return addresses there, so the stack is zeroed first.
-static __declspec(noinline) void scrub_stack() {
-    volatile char pad[0x800];
-    for (size_t i = 0; i < sizeof(pad); i++) {
-        pad[i] = 0;
-    }
-}
-
-static int test_wants_to_attack() {
-    int compared = 0, mismatches = 0, unstable_orig = 0, unstable_new = 0;
-    for (uint32_t f = 1; f < MaxPlayerNum; f++) {
-        for (uint32_t tgt = 1; tgt < MaxPlayerNum; tgt++) {
-            if (f == tgt) {
-                continue;
-            }
-            for (int other = -1; other < (int)MaxPlayerNum; other++) {
-                scrub_stack();
-                BOOL b = wants_to_attack_OG(f, tgt, other);
-                scrub_stack();
-                BOOL b2 = wants_to_attack_OG(f, tgt, other);
-                BOOL a = wants_to_attack(f, tgt, other);
-                BOOL a2 = wants_to_attack(f, tgt, other);
-                compared++;
-                if (b != b2) unstable_orig++;
-                if (a != a2) unstable_new++;
-                if (b != b2) {
-                    continue; // original is not self-consistent here; do not count as mismatch
-                }
-                if (a != b) {
-                    if (mismatches < MAX_DETAIL) {
-                        logf("  wants_to_attack(%u, %u, %d): new=%d orig=%d", f, tgt, other, a, b);
-                    }
-                    mismatches++;
-                }
-            }
-        }
-    }
-    logf("wants_to_attack: %d compared, %d mismatches, unstable orig=%d new=%d", compared, mismatches, unstable_orig, unstable_new);
-    return mismatches;
-}
-
 // ------------------------------------------------------------------------------------------
 // Snapshot / restore of the game state that the state-mutating functions touch.
 // ------------------------------------------------------------------------------------------
@@ -7173,6 +7130,135 @@ static int test_alien_start() {
     snap_free(&base); snap_free(&after_orig); snap_free(&after_new);
     logf("alien_start: %d compared (%d bases removed by the original), %d mismatches", compared,
         removed, mismatches);
+    return mismatches;
+}
+
+// ---------------------------------------------------------------- wants_to_attack stack leftovers
+// Call a wants_to_attack entry with the slots of the original's uninitialized buffer seeded
+// (slot f at esp_entry - 0x138 + 4 * f) and read back what the call left there.
+static __declspec(naked) BOOL __cdecl wta_seeded_call(func_wants *UNUSED(entry),
+    uint32_t UNUSED(faction_id), uint32_t UNUSED(faction_id_tgt), int UNUSED(faction_id_unk),
+    int *UNUSED(slots)) {
+    __asm {
+        mov edx, [esp + 20]                 // slots
+        mov ecx, 7
+    wta_seed:
+        mov eax, [edx + ecx * 4]
+        mov [esp + ecx * 4 - 0x148], eax    // the callee's esp_entry is esp - 16
+        dec ecx
+        jnz wta_seed
+        push dword ptr [esp + 16]           // faction_id_unk
+        push dword ptr [esp + 16]           // faction_id_tgt
+        push dword ptr [esp + 16]           // faction_id
+        call dword ptr [esp + 16]           // entry
+        add esp, 12
+        push esi
+        mov edx, [esp + 24]
+        mov ecx, 7
+    wta_read_back:
+        mov esi, [esp + ecx * 4 - 0x144]
+        mov [edx + ecx * 4], esi
+        dec ecx
+        jnz wta_read_back
+        pop esi
+        ret
+    }
+}
+
+static uint32_t WtaSeedState = 0x2545F491;
+
+static uint32_t wta_seed_rand() {
+    WtaSeedState ^= WtaSeedState << 13;
+    WtaSeedState ^= WtaSeedState >> 17;
+    WtaSeedState ^= WtaSeedState << 5;
+    return WtaSeedState;
+}
+
+static int test_wants_to_attack() {
+    // run the exe's own wants_to_attack, not the jump into the DLL
+    static const uint8_t wta_entry[6] = { 0x55, 0x8B, 0xEC, 0x81, 0xEC, 0x34 };
+    OriginalEntry vanilla(0x0055BC80, wta_entry);
+    if (!vanilla.ok) {
+        return 1;
+    }
+    // each faction's most bases in one region: what zero-filled slots are raised to
+    int top[8] = { 0 };
+    for (int region = 1; region < MaxRegionLandNum; region++) {
+        for (int f = 1; f < MaxPlayerNum; f++) {
+            if (PlayersData[f].region_total_bases[region] > top[f]) {
+                top[f] = PlayersData[f].region_total_bases[region];
+            }
+        }
+    }
+    // the slots as the trace of the exe found them on Council.SAV, turn 289 (stack and return
+    // addresses), and values whose * 3 wraps
+    static const int traced[8] = { 0, 1746744, 1310034, 4624118, 1310058, 1746680, 9672888, 0x468EF6 };
+    static const int wrapping[7] = { 0x7FFFFFFF, (int)0x80000000, 0x2AAAAAAA, 0x2AAAAAAB,
+        (int)0xAAAAAAAB, -1, -2 };
+    enum { SEED_ZERO, SEED_TOP, SEED_ABOVE, SEED_BELOW, SEED_TRACED, SEED_CHAIN, SEED_NEAR,
+        SEED_WRAP, SEED_ANY, SEED_KINDS };
+    int compared = 0, mismatches = 0, inflated = 0, changed = 0, unchanged = 0;
+    int chain[8] = { 0 };
+    for (uint32_t f = 1; f < MaxPlayerNum; f++) {
+        for (uint32_t tgt = 1; tgt < MaxPlayerNum; tgt++) {
+            if (f == tgt) {
+                continue;
+            }
+            for (int other = -1; other < (int)MaxPlayerNum; other++) {
+                BOOL zero_result = false;
+                for (int kind = 0; kind < SEED_KINDS; kind++) {
+                    for (int rep = 0; rep < (kind >= SEED_NEAR ? 4 : 1); rep++) {
+                        int seed[8] = { 0 };
+                        for (int s = 1; s < 8; s++) {
+                            switch (kind) {
+                              case SEED_TOP:    seed[s] = top[s]; break;
+                              case SEED_ABOVE:  seed[s] = top[s] + 1; break;
+                              case SEED_BELOW:  seed[s] = top[s] - 1; break;
+                              case SEED_TRACED: seed[s] = traced[s]; break;
+                              case SEED_CHAIN:  seed[s] = chain[s]; break;
+                              case SEED_NEAR:   seed[s] = (int)(wta_seed_rand() % (2 * top[s] + 4)) - 1; break;
+                              case SEED_WRAP:   seed[s] = wrapping[wta_seed_rand() % 7]; break;
+                              case SEED_ANY:    seed[s] = (int)wta_seed_rand(); break;
+                              default:          break;
+                            }
+                        }
+                        int slots_o[8], slots_n[8];
+                        memcpy(slots_o, seed, sizeof(seed));
+                        memcpy(slots_n, seed, sizeof(seed));
+                        BOOL o = wta_seeded_call((func_wants *)0x0055BC80, f, tgt, other, slots_o);
+                        BOOL n = wta_seeded_call(wants_to_attack, f, tgt, other, slots_n);
+                        compared++;
+                        if (kind == SEED_ZERO) {
+                            zero_result = o;
+                        } else if (o != zero_result) {
+                            changed++;
+                        }
+                        if (seed[f] > top[f] || seed[tgt] > top[tgt]) {
+                            inflated++;
+                        }
+                        if (!memcmp(slots_o, seed, sizeof(seed))) {
+                            unchanged++;
+                        }
+                        // back-to-back calls: the next chained call starts from what this one left
+                        memcpy(chain, slots_o, sizeof(chain));
+                        if (o != n || memcmp(slots_o, slots_n, sizeof(slots_o))) {
+                            if (mismatches < MAX_DETAIL) {
+                                logf("  wants_to_attack(%u, %u, %d) seed kind %d: new=%d orig=%d, slots left new/orig:",
+                                    f, tgt, other, kind, n, o);
+                                for (int s = 1; s < 8; s++) {
+                                    logf("    [%d] seed %d: %d / %d", s, seed[s], slots_n[s], slots_o[s]);
+                                }
+                            }
+                            mismatches++;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    logf("wants_to_attack: %d compared (%d with a used slot above the real maximum, %d results changed "
+        "by the leftovers, %d left the slots unchanged), %d mismatches", compared, inflated, changed,
+        unchanged, mismatches);
     return mismatches;
 }
 

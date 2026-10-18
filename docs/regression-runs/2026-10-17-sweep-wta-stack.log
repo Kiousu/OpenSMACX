@@ -1,0 +1,39 @@
+== sw_aki2120.SAV: OpenSMACX regression run: turn 20, 17 bases, 84 vehs, filter='wants_to_attack'
+wants_to_attack: 6804 compared (4445 with a used slot above the real maximum, 64 results changed by the leftovers, 3744 left the slots unchanged), 0 mismatches
+TOTAL mismatches: 0 (16 ms)
+== sw_aki2152.SAV: OpenSMACX regression run: turn 52, 72 bases, 219 vehs, filter='wants_to_attack'
+wants_to_attack: 6804 compared (4422 with a used slot above the real maximum, 0 results changed by the leftovers, 2430 left the slots unchanged), 0 mismatches
+TOTAL mismatches: 0 (0 ms)
+== sw_aki2213.SAV: OpenSMACX regression run: turn 113, 300 bases, 1151 vehs, filter='wants_to_attack'
+wants_to_attack: 6804 compared (4492 with a used slot above the real maximum, 31 results changed by the leftovers, 2592 left the slots unchanged), 0 mismatches
+TOTAL mismatches: 0 (0 ms)
+== sw_aki2247.SAV: OpenSMACX regression run: turn 147, 300 bases, 1590 vehs, filter='wants_to_attack'
+wants_to_attack: 6804 compared (4422 with a used slot above the real maximum, 34 results changed by the leftovers, 3078 left the slots unchanged), 0 mismatches
+TOTAL mismatches: 0 (16 ms)
+== sw_artifacts.SAV: OpenSMACX regression run: turn 74, 142 bases, 384 vehs, filter='wants_to_attack'
+wants_to_attack: 6804 compared (4423 with a used slot above the real maximum, 0 results changed by the leftovers, 2430 left the slots unchanged), 0 mismatches
+TOTAL mismatches: 0 (0 ms)
+== sw_bugged.SAV: OpenSMACX regression run: turn 272, 291 bases, 1637 vehs, filter='wants_to_attack'
+wants_to_attack: 6804 compared (4436 with a used slot above the real maximum, 70 results changed by the leftovers, 2268 left the slots unchanged), 0 mismatches
+TOTAL mismatches: 0 (0 ms)
+== sw_cheese.SAV: OpenSMACX regression run: turn 71, 131 bases, 352 vehs, filter='wants_to_attack'
+wants_to_attack: 6804 compared (4436 with a used slot above the real maximum, 0 results changed by the leftovers, 2754 left the slots unchanged), 0 mismatches
+TOTAL mismatches: 0 (0 ms)
+== sw_morgan.SAV: OpenSMACX regression run: turn 48, 59 bases, 173 vehs, filter='wants_to_attack'
+wants_to_attack: 6804 compared (4446 with a used slot above the real maximum, 0 results changed by the leftovers, 2430 left the slots unchanged), 0 mismatches
+TOTAL mismatches: 0 (0 ms)
+== sw_quake.SAV: OpenSMACX regression run: turn 53, 71 bases, 204 vehs, filter='wants_to_attack'
+wants_to_attack: 6804 compared (4425 with a used slot above the real maximum, 0 results changed by the leftovers, 2592 left the slots unchanged), 0 mismatches
+TOTAL mismatches: 0 (16 ms)
+== sw_starcraft.SAV: OpenSMACX regression run: turn 75, 146 bases, 391 vehs, filter='wants_to_attack'
+wants_to_attack: 6804 compared (4450 with a used slot above the real maximum, 0 results changed by the leftovers, 2430 left the slots unchanged), 0 mismatches
+TOTAL mismatches: 0 (0 ms)
+== sw_steam1.SAV: OpenSMACX regression run: turn 32, 20 bases, 81 vehs, filter='wants_to_attack'
+wants_to_attack: 6804 compared (4451 with a used slot above the real maximum, 0 results changed by the leftovers, 1782 left the slots unchanged), 0 mismatches
+TOTAL mismatches: 0 (0 ms)
+== sw_steam20.SAV: OpenSMACX regression run: turn 20, 13 bases, 74 vehs, filter='wants_to_attack'
+wants_to_attack: 6804 compared (4396 with a used slot above the real maximum, 0 results changed by the leftovers, 2980 left the slots unchanged), 0 mismatches
+TOTAL mismatches: 0 (16 ms)
+== sw_urfl.SAV: OpenSMACX regression run: turn 1, 5 bases, 51 vehs, filter='wants_to_attack'
+wants_to_attack: 6804 compared (4426 with a used slot above the real maximum, 0 results changed by the leftovers, 6804 left the slots unchanged), 0 mismatches
+TOTAL mismatches: 0 (0 ms)
