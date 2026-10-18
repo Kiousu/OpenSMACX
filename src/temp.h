@@ -59,9 +59,6 @@ typedef void func5(int);
 extern func5 *load_faction_art;
 extern func5 *draw_map;
 extern func5 *wave_it;
-extern func5 *veh_kill;
-extern func5 *kill; // kill(veh_id): veh_kill() plus stack and interface cleanup
-extern func5 *base_kill; // base_kill(base_id)
 typedef void *func6(char const *, int(*)(void));
 extern func6 *X_pop;
 typedef int func7(LPCSTR, LPCSTR, int, LPCSTR, int(__cdecl *)());
@@ -82,7 +79,6 @@ extern func20 *popb;
 typedef void func21(int, int, int, int);
 extern func21 *draw_radius;
 typedef void func22(int, int, uint32_t);
-extern func22 *alt_set;
 
 // Time
 typedef void func30(int);
@@ -271,8 +267,6 @@ extern func_b *base_compute_OG;
 typedef int func_generators(uint32_t, int *);
 extern func_generators *generators_OG;
 // batch 17
-typedef int func_contiguous(int, int, int, int);
-extern func_contiguous *contiguous; // contiguous(faction_id, faction_id_2, region, unk)
 extern func_iii *alien_base_OG;
 typedef void func_assemble(int, int, int);
 extern func_assemble *assemble_passengers_OG;
@@ -287,7 +281,6 @@ extern func_void *clear_dirty_OG;
 extern func_xy *world_UNK1_OG;
 extern func_void *do_fungal_towers_OG;
 // batch 20
-extern func_void *drone_riot; // drone_riot(): riot effects for the current base
 extern func_void *base_drones_OG;
 // batch 21
 typedef void func_mon_s(int, LPCSTR);
@@ -414,8 +407,6 @@ extern func_net_unlock_base *NetDaemon_unlock_base; // NetDaemon::unlock_base()
 typedef void __fastcall func_console_update(void *This, void *edx_unused, int unk);
 extern func_console_update *Console_update_data; // Console::update_data()
 extern void *ConsoleVar; // global Console instance
-typedef void func_diplo3(int, int, int);
-extern func_diplo3 *double_cross;
 extern func5 *ambience; // ambience(sound_id)
 typedef void __fastcall func_win_redraw(void *This, void *edx_unused);
 extern func_win_redraw *GraphicWin_redraw; // GraphicWin::redraw()
@@ -424,7 +415,6 @@ extern int *MultiWinFlag; // non-zero while MultiWin needs redrawing on treaty c
 extern uint32_t *AmbienceFlags; // bit 0: war ambience playing
 typedef void func_diplo2(int, int);
 extern func_diplo2 *pact_ends;
-extern func_diplo2 *give_a_base;
 typedef void func_draw3(int, int, int);
 extern func_draw3 *draw_tiles; // draw_tiles(x, y, mode)
 typedef void func_draw4(int, int, int, int);
@@ -439,6 +429,7 @@ extern func5 *do_checksums; // do_checksums(when): logs the network game checksu
 extern func_win_redraw *WorldWin_clear_terrain; // WorldWin::clear_terrain() on WorldWinVar
 typedef void __fastcall func_fx_play(void *This, void *edx_unused, int fx_id);
 extern func_fx_play *FX_play; // FX::play()
+extern func_fx_play *FX_stop; // FX::stop()
 extern void *FXVar; // global FX instance
 typedef int __fastcall func_netmsg_pop(void *This, void *edx_unused, LPCSTR label, int delay,
     int flags, LPCSTR pcx_file);
@@ -463,9 +454,30 @@ extern func_mapwin_clear_alt *MapWin_clear_alt; // MapWin::clear_alt(): resets c
                                                // the radius (index into RadiusRange)
 typedef void func_replay_base(int, int, int, int);
 extern func_replay_base *replay_base; // replay_base(event, x, y, faction_id): 8 byte replay record entry
+// The message window's list box (Thinker: MessageWin->listBox) and its list of entries; an entry
+// whose id is 0x40000000 | base_id points at a base (see base_kill()).
+struct MessageListNode {
+    void *vtable;
+    int id;
+    void *data;
+    MessageListNode *next;
+    MessageListNode *prev;
+};
+struct MessageList {
+    void *vtable; // slot 1: remove(data)
+    int unk_1;
+    MessageListNode *head;
+    MessageListNode *cursor;
+    int count;
+    int index;
+};
+typedef void __fastcall func_message_list_remove(void *This, void *edx_unused, void *data);
+extern void *MessageListBox; // its MessageList: + 0xBC + the virtual base offset
+extern func_win_redraw *ListBox_update_changes; // ListBox::update_changes()
+typedef void __fastcall func_win_base(void *This, void *edx_unused, uint32_t base_id);
+extern func_win_base *BaseWin_base_killed; // BaseWin::base_killed(): BaseWinVar follows the ids
 typedef int func_battle_fight_2(int, int, int, int, BOOL, int, int);
 extern func_battle_fight_2 *battle_fight_2; // battle_fight_2(veh_id, offset, x, y, is_arty, unk1, unk2)
-extern func_i *tech_selection; // tech_selection(faction_id): pick the next research goal (dialog for humans)
 typedef int func_tech_pick(int, int, int, LPCSTR);
 extern func_tech_pick *tech_pick; // tech_pick(faction_id, unk, faction_id_from, label)
 extern int *SkipTechScreenA; // Thinker's names: non-zero skips the tech popups
@@ -503,9 +515,77 @@ extern func_diplo2 *diplomacy_caption;
 extern func_i *tut_check2;
 typedef int func_x_pops_11(LPCSTR, int, Sprite *, int(__cdecl *)());
 extern func_x_pops_11 *X_pops_11; // X_pops_11(label, flags, picture, wait_callback)
+typedef int func_x_pops(LPCSTR, Sprite *, int(__cdecl *)());
+extern func_x_pops *X_pops; // X_pops(label, picture, wait_callback)
+extern func_net_this_only *NetDaemon_net_tasks; // NetDaemon::net_tasks() on NetDaemonVar
+extern func_net_this_only *NetMsg_close; // NetMsg::close() on NetMsgVar
 typedef int func_x_pop_2(LPCSTR, LPCSTR, int(__cdecl *)());
 extern func_x_pop_2 *X_pop_2; // X_pop_2(file, label, callback)
 extern Sprite **FactionPortraits; // [8] Thinker's name
+// batch 31: base turn
+extern func_void *base_production; // base_production(): the current base's production for the turn;
+                                   // builds a Popup on the stack (left in the exe)
+extern func5 *base_terraform; // base_terraform(unk): the current base's terraforming requests
+extern func5 *clock_wait; // clock_wait(ms): wait while the screen keeps updating
+typedef void __fastcall func_mapwin_set_center(void *This, void *edx_unused, int x, int y, int unk);
+extern func_mapwin_set_center *MapWin_set_center; // MapWin::set_center() (on MapWinList[0])
+typedef void __fastcall func_basewin_zoom(void *This, void *edx_unused, int base_id, int unk);
+extern func_basewin_zoom *BaseWin_zoom; // BaseWin::zoom(): open the base window on a base
+extern func_win_redraw *BaseWin_on_redraw; // BaseWin::on_redraw()
+extern int *BaseWinBaseID; // BaseWin field: the base the base window shows (set by BaseWin::zoom())
+// batch 31: faction turn
+// unit ids kept outside the unit table, renumbered by veh_kill()
+extern int *MapWinVehIDOther; // Console field +0x23BE0 after MapWinVehIDSelected (Thinker: field_23BE0)
+extern int *StatusWinVehIDA; // StatusWin (Thinker's note)
+extern int *StatusWinVehIDB; // StatusWin (Thinker's note)
+extern int *VehIDCurrent; // Thinker: CurrentVehID; decremented by veh_kill() unless 0
+extern int **NetVehIDRef; // network game: points at another unit id to renumber, if set
+typedef void __fastcall func_deletion_add(void *This, void *edx_unused, int veh_id);
+extern func_deletion_add *DeletionList_add_deletion; // DeletionList::add_deletion() on DeletionListVar
+extern void *DeletionListVar; // global DeletionList instance (network game unit deletions)
+typedef void __fastcall func_basewin_check_loc(void *This, void *edx_unused, int x, int y, int unk);
+extern func_basewin_check_loc *BaseWin_check_loc; // BaseWin::check_loc() on BaseWinVar
+typedef void __fastcall func_basewin_check_base(void *This, void *edx_unused, int base_id);
+extern func_basewin_check_base *BaseWin_check_base; // BaseWin::check_base() on BaseWinVar
+typedef void func_veh_scoot(int, int, int, int, int);
+extern func_veh_scoot *veh_scoot; // veh_scoot(veh_id, x, y, dir, unk): animates a unit's step
+extern func5 *call_council; // call_council(faction_id): the Planetary Council (dialogs for humans)
+extern int *PathXDst; // Paths->x_dst_, reset to -1 by faction_upkeep()
+extern int *PathYDst; // Paths->y_dst_
+typedef int __fastcall func_console_upgrade(void *This, void *edx_unused, int veh_id);
+// Console::upgrade(veh_id) on ConsoleVar: non-zero if the unit was upgraded to a newer design
+extern func_console_upgrade *Console_upgrade;
+extern func_i *enemy_move; // enemy_move(veh_id): the AI's move for one unit (56 KB, left in the exe)
+extern func_net_this_only *NetDaemon_await_synch; // NetDaemon::await_synch()
+typedef int __fastcall func_net_action(void *This, void *edx_unused, int veh_id, int unk);
+extern func_net_action *NetDaemon_action; // NetDaemon::action(veh_id, unk): non-zero to stop
+// batch 31: AI diplomacy
+extern func_xyi *communicate; // communicate(faction_id, faction_id_with, unk): the diplomacy dialog
+typedef void func_encounter(int, int, int, int, int, int);
+extern func_encounter *encounter; // encounter(faction_id, faction_id_with, unk1, unk2, unk3, unk4)
+typedef int __fastcall func_path_find(void *This, void *edx_unused, int x_src, int y_src, int x_dst,
+    int y_dst, int faction_id, int faction_id_2, int flags, int unk);
+extern func_path_find *Path_find; // Path::find() on Paths, still in the exe (the DLL's is a stub)
+extern func_xyi *action_terraform; // action_terraform(veh_id, terraform_id, unk)
+extern func5 *action_go_to; // action_go_to(veh_id)
+extern func5 *action_road_to; // action_road_to(veh_id)
+typedef void func_action_destroy(int, int, int, int);
+extern func_action_destroy *action_destroy; // action_destroy(veh_id, unk, x, y)
+extern func_xyi *boom; // boom(x, y, unk): explosion animation
+extern void *ReportIf; // global ReportIf (Thinker's name)
+extern func_win_redraw *ReportIf_on_redraw; // ReportIf::on_redraw()
+extern int *ReportIfMode; // ReportIf field +8; 6 while a report window is up
+extern int *ReportIfPageTypes; // read with ReportIfPage; type 5 is redrawn after a satellite attack
+extern int *ReportIfPage;
+extern int *VehAttackFlags; // Thinker's name; set to 3 (1 in a network game) before an artillery attack
+typedef int __fastcall func_net_lock_veh(void *This, void *edx_unused, int *veh_id, int flags, int x,
+    int y, int unk);
+extern func_net_lock_veh *NetDaemon_lock_veh; // NetDaemon::lock_veh(): non-zero if not locked
+extern func_net_this_only *NetDaemon_unlock_veh; // NetDaemon::unlock_veh()
+extern func_net_await *NetDaemon_await_exec; // NetDaemon::await_exec()
+typedef int __fastcall func_net_maybe_lock(void *This, void *edx_unused, int *veh_id, int unk1, int unk2,
+    int x, int y, int flags);
+extern func_net_maybe_lock *NetDaemon_maybe_lock; // NetDaemon::maybe_lock(): non-zero if not locked
 
 DLLEXPORT BOOL __cdecl do_non_input();
 DLLEXPORT void __cdecl do_all_non_input();

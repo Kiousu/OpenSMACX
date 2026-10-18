@@ -1,12 +1,15 @@
-param([string]$Save = "Council.SAV", [string]$Name = "_msg_save", [string]$Tag = "autosave")
+param([string]$Save = "Council.SAV", [string]$Name = "_msg_save", [string]$Tag = "autosave",
+      [string]$GameDir = "G:\SMACX-opensmacx-test")
 # UI save and load check without the real mouse or keyboard (messages, see msg.ps1): the harness
 # DLL loads $Save, then Ctrl+S saves it from the game under $Name, the file must appear in the test
 # folder's saves (and nothing new in the live game folder), and Ctrl+L loads it back. Needs the
 # harness DLL and [OpenSMACX] Windowed=1. Log and screenshots in build\boot\.
+$script:GameDir = $GameDir.TrimEnd('\')
 . "$PSScriptRoot\msg.ps1"
 $G = $script:GameDir
 $Live = "G:\Sid Meier's Alpha Centauri\saves"
-$Out = "C:\Programming\OpenSMACX\build\boot"
+$Out = if ($G -eq "G:\SMACX-opensmacx-test") { "C:\Programming\OpenSMACX\build\boot" }
+       else { "C:\Programming\OpenSMACX\build\boot_" + (Split-Path $G -Leaf) }
 New-Item -ItemType Directory -Force $Out | Out-Null
 $Log = "$Out\$Tag.log"
 function L($m) { $line = "[{0}] {1}" -f (Get-Date -Format "HH:mm:ss"), $m; $line | Add-Content $Log; $line }

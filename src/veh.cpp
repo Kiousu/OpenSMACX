@@ -1349,6 +1349,91 @@ void __cdecl invasions(uint32_t base_id) {
 }
 
 /*
+Purpose: Scramble the specified faction's best interceptor to the tile. Candidates are its air
+         units with air superiority sitting in a base, on an airbase or in a carrier's stack, near
+         the tile ((dx + dy) rounded down to even at most 4); the best has the highest weapon
+         strength (at least 1) times health, ties going to the later unit. When either faction is
+         the player at the controls the scramble is announced and the flight shown step by step.
+Original Offset: 00506650
+Return Value: Did an interceptor scramble? true/false
+Status: Complete
+*/
+BOOL __cdecl interceptor(uint32_t faction_id, uint32_t faction_id_atk, int x, int y) {
+    int veh_id_best = -1;
+    int value_best = 0;
+    for (int i = 0; i < *VehCurrentCount; i++) {
+        if (Vehs[i].faction_id != faction_id) {
+            continue;
+        }
+        int proto_id = Vehs[i].proto_id;
+        if (Chassis[VehPrototypes[proto_id].chassis_id].triad != TRIAD_AIR
+            || !has_abil(proto_id, ABL_AIR_SUPERIORITY)) {
+            continue;
+        }
+        Map *tile = map_loc(Vehs[i].x, Vehs[i].y);
+        if (!(tile->bit & BIT_BASE_IN_TILE && (tile->val2 & 0xF) < 8) && !(tile->bit & BIT_AIRBASE)
+            && !stack_check(i, 6, ABL_CARRIER, -1, -1)) {
+            continue;
+        }
+        if (((x_dist(Vehs[i].x, x) + abs(Vehs[i].y - y)) & ~1) > 4) {
+            continue;
+        }
+        int offense = Weapon[VehPrototypes[proto_id].weapon_id].offense_rating;
+        if (offense < 1) {
+            offense = 1;
+        }
+        int value = offense * (int)veh_health(i);
+        if (value >= value_best) {
+            value_best = value;
+            veh_id_best = i;
+        }
+    }
+    if (veh_id_best < 0) {
+        return false;
+    }
+    if (faction_id == (uint32_t)*FactionIDCurrent || faction_id_atk == (uint32_t)*FactionIDCurrent) {
+        parse_says(0, Players[faction_id].adj_name_faction, -1, -1);
+        int x_veh = Vehs[veh_id_best].x;
+        int y_veh = Vehs[veh_id_best].y;
+        // with no base on the map base_find() returns -1 and the original reads Bases[-1]
+        parse_says(1, Bases[base_find(x_veh, y_veh)].name_string, -1, -1);
+        Console_focus(ConsoleVar, 0, x_veh, y_veh, faction_id);
+        NetMsg_pop(NetMsgVar, 0, "AIRSCRAMBLE", 5000, 0, 0);
+        while ((x_dist(x_veh, x) + abs(y_veh - y)) & ~1) {
+            int dir_best = -1;
+            int dist_best = 999;
+            int x_best = 0; // only read once a direction was found
+            int y_best = 0;
+            for (int dir = 0; dir < 8; dir++) {
+                int x_step = xrange(x_veh + RadiusBaseX[dir]);
+                int y_step = y_veh + RadiusBaseY[dir];
+                if (y_step >= 0 && y_step < *MapLatitudeBounds && x_step >= 0
+                    && x_step < *MapLongitudeBounds) {
+                    int dist = (x_dist(x_step, x) + abs(y_step - y)) >> 1;
+                    if (dist < dist_best) {
+                        dist_best = dist;
+                        dir_best = dir;
+                        x_best = x_step;
+                        y_best = y_step;
+                    }
+                }
+            }
+            if (dir_best < 0) {
+                break;
+            }
+            veh_scoot(veh_id_best, x_veh, y_veh, dir_best, 0);
+            x_veh = x_best;
+            y_veh = y_best;
+        }
+    }
+    veh_drop(veh_lift(veh_id_best), x, y);
+    Vehs[veh_id_best].order = ORDER_NONE;
+    Vehs[veh_id_best].state &= ~(VSTATE_UNK_200 | VSTATE_EXPLORE | VSTATE_UNK_1000000
+        | VSTATE_UNK_2000000);
+    return true;
+}
+
+/*
 Purpose: Pick the unit to show on top of a stack: the map window's selected unit if it belongs to
          the player at the controls and is neither exploring nor on an automated order, otherwise
          the unit with the highest triad, preferring the current player's own units. The unit
@@ -1549,6 +1634,149 @@ BOOL __cdecl want_monolith(uint32_t veh_id) {
         return true;
     }
     return false;
+}
+
+/*
+Purpose: Add the monolith tile as a site goal for each faction that sees a monolith there.
+Original Offset: n/a (a loop repeated three times in monolith())
+Return Value: n/a
+Status: Complete
+*/
+static void monolith_sites(int x, int y) {
+    for (int i = 1; i < MaxPlayerNum; i++) {
+        if (map_loc(x, y)->bit_visible[i - 1] & BIT_MONOLITH) {
+            add_site(i, 0, 2, x, y);
+        }
+    }
+}
+
+/*
+Purpose: A unit stops at a monolith. Battle ogres are ignored, and so is a unit of the faction at the
+         controls that is only passing through on other orders (outside network games). A
+         non-combat unit is repaired (MONOLITHHEAL) or, once, noted (SEEMONOLITH). A combat unit
+         clears the faction site goals there; a human player may decline (the monolith then stays
+         a site goal for those who see it) or choose to always inspect monoliths. The unit is
+         repaired and, if not yet upgraded by a monolith and below elite, gains a morale level;
+         from turn 100 on, a monolith used before then has a 1 in 32 chance of being used up
+         (MONOLITH0, otherwise MONOLITH1). A unit with nothing to gain gets MONOLITHNO.
+Original Offset: 0057A050
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-18-council-batch30.log)
+*/
+void __cdecl monolith(uint32_t veh_id) {
+    Veh *veh = &Vehs[veh_id];
+    uint32_t faction_id = veh->faction_id;
+    int x = veh->x;
+    int y = veh->y;
+    if (veh->proto_id == BSC_BATTLE_OGRE_MK1 || veh->proto_id == BSC_BATTLE_OGRE_MK2
+        || veh->proto_id == BSC_BATTLE_OGRE_MK3) {
+        return;
+    }
+    if (faction_id == (uint32_t)*FactionIDCurrent && !*IsMultiplayerNet) {
+        if (veh->order == ORDER_MOVE_TO && veh->waypoint_x[0] == x && veh->waypoint_y[0] == y) {
+            veh->order = ORDER_NONE;
+        }
+        if (veh->order) {
+            return;
+        }
+    }
+    if (!get_offense_rating(veh_id)) {
+        if (veh->dmg_incurred) {
+            veh->dmg_incurred = 0;
+            veh_skip(veh_id);
+            draw_tile(x, y, 2);
+            if (faction_id == (uint32_t)*FactionIDCurrent) {
+                NetMsg_pop(NetMsgVar, NULL, "MONOLITHHEAL", 5000, 0, "monolith_sm.pcx");
+                *GameState |= STATE_UNK_4;
+            }
+        } else if (!(veh->state & VSTATE_MONOLITH_UPGRADED)) {
+            veh->state |= VSTATE_MONOLITH_UPGRADED;
+            if (faction_id == (uint32_t)*FactionIDCurrent
+                && !(*GameMorePreferences & MPREF_AUTO_ALWAYS_INSPECT_MONOLITH) && !*IsMultiplayerNet) {
+                NetMsg_pop(NetMsgVar, NULL, "SEEMONOLITH", -5000, 0, "monolith_sm.pcx");
+                *GameState |= STATE_UNK_4;
+            }
+        }
+        return;
+    }
+    for (int i = 1; i < MaxPlayerNum; i++) {
+        del_site(i, 0, x, y, 0);
+    }
+    if (FactionsStatus[0] & (1 << faction_id)) {
+        if (!*IsMultiplayerNet && !(*GameMorePreferences & MPREF_AUTO_ALWAYS_INSPECT_MONOLITH)) {
+            FX_play(FXVar, NULL, 6);
+            int choice = popp(ScriptTxtID, "MONOLITH", 0, "monolith_sm.pcx", NULL);
+            FX_stop(FXVar, NULL, 6);
+            if (choice == 2) {
+                *GameMorePreferences |= MPREF_AUTO_ALWAYS_INSPECT_MONOLITH;
+                prefs_save(false);
+            } else if (!choice) {
+                monolith_sites(x, y);
+                return;
+            }
+        }
+    } else if (!want_monolith(veh_id)) { // inlined in the original
+        if (veh->dmg_incurred) {
+            veh->dmg_incurred = 0;
+            veh_skip(veh_id);
+            draw_tile(x, y, 2);
+        }
+        monolith_sites(x, y);
+        return;
+    }
+    if (veh->dmg_incurred) {
+        veh->dmg_incurred = 0;
+        veh_skip(veh_id);
+        draw_tile(x, y, 2);
+        if ((veh->state & VSTATE_MONOLITH_UPGRADED) || morale_veh(veh_id, true, 0) >= MORALE_ELITE) {
+            if (faction_id == (uint32_t)*FactionIDCurrent) {
+                NetMsg_pop(NetMsgVar, NULL, "MONOLITHHEAL",
+                    (*GameMorePreferences & MPREF_AUTO_ALWAYS_INSPECT_MONOLITH) ? 5000 : -5000, 0,
+                    "monolith_sm.pcx");
+                *GameState |= STATE_UNK_4;
+            }
+            return;
+        }
+    }
+    if ((veh->state & VSTATE_MONOLITH_UPGRADED) || morale_veh(veh_id, true, 0) >= MORALE_ELITE) {
+        if (faction_id == (uint32_t)*FactionIDCurrent) {
+            NetMsg_pop(NetMsgVar, NULL, "MONOLITHNO",
+                (*GameMorePreferences & MPREF_AUTO_ALWAYS_INSPECT_MONOLITH) ? 5000 : -5000, 0,
+                "monolith_sm.pcx");
+        }
+        return;
+    }
+    int lasts = _rand() % 32;
+    if (!(map_loc(x, y)->bit & BIT_UNK_2000000) || *TurnCurrentNum < 100) {
+        lasts = 1;
+        bit_set(x, y, BIT_UNK_2000000, true);
+    }
+    veh->state |= VSTATE_MONOLITH_UPGRADED;
+    veh->morale = (uint8_t)((veh->morale + 1 > MORALE_ELITE) ? MORALE_ELITE : veh->morale + 1);
+    veh_skip(veh_id);
+    stringTemp->str[0] = 0;
+    say_morale(veh_id, 0);
+    parse_says(0, stringTemp->str, -1, -1);
+    CharLowerA(ParseStrBuffer[0].str);
+    if (!lasts) {
+        bit_set(x, y, BIT_MONOLITH, false);
+        synch_bit(x, y, faction_id);
+    } else {
+        monolith_sites(x, y);
+    }
+    draw_tile(x, y, 2);
+    if (faction_id == (uint32_t)*FactionIDCurrent) {
+        FX_play(FXVar, NULL, 0x22);
+        char number[80];
+        stringTemp->str[0] = 0;
+        strcat(stringTemp->str, "MONOLITH");
+        _itoa(lasts != 0, number, 10);
+        strcat(stringTemp->str, number);
+        NetMsg_pop(NetMsgVar, NULL, stringTemp->str,
+            (*GameMorePreferences & MPREF_AUTO_ALWAYS_INSPECT_MONOLITH) ? 5000 : -5000, 0,
+            "monolith_sm.pcx");
+        *GameState |= STATE_UNK_4;
+    }
 }
 
 /*
@@ -5268,6 +5496,113 @@ int __cdecl veh_init(int proto_id, uint32_t faction_id, int x, int y) {
 }
 
 /*
+Purpose: Remove the specified unit from the game: the faction's unit counts, its stack and its
+         slot in the unit table. The later units move down one slot, so every unit id kept
+         elsewhere (stack links, the transport of sentried/boarded units, the selection globals)
+         that is above it is decremented; references to the unit itself are cleared.
+Original Offset: 005C08C0
+Return Value: n/a
+Status: Complete
+*/
+void __cdecl veh_kill(int veh_id) {
+    if (veh_id < 0) {
+        return;
+    }
+    if (*IsMultiplayerNet) {
+        DeletionList_add_deletion(DeletionListVar, 0, veh_id);
+    }
+    log_say("Killing vehicle (v,who,v2)", veh_id, Vehs[veh_id].faction_id, Vehs[veh_id].proto_id);
+    int x = Vehs[veh_id].x;
+    int home_base_id = Vehs[veh_id].home_base_id;
+    int y = Vehs[veh_id].y;
+    int proto_id = Vehs[veh_id].proto_id;
+    uint32_t faction_id = Vehs[veh_id].faction_id;
+    if (VehPrototypes[proto_id].plan < PLAN_COLONIZATION) {
+        PlayersData[faction_id].total_mil_veh--;
+    }
+    PlayersData[faction_id].proto_id_active[proto_id]--;
+    veh_lift(veh_id);
+    if (veh_id < *VehCurrentCount - 1) {
+        memmove(&Vehs[veh_id], &Vehs[veh_id + 1], (*VehCurrentCount - veh_id - 1) * sizeof(Veh));
+    }
+    if (veh_id < MaxVehNum) {
+        (*VehCurrentCount)--;
+    }
+    for (int i = 0; i < *VehCurrentCount; i++) {
+        if (Vehs[i].prev_veh_id_stack > veh_id) {
+            Vehs[i].prev_veh_id_stack--;
+        }
+        if (Vehs[i].next_veh_id_stack > veh_id) {
+            Vehs[i].next_veh_id_stack--;
+        }
+        if (Vehs[i].order == ORDER_SENTRY_BOARD) {
+            if (Vehs[i].waypoint_x[0] == veh_id) {
+                Vehs[i].order = ORDER_NONE;
+            } else if (Vehs[i].waypoint_x[0] > veh_id) {
+                Vehs[i].waypoint_x[0]--;
+            }
+        }
+    }
+    int *const refs[4] = { MapWinVehIDSelected, MapWinVehIDOther, StatusWinVehIDA, StatusWinVehIDB };
+    for (int i = 0; i < 4; i++) {
+        if (*refs[i] == veh_id) {
+            *refs[i] = -1;
+        } else if (*refs[i] > veh_id) {
+            (*refs[i])--;
+        }
+    }
+    // a current unit id equal to the killed one moves down too (0 is never decremented)
+    if (*VehIDCurrent && *VehIDCurrent >= veh_id) {
+        (*VehIDCurrent)--;
+    }
+    if (*IsMultiplayerNet && *NetVehIDRef && *NetVehIDRef != MapWinVehIDSelected
+        && *NetVehIDRef != VehIDCurrent && *NetVehIDRef != MapWinVehIDOther
+        && **NetVehIDRef >= veh_id) {
+        (**NetVehIDRef)--;
+    }
+    BaseWin_check_loc(BaseWinVar, 0, x, y, 0);
+    BaseWin_check_base(BaseWinVar, 0, home_base_id);
+}
+
+/*
+Purpose: Kill the specified unit. A unit with cargo at sea or off the map takes its stack down with
+         it (at x -2 only stack_kill() runs and the function ends there); on land the cargo stays
+         on the tile. Then the base window checks the home base and, unless VehBattleUnkTgl is
+         set, the tile is redrawn: with the radius around it when the unit belonged to the player
+         at the controls and none of that faction's units is left there, or it had deep radar.
+Original Offset: 005C0B00
+Return Value: n/a
+Status: Complete
+*/
+void __cdecl kill(int veh_id) {
+    int x = Vehs[veh_id].x;
+    int y = Vehs[veh_id].y;
+    uint32_t faction_id = Vehs[veh_id].faction_id;
+    BOOL deep_radar = has_abil(Vehs[veh_id].proto_id, ABL_DEEP_RADAR);
+    int home_base_id = Vehs[veh_id].home_base_id;
+    // the original has veh_cargo() inlined here
+    if (!veh_cargo(veh_id) || (on_map(x, y) && !is_ocean(x, y))) {
+        veh_kill(veh_id);
+    } else {
+        if (!on_map(x, y) && x == -2) {
+            stack_kill(veh_id);
+            return;
+        }
+        stack_veh(veh_id, 2);
+        stack_kill(veh_id);
+    }
+    BaseWin_check_base(BaseWinVar, 0, home_base_id);
+    if (!VehBattleUnkTgl[0] && on_map(x, y)) {
+        if (faction_id == (uint32_t)*FactionIDCurrent
+            && (!stack_check(veh_at(x, y), 1, faction_id, -1, -1) || deep_radar)) {
+            draw_radius(x, y, 2, 2);
+        } else {
+            draw_tile(x, y, 2);
+        }
+    }
+}
+
+/*
 Purpose: Find the unit closest to the specified tile, optionally restricted to one faction and
          skipping one unit id. The distance to it is stored in VehFindDist. Ties go to the unit with
          the highest id.
@@ -5727,6 +6062,151 @@ int __cdecl veh_wake(uint32_t veh_id) {
 }
 
 /*
+Purpose: One AI step for the specified unit: enemy_move() picks its move (skipped for a unit
+         already under way on a move to order that isn't a transport, isn't exploring and isn't
+         next to an enemy), then, if it has moves left, action() carries out its order (no
+         action possible: the unit's moves are spent). In a network game the unit of the faction
+         at the controls is synchronized instead and NetDaemon::action() acts for it.
+Original Offset: 00579240
+Return Value: 1 if the unit is done for this turn, 0 if it can be given another step
+Status: Complete
+*/
+int __cdecl enemy_veh(uint32_t veh_id) {
+    uint32_t faction_id = Vehs[veh_id].faction_id;
+    BOOL net_sync = (faction_id == (uint32_t)*FactionIDCurrent && *IsMultiplayerNet);
+    if (*IsMultiplayerNet) {
+        *VehAttackFlags = 3;
+    }
+    do_all_non_input();
+    if (!Vehs[veh_id].moves_expended || Vehs[veh_id].order != ORDER_MOVE_TO
+        || VehPrototypes[Vehs[veh_id].proto_id].plan == PLAN_NAVAL_TRANSPORT
+        || Vehs[veh_id].state & VSTATE_EXPLORE
+        || zoc_any(Vehs[veh_id].x, Vehs[veh_id].y, faction_id)) {
+        if (enemy_move(veh_id)) {
+            return 1;
+        }
+        if ((int)speed(veh_id, false) - Vehs[veh_id].moves_expended <= 0) {
+            if (*IsMultiplayerNet) {
+                log_say("Enemy Vehicle DONE", veh_id, 0, 0);
+            }
+            if (net_sync) {
+                synch_veh(veh_id);
+                NetDaemon_await_synch(NetDaemonVar, 0);
+                NetDaemon_unlock_veh(NetDaemonVar, 0);
+            }
+            return 1;
+        }
+    }
+    if (net_sync) {
+        synch_veh(veh_id);
+        NetDaemon_await_synch(NetDaemonVar, 0);
+        return NetDaemon_action(NetDaemonVar, 0, veh_id, 1) ? 1 : 0;
+    }
+    if (*IsMultiplayerNet) {
+        char veh_id_str[12];
+        _itoa_s(veh_id, veh_id_str, 10);
+        log_say("Enemy Vehicle ACTION", veh_id_str, Vehs[veh_id].order, Vehs[veh_id].waypoint_x[0],
+            Vehs[veh_id].waypoint_y[0]);
+    }
+    if (!action(veh_id)) {
+        veh_skip(veh_id);
+    }
+    if (*IsMultiplayerNet) {
+        char ai_type_str[2] = { (char)Vehs[veh_id].move_to_ai_type, 0 };
+        log_say("Enemy Vehicle", ai_type_str, veh_id, Vehs[veh_id].x, Vehs[veh_id].y);
+    }
+    return 0;
+}
+
+/*
+Purpose: Move all the units of the specified faction with the AI, in ten passes over the unit list
+         (from the end): artillery, then defenders and transports with cargo, air units except air
+         superiority, combat units, undamaged units, then everyone. Drop pod, air superiority and
+         group 21 designs wait for pass 7; pass 8 gives the transports of the non-alien factions
+         an extra step before their moves are checked. A unit gets steps until it's done, has
+         no moves left, boards (sentry) or the unit count changes; after 32 steps (moves to
+         count once, other surface units twice) its moves are spent.
+Original Offset: 00579510
+Return Value: n/a
+Status: Complete
+*/
+void __cdecl enemy_turn(uint32_t faction_id) {
+    for (int pass = 0; pass < 10; pass++) {
+        for (int veh_id = *VehCurrentCount - 1; veh_id >= 0; veh_id--) {
+            if (veh_id >= *VehCurrentCount || Vehs[veh_id].faction_id != faction_id) {
+                continue;
+            }
+            BOOL design_check = true; // drop pods, air superiority and group 21 wait
+            switch (pass) {
+              case 0:
+                if (!can_arty(Vehs[veh_id].proto_id, true)) {
+                    continue;
+                }
+                break;
+              case 1:
+                if (VehPrototypes[Vehs[veh_id].proto_id].plan != PLAN_DEFENSIVE
+                    && (VehPrototypes[Vehs[veh_id].proto_id].plan != PLAN_NAVAL_TRANSPORT
+                        || !stack_check(veh_id, 3, 0, -1, -1))) {
+                    continue;
+                }
+                break;
+              case 2:
+                if (Chassis[VehPrototypes[Vehs[veh_id].proto_id].chassis_id].triad != TRIAD_AIR
+                    || VehPrototypes[Vehs[veh_id].proto_id].plan == PLAN_AIR_SUPERIORITY) {
+                    continue;
+                }
+                break;
+              case 3:
+                if (VehPrototypes[Vehs[veh_id].proto_id].plan != PLAN_COMBAT) {
+                    continue;
+                }
+                break;
+              case 4:
+                if (Vehs[veh_id].dmg_incurred) {
+                    continue;
+                }
+                break;
+              case 5:
+              case 6:
+                break;
+              default:
+                design_check = false;
+                break;
+            }
+            if (design_check && (has_abil(Vehs[veh_id].proto_id, ABL_DROP_POD)
+                || VehPrototypes[Vehs[veh_id].proto_id].plan == PLAN_AIR_SUPERIORITY
+                || VehPrototypes[Vehs[veh_id].proto_id].unk_1 == 21)) {
+                continue;
+            }
+            if (pass == 8 && (VehPrototypes[Vehs[veh_id].proto_id].plan != PLAN_NAVAL_TRANSPORT
+                || !faction_id)) {
+                continue;
+            }
+            int steps = 0;
+            while (Vehs[veh_id].order != ORDER_SENTRY_BOARD) {
+                if (pass != 8 || steps) {
+                    if ((int)speed(veh_id, false) - Vehs[veh_id].moves_expended <= 0) {
+                        break;
+                    }
+                }
+                int veh_count = *VehCurrentCount;
+                if (enemy_veh(veh_id) || veh_count != *VehCurrentCount) {
+                    break;
+                }
+                if (Vehs[veh_id].order != ORDER_MOVE_TO
+                    && Chassis[VehPrototypes[Vehs[veh_id].proto_id].chassis_id].triad != TRIAD_AIR) {
+                    steps++;
+                }
+                if (++steps > 32) {
+                    veh_skip(veh_id); // and on: the loop ends once the moves check fails
+                }
+            }
+        }
+    }
+    PlayersData[faction_id].flags &= ~PFLAG_UNK_10000;
+}
+
+/*
 Purpose: Get the triad for the specified prototype.
 Original Offset: n/a
 Return Value: Triad (see VehTriad)
@@ -5804,4 +6284,383 @@ Status: Complete
 */
 BOOL __cdecl is_missile(uint32_t veh_id) {
     return is_proto_missile(Vehs[veh_id].proto_id);
+}
+
+/*
+Purpose: Tell a network game's players that the unit can't do that here (FEATURE message); in a
+         single player game nothing happens.
+Original Offset: 004CD060
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-18-council-batch30.log)
+*/
+void __cdecl action_feature() {
+    if (*IsMultiplayerNet) {
+        NetMsg_pop(NetMsgVar, NULL, "FEATURE", 5000, 0, 0);
+    }
+}
+
+/*
+Purpose: Order a unit to patrol between its tile and the specified tile, if it can: the target and
+         the unit's own tile are appended as waypoints (from the current waypoint count, past the end
+         of the four slot array when it is full, as in the original) and the patrol restarts.
+Original Offset: 004CDA30
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-18-council-batch30.log)
+*/
+void __cdecl action_patrol(int veh_id, int x, int y) {
+    if (!valid_patrol(veh_id, x, y)) {
+        return;
+    }
+    Veh *veh = &Vehs[veh_id];
+    veh->order = ORDER_MOVE_TO;
+    veh->waypoint_x[veh->waypoint_count] = (int16_t)x;
+    veh->waypoint_y[veh->waypoint_count] = (int16_t)y;
+    veh->waypoint_count++;
+    veh->waypoint_x[veh->waypoint_count] = veh->x;
+    veh->waypoint_y[veh->waypoint_count] = veh->y;
+    veh->state |= VSTATE_UNK_1000000 | VSTATE_UNK_200;
+    veh->patrol_current_point = 0;
+}
+
+/*
+Purpose: Carry out a unit's standing order for this turn: terraforming orders (farm .. place
+         monolith) through action_terraform(), road and magtube building toward a tile through
+         action_road_to(), move orders through action_go_to(). An order with the bit 0x40 (the AI's
+         one-time orders) is cleared afterwards.
+Original Offset: 004CF740
+Return Value: Did the unit have an order to carry out? true/false
+Status: Complete (verified vs original: docs/regression-runs/2026-10-18-council-batch30.log)
+*/
+BOOL __cdecl action(int veh_id) {
+    int8_t order = Vehs[veh_id].order;
+    if (order >= ORDER_FARM && order < ORDER_MOVE_TO) {
+        action_terraform(veh_id, order - ORDER_FARM, 1);
+    } else if (order == ORDER_ROAD_TO || order == ORDER_MAGTUBE_TO) {
+        action_road_to(veh_id);
+    } else if (order == ORDER_MOVE_TO || order == ORDER_AI_MOVE_TO || order == ORDER_MOVE) {
+        action_go_to(veh_id);
+    } else {
+        return false;
+    }
+    if (Vehs[veh_id].order & 0x40) {
+        Vehs[veh_id].order = ORDER_NONE;
+    }
+    return true;
+}
+
+/*
+Purpose: Send a unit through the Psi Gate to the specified base: both bases' gates are marked as
+         used this turn, the unit is moved, both tiles are redrawn and the map view follows the unit
+         if it is the one selected.
+Original Offset: 004CF380
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-18-council-batch30.log)
+*/
+void __cdecl action_gate(int veh_id, int base_id) {
+    int base_id_from = base_at(Vehs[veh_id].x, Vehs[veh_id].y);
+    if (base_id_from >= 0) {
+        Bases[base_id_from].state |= BSTATE_PSI_GATE_USED;
+    }
+    Bases[base_id].state |= BSTATE_PSI_GATE_USED;
+    veh_drop(veh_lift(veh_id), Bases[base_id].x, Bases[base_id].y);
+    if (base_id_from >= 0) {
+        draw_tile(Bases[base_id_from].x, Bases[base_id_from].y, 2);
+    }
+    draw_tile(Bases[base_id].x, Bases[base_id].y, 2);
+    if (veh_id == *MapWinVehIDSelected) {
+        Console_focus(ConsoleVar, NULL, Vehs[veh_id].x, Vehs[veh_id].y, Vehs[veh_id].faction_id);
+    }
+}
+
+/*
+Purpose: Nerve staple a base. The first two times always work, the next six half of the time
+         (rand), later ones never: on success the riot ends, the staple lasts 10 more turns and the
+         base's owner (if at the controls) or everyone else hears of it. Either way the base's
+         count goes up and the act is an atrocity.
+Original Offset: 004CA7F0
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-18-council-batch30.log)
+*/
+void __cdecl action_staple(int base_id) {
+    Base *base = &Bases[base_id];
+    int count = ++base->nerve_staple_count;
+    uint32_t faction_id = base->faction_id_current;
+    BOOL is_alien = (Players[faction_id].rule_flags & RFLAG_ALIEN) != 0;
+    if (count <= 2 || (count <= 8 && _rand() % 2)) {
+        base->state &= ~BSTATE_DRONE_RIOTS_ACTIVE;
+        base->nerve_staple_turns_left += 10;
+        draw_tile(base->x, base->y, 2);
+        if (base->faction_id_current == *FactionIDCurrent) {
+            parse_says(0, base->name_string, -1, -1);
+            popp(ScriptTxtID, "NERVESTAPLEDONE", 0, is_alien ? "ALdrone_sm.pcx" : "drone_sm.pcx", 0);
+        } else {
+            parse_says(0, base->name_string, -1, -1);
+            *PluralityDefault = false;
+            *GenderDefault = Players[base->faction_id_current].is_leader_female;
+            parse_says(1, Players[base->faction_id_current].title_leader, -1, -1);
+            *PluralityDefault = false;
+            *GenderDefault = Players[base->faction_id_current].is_leader_female;
+            parse_says(2, Players[base->faction_id_current].name_leader, -1, -1);
+            NetMsg_pop(NetMsgVar, NULL, "NERVESTAPLETHEM", 5000, 0, 0);
+        }
+    } else if (base->faction_id_current == *FactionIDCurrent) {
+        parse_says(0, base->name_string, -1, -1);
+        popp(ScriptTxtID, "NERVESTAPLEFAIL", 0, is_alien ? "ALdrone_sm.pcx" : "drone_sm.pcx", 0);
+    }
+    atrocity(base->faction_id_current, base->faction_id_former,
+        base->faction_id_former != base->faction_id_current, true);
+}
+
+/*
+Purpose: Self-destruct a unit: an explosion damages every unit on the unit's tile and the eight
+         around it (bases are spared) by half its reactor times its weapon value (1 to 20), then
+         the units the damage destroys are killed (artifacts at any damage).
+Original Offset: 004CD2F0
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-18-council-batch30.log)
+*/
+void __cdecl action_destruct(int veh_id) {
+    int x = Vehs[veh_id].x;
+    int y = Vehs[veh_id].y;
+    boom(x, y, 0);
+    int power = weap_val(Vehs[veh_id].proto_id, Vehs[veh_id].faction_id);
+    power = (power < 1) ? 1 : ((power > 20) ? 20 : power);
+    int damage = VehPrototypes[Vehs[veh_id].proto_id].reactor_id * power / 2;
+    kill(veh_id);
+    for (int i = 0; i < 9; i++) {
+        int x_radius = x + RadiusOffsetX[i];
+        if (!(*MapIsFlat & 1)) {
+            if (x_radius < 0) {
+                x_radius += *MapLongitudeBounds;
+            } else if (x_radius >= *MapLongitudeBounds) {
+                x_radius -= *MapLongitudeBounds;
+            }
+        }
+        int y_radius = y + RadiusOffsetY[i];
+        if (y_radius < 0 || y_radius >= *MapLatitudeBounds || x_radius < 0
+            || x_radius >= *MapLongitudeBounds || base_at(x_radius, y_radius) >= 0) {
+            continue;
+        }
+        for (int v = veh_at(x_radius, y_radius); v >= 0; v = Vehs[v].next_veh_id_stack) {
+            Vehs[v].dmg_incurred += (uint8_t)damage;
+        }
+        for (;;) {
+            int v = stack_fix(veh_at(x_radius, y_radius));
+            for (; v >= 0; v = Vehs[v].next_veh_id_stack) {
+                VehPrototype *proto = &VehPrototypes[Vehs[v].proto_id];
+                int lethal = 1;
+                if (proto->plan != PLAN_ALIEN_ARTIFACT) {
+                    int reactor = proto->reactor_id;
+                    lethal = ((reactor < 1) ? 1 : ((reactor > 100) ? 100 : reactor)) * 10;
+                }
+                if (Vehs[v].dmg_incurred >= lethal) {
+                    break;
+                }
+            }
+            if (v < 0) {
+                break;
+            }
+            stack_veh(v, 1);
+            stack_kill(v);
+        }
+    }
+}
+
+/*
+Purpose: A faction's orbital defense pods shoot at another faction's satellite (sat_type 0..3:
+         nutrient, mineral, energy satellites, orbital defense pods) or at a base's Geosynchronous
+         Survey Pod (sat_type 4). Unless already at vendetta the attacker double crosses the target
+         first. Half the time (rand) the target is destroyed, otherwise the attacker loses a pod;
+         the player at the controls on either side is told, and an open report on that is redrawn.
+Original Offset: 004CF480
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-18-council-batch30.log)
+*/
+void __cdecl action_sat_attack(int faction_id, int faction_id_def, int sat_type, int base_id) {
+    if (!(PlayersData[faction_id].diplo_treaties[faction_id_def] & DTREATY_VENDETTA)) {
+        double_cross(faction_id, faction_id_def, -1);
+    }
+    if (faction_id == *FactionIDCurrent || faction_id_def == *FactionIDCurrent) {
+        const int factions[2] = { faction_id, faction_id_def };
+        for (int i = 0; i < 2; i++) {
+            Player *player = &Players[factions[i]];
+            *PluralityDefault = false;
+            *GenderDefault = player->is_leader_female;
+            parse_says(i * 3, player->title_leader, -1, -1);
+            *GenderDefault = player->is_leader_female;
+            *PluralityDefault = false;
+            parse_says(i * 3 + 1, player->name_leader, -1, -1);
+            *GenderDefault = player->noun_gender;
+            *PluralityDefault = player->is_noun_plural;
+            parse_says(i * 3 + 2, player->noun_faction, -1, -1);
+        }
+        parse_say(6, (int)Facility[(sat_type == 4) ? FAC_GEOSYNC_SURVEY_POD
+            : FacilityRepStart + sat_type].name, -1, -1);
+        parse_says(7, Players[faction_id_def].adj_name_faction, -1, -1);
+    }
+    LPCSTR label = NULL;
+    if (_rand() % 100 < 50) {
+        if (sat_type == 4) {
+            set_fac(FAC_GEOSYNC_SURVEY_POD, base_id, false);
+        } else {
+            (&PlayersData[faction_id_def].satellites_nutrient)[sat_type]--;
+        }
+        PlayersData[faction_id].sat_odp_deployed++;
+        if (faction_id == *FactionIDCurrent) {
+            label = "WEKILLEDIT";
+        } else if (faction_id_def == *FactionIDCurrent) {
+            label = "THEYKILLEDIT";
+        }
+    } else {
+        PlayersData[faction_id].satellites_odp_total--;
+        if (faction_id == *FactionIDCurrent) {
+            label = "WEMUFFEDIT";
+        } else if (faction_id_def == *FactionIDCurrent) {
+            label = "THEYMUFFEDIT";
+        }
+    }
+    if (label) {
+        popp(ScriptTxtID, label, 0, "satbat_sm.pcx", 0);
+    }
+    if (*ReportIfMode == 6 && ReportIfPageTypes[*ReportIfPage] == 5) {
+        ReportIf_on_redraw(ReportIf, NULL);
+    }
+}
+
+/*
+Purpose: Found a base with a colony unit where it stands. The tile is levelled to rolling if rocky
+         and the map view moves there when the player at the controls can see it. Founding inside
+         another faction's territory without a pact or vendetta while either side is human ends a
+         treaty (double cross) or else starts a vendetta, if the founder already has bases. The new
+         base gets the given name (made unique) and, for a human founder, the unit's home base
+         governor settings (plus the governor bit 0x80000000 for units with the state bit 0x200).
+         The unit is used up, the map is redrawn if visible, the nearby sites of every faction are
+         cleared and the founding is recorded in the monuments.
+Original Offset: 004C96E0
+Return Value: The new base id, or -1 if no base could be founded (the unit then skips its turn)
+Status: Complete (verified vs original: docs/regression-runs/2026-10-18-council-batch30.log)
+*/
+int __cdecl action_build(int veh_id, LPCSTR name) {
+    Veh *veh = &Vehs[veh_id];
+    uint32_t faction_id = veh->faction_id;
+    int x = veh->x;
+    int y = veh->y;
+    log_say("Action Base", x, y, faction_id);
+    log_say("Action Base Turn", *TurnCurrentNum, 0, 0);
+    if ((map_loc(x, y)->val3 & 0xC0) > 0x40) {
+        rocky_set(x, y, 1);
+    }
+    if (faction_id == (uint32_t)*FactionIDCurrent
+        || (veh->faction_id == *FactionIDCurrent && (veh->flags & 0x440) != 0x440)
+        || (veh->visibility & (uint8_t)(1 << *FactionIDCurrent))
+        || (*GameState & STATE_OMNISCIENT_VIEW)) {
+        Console_focus(ConsoleVar, NULL, x, y, faction_id);
+    }
+    int owner = whose_territory(faction_id, x, y, NULL, false);
+    if (PlayersData[faction_id].current_num_bases && owner >= 0 && owner != (int)faction_id) {
+        uint32_t treaties = PlayersData[faction_id].diplo_treaties[owner];
+        uint32_t humans = FactionsStatus[0];
+        if (!(treaties & (DTREATY_PACT | DTREATY_VENDETTA))
+            && ((humans & (1 << faction_id)) || (humans & (1 << owner)))) {
+            if (treaties & DTREATY_TREATY) {
+                double_cross(faction_id, owner, -1);
+            } else {
+                treaty_on(faction_id, owner, DTREATY_VENDETTA);
+            }
+        }
+    }
+    int base_id = base_init(faction_id, x, y);
+    if (base_id < 0) {
+        veh_skip(veh_id);
+        return base_id;
+    }
+    if (FactionsStatus[0] & (uint8_t)(1 << faction_id)) {
+        if (veh->home_base_id >= 0) {
+            Bases[base_id].governor = Bases[veh->home_base_id].governor;
+        }
+        if (veh->state & VSTATE_UNK_200) {
+            Bases[base_id].governor |= 0x80000000;
+        }
+    }
+    PlayersData[faction_id].last_turn_new_base = *TurnCurrentNum;
+    if (name && strlen(name)) {
+        strcpy(Bases[base_id].name_string, name); // unbounded, as in the original
+        make_base_unique(base_id);
+    }
+    veh_kill(veh_id);
+    if (faction_id == (uint32_t)*FactionIDCurrent
+        || Bases[base_id].faction_id_current == *FactionIDCurrent
+        || (Bases[base_id].visibility & (uint8_t)(1 << *FactionIDCurrent))
+        || (*GameState & STATE_OMNISCIENT_VIEW)) {
+        draw_map(1);
+    }
+    for (uint32_t i = 1; i < MaxPlayerNum; i++) {
+        del_site(i, 8, x, y, 2);
+    }
+    mon_colony_founded(faction_id, Bases[base_id].name_string);
+    return base_id;
+}
+
+/*
+Purpose: Fire a unit's artillery at a tile at most two steps away (the summed distances, rounded
+         down to even, at most 4). A unit of the player at the controls must still be able to move.
+         An empty tile is shelled through action_destroy(); a stack of another faction without a
+         pact is attacked through battle_fight() in the direction radius_move() finds. In a network
+         game the unit is locked first and the other players are sent the action.
+Original Offset: 004CD090
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-18-council-batch30.log)
+*/
+void __cdecl action_arty(int veh_id, int x, int y) {
+    if (Vehs[veh_id].faction_id == *FactionIDCurrent && !veh_ready(veh_id)) {
+        NetMsg_pop(NetMsgVar, NULL, "UNITMOVED", 5000, 0, 0);
+        return;
+    }
+    int dist_x = abs(Vehs[veh_id].x - x);
+    if (!(*MapIsFlat & 1) && dist_x > (int)*MapLongitude) {
+        dist_x = *MapLongitudeBounds - dist_x;
+    }
+    int dist_y = abs(Vehs[veh_id].y - y);
+    if (((dist_x + dist_y) & ~1) > 4) {
+        NetMsg_pop(NetMsgVar, NULL, "OUTOFRANGE", 5000, 0, 0);
+        return;
+    }
+    int veh_id_tgt = stack_fix(veh_at(x, y));
+    if (veh_id_tgt < 0) {
+        if (!*IsMultiplayerNet) {
+            action_destroy(veh_id, 0, x, y);
+        } else if (!NetDaemon_lock_veh(NetDaemonVar, NULL, &veh_id, 4, x, y, 0)) {
+            message_data(0x2413, 0, veh_id, x, y, 0);
+            NetDaemon_await_exec(NetDaemonVar, NULL, 1);
+        }
+        return;
+    }
+    uint32_t faction_id = Vehs[veh_id].faction_id;
+    uint32_t faction_id_tgt = Vehs[veh_id_tgt].faction_id;
+    if (faction_id_tgt == faction_id
+        || (PlayersData[faction_id].diplo_treaties[faction_id_tgt] & DTREATY_PACT)) {
+        return;
+    }
+    // the exe's own copy of RadiusRange[] (0x0066F8C4): same values for 0-8, and a modded range of
+    // 9+ reads whatever follows that table in the exe, as vanilla does
+    int offset = radius_move(Vehs[veh_id].x, Vehs[veh_id].y, x, y,
+        ((int *)0x0066F8C4)[Rules->artillery_max_rng]);
+    if (offset < 0) {
+        return;
+    }
+    if (!*IsMultiplayerNet) {
+        *VehAttackFlags = 3;
+        battle_fight(veh_id, offset, true, 1, 0);
+        return;
+    }
+    if (NetDaemon_maybe_lock(NetDaemonVar, NULL, &veh_id, 0, 0, x, y, 4)) {
+        return;
+    }
+    *VehAttackFlags = 1;
+    if (battle_fight(veh_id, offset, true, 1, 0)) {
+        NetDaemon_unlock_veh(NetDaemonVar, NULL);
+        return;
+    }
+    message_veh(0x2402, veh_id, offset, 0);
+    NetDaemon_await_exec(NetDaemonVar, NULL, 1);
 }

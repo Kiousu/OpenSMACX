@@ -332,6 +332,7 @@ DLLEXPORT uint32_t __cdecl climate_at(uint32_t x, uint32_t y);
 DLLEXPORT void __cdecl climate_set(uint32_t x, uint32_t y, uint8_t climate);
 DLLEXPORT int __cdecl elev_at(uint32_t x, uint32_t y);
 DLLEXPORT uint32_t __cdecl alt_natural(uint32_t x, uint32_t y);
+DLLEXPORT void __cdecl alt_set(int x, int y, uint32_t altitude);
 DLLEXPORT void __cdecl alt_set_both(uint32_t x, uint32_t y, uint32_t altitude_natural);
 DLLEXPORT int __cdecl alt_at(uint32_t x, uint32_t y);
 DLLEXPORT int __cdecl altitude_at(uint32_t x, uint32_t y);

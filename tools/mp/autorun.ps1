@@ -1,18 +1,27 @@
 param([string[]]$Saves, [string]$Tests = "", [string]$Exe = "terranx_opensmacx.exe", [int]$TimeoutSec = 1800,
-      [int]$StallSec = 120,
+      [int]$StallSec = 120, [string]$GameDir = "G:\SMACX-opensmacx-test", [string]$Out = "",
       [switch]$Minimized)
 # Input-free regression sweep: no mouse or keyboard input at all. For each save the trigger file
 # gets "load saves\<save>", "exit" and the test names; the harness DLL (built with
 # /DOPENSMACX_REGRESS) loads the save in place of the main menu, runs the tests once the game is
 # under way and ends the game. With [OpenSMACX] Windowed=1 in the test folder's Alpha Centauri.ini
 # the game runs in an ordinary window and can stay in the background. Logs go to build\sweep\.
-$G = "G:\SMACX-opensmacx-test"
-$Out = "C:\Programming\OpenSMACX\build\sweep"
+# -GameDir: a copy of the test folder (one per parallel worker, see make_testdir.ps1); -Out: where
+# the logs go (build\sweep for the main test folder, build\sweep_<folder name> for a copy).
+$G = $GameDir.TrimEnd('\')
+if (-not $Out) {
+    $Out = if ($G -eq "G:\SMACX-opensmacx-test") { "C:\Programming\OpenSMACX\build\sweep" }
+           else { "C:\Programming\OpenSMACX\build\sweep_" + (Split-Path $G -Leaf) }
+}
+function GameRunningIn([string]$dir) {      # a game started from this folder (copies run side by side)
+    return [bool](Get-Process terranx* -ErrorAction SilentlyContinue | Where-Object {
+        $_.Path -and $_.Path.StartsWith($dir.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase) })
+}
 New-Item -ItemType Directory -Force $Out | Out-Null
 $Log = "$Out\sweep.log"
 function L($m) { $line = "[{0}] {1}" -f (Get-Date -Format "HH:mm:ss"), $m; $line | Add-Content $Log; $line }
 foreach ($save in $Saves) {
-    if (Get-Process ($Exe -replace '\.exe$', '') -ErrorAction SilentlyContinue) { L "a game is already running, stopping"; break }
+    if (GameRunningIn $G) { L "a game from $G is already running, stopping"; break }
     Remove-Item "$G\opensmacx_regress.log" -ErrorAction SilentlyContinue
     Set-Content "$G\opensmacx_regress.txt" @("load saves\$save", "exit", $Tests) -Encoding ASCII
     $t0 = Get-Date

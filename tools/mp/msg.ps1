@@ -25,7 +25,11 @@ public static class GM {
   [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint f);
 }
 "@
-$script:GameDir = "G:\SMACX-opensmacx-test"
+if (-not $script:GameDir) { $script:GameDir = "G:\SMACX-opensmacx-test" }   # set before dot-sourcing for a copy
+function GameRunningIn([string]$dir) {      # a game started from this folder (copies run side by side)
+    return [bool](Get-Process terranx* -ErrorAction SilentlyContinue | Where-Object {
+        $_.Path -and $_.Path.StartsWith($dir.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase) })
+}
 $script:VkNames = @{ ENTER = 0x0D; ESC = 0x1B; ESCAPE = 0x1B; TAB = 0x09; BACKSPACE = 0x08; BS = 0x08;
     DELETE = 0x2E; DEL = 0x2E; INSERT = 0x2D; HOME = 0x24; END = 0x23; PGUP = 0x21; PGDN = 0x22;
     UP = 0x26; DOWN = 0x28; LEFT = 0x25; RIGHT = 0x27; SPACE = 0x20 }
@@ -156,7 +160,7 @@ function PopupOpen($p) { $w = KeyWindow $p; return ($w -ne 0 -and $w -ne 0x93944
 # without activating it, behind the other windows. A minimized game ignores clicks and spins a
 # CPU core, so UI scripts must not leave it minimized.
 function Start-Game([string]$Save, [string]$Exe = "terranx_opensmacx.exe", [switch]$Background) {
-    if (Get-Process ($Exe -replace '\.exe$', '') -ErrorAction SilentlyContinue) { throw "a game is already running" }
+    if (GameRunningIn $script:GameDir) { throw "a game from $($script:GameDir) is already running" }
     Set-Content "$script:GameDir\opensmacx_regress.txt" @("load saves\$Save", "notests") -Encoding ASCII
     $style = if ($Background) { "Minimized" } else { "Normal" }
     $p = Start-Process -FilePath "$script:GameDir\$Exe" -WorkingDirectory $script:GameDir -PassThru -WindowStyle $style

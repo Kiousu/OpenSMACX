@@ -1142,6 +1142,9 @@ planetfall with FUNGBOY removed by `alien_start`, as the 678-redirect exe (exe c
 
 ## wants_to_attack stack leftovers, 2026-10-17 (Council.SAV and 13 sweep saves, 680-redirect exe)
 
+Superseded on 2026-10-18: `wants_to_attack` now starts these counts from zero (see "wants_to_attack,
+2026-10-18" below); this section describes the version it replaced.
+
 `wants_to_attack` (0x55BC80) reads 7 slots on its stack (`[ebp-0x130]`, faction 1 first) that it
 never writes before reading: each starts with whatever the stack holds there and is raised to the
 faction's most bases in one region, and the thresholds that decide which regions count as a
@@ -1557,3 +1560,357 @@ shows the input changing, a stuck one doesn't), and after 10 minutes (trigger li
 `hang <seconds>`) it logs `HANG in <test>` and ends the game. `autorun.ps1` gives up on a save
 after 30 minutes or 2 minutes without log output, and logs the game's exit code. Runs are
 watched by polling the logs every few seconds, so a stuck test is seen within a minute.
+
+## Batch 30, 2026-10-18 (Council.SAV and the 13 sweep saves, 736-redirect exe)
+
+Three worktree agents in parallel (unit actions, base removal and handover, planet events and tech
+choice), each testing its own group in its own copy of the test folder with input-free runs, and an
+independent reviewer per group reading the C++ against the disassembly line by line (no mismatches
+found in any of the three). The main session merged them into a 736-redirect tree and ran the whole
+suite on all 14 saves.
+
+Merge fixes: the unit actions group had added an exe pointer named `atrocity` and stubbed
+`atrocity` at its exe address, and the planet events group stubbed `base_kill` at its exe address;
+both functions are DLL code after the merge, and DLL callers reach them directly, skipping a stub on
+the exe address. Both stubs now sit on the DLL function's own entry, which the exe's calls also
+reach through the redirect jump (the planet events group did the same for `prefs_save`). No other
+test stubs a redirected function at its exe address. The shared notice recorders (`draw_tile`,
+`Console::focus`, `draw_map`) were merged into one list. `action_arty` reads the artillery range
+from the exe's own copy of the range table (0x66F8C4), so a modded range of 9 or more reads what the
+original reads; the two tables agree for 0 to 8.
+
+### Unit actions (worktree agent)
+
+`action_feature` (0x4CD060), `action_patrol` (0x4CDA30), `action` (0x4CF740), `action_gate`
+(0x4CF380), `action_staple` (0x4CA7F0), `action_destruct` (0x4CD2F0), `action_sat_attack`
+(0x4CF480), `action_build` (0x4C96E0) and `action_arty` (0x4CD090) in veh.cpp. Left in the exe:
+`action_go_to` and `action_road_to` (they need `Path::move`/`Path::find`, `order_veh` and network
+code), `action_tectonic` (calls `kill()` and then reads the freed unit slot again), `action_give`,
+`action_fungal`, `action_destroy` and `action_home` (not started). Kept from the original:
+`action_patrol` writes a waypoint past the 4-slot arrays when there are 4 or more; `action_staple`
+checks alien status with the faction captured at entry; `action_destruct` adds its damage as one
+byte and restarts its kill loop from `veh_at` after each `stack_kill`; `action_arty` rounds the
+range test down to even (`& ~1`); `action_build` checks the unit's faction twice before focusing
+the view, copies the name unbounded and keeps the 0x80000000 governor bit for state 0x200.
+
+Trigger group `unitact`: the exe's code against the DLL from the same snapshot; `draw_tile`,
+`Console::focus`, `atrocity`, `boom`, the terraform/go-to/road-to/destroy actions, `battle_fight_2`,
+`draw_map`, the report window's redraw, `double_cross` and `monument` recorded (`monument` was added
+after the first sweep hung on sw_urfl: founding a base there opens the monument screen, which waits
+for the player). Compared: the snapshot, the globals written, the next random number, the return
+value, the selection globals, `VehAttackFlags`, the base and replay records, the monument table and
+the recorder logs.
+
+### Base removal and handover (worktree agent)
+
+`base_kill` (0x4E5250), `give_a_base` (0x54CF40) and `base_swap` (0x54D410) in base.cpp; the temp.cpp
+pointers for `base_kill` and `give_a_base` are gone, and `net_cede_base` calls the DLL's
+`give_a_base`. New: the message list box with its list and node structs, `ListBox_update_changes`
+and `BaseWin_base_killed` exe pointers, `DiploBaseSwapAskID` 0x93FA7C and `DiploBaseSwapBidID`
+0x93FA30 (Thinker's names). Kept from the original: `base_kill`'s sea and land kill loops start one
+past the last unit, and its attack-target renumbering covers factions 1..7 only; `give_a_base`'s
+unit loop has no count check; `base_swap` divides its price by twice the partner's ranking, so a
+partner ranked 0 divides by zero as in vanilla (the test skips that case). Ghidra's `base_find_2`
+call in `give_a_base` is really `base_find` (0x4E3C60).
+
+Trigger group `baselife`: `base_kill` on every 7th base, every HQ (also with an energy market corner
+active), every 3rd sea base and runs with no base left to rehome units to; `give_a_base` on every
+4th base to the next faction, taken by force, and back to its former owner; `base_swap` in 12 cases
+per pair of factions (swaps, energy and technology offers accepted, declined or unaffordable, HQs
+asked for or offered, the only base offered, revenge with and without force). Bases are picked from
+the snapshot, not the live table. Compared: the snapshot, the Secret Project table, the replay
+record, the base globals, the selection globals and the base window's base id, the message list,
+popup and parse slots, `draw_tile_fixup` calls, the random stream, and for `base_swap` the return
+value and dialog calls. Every popup outcome was reached. Not reached by any save: `base_kill`'s
+deletion of a message-list entry pointing at the base (checked by reading only), `base_swap`'s two
+early returns without a popup, and the partner-ranked-0 skip.
+
+### Planet events and tech choice (worktree agent)
+
+`atrocity` (0x55EEE0) and `major_atrocity` (0x55F450) in faction.cpp, `tech_selection` (0x5BE380) in
+technology.cpp, `climactic_changes` (0x524210) in game.cpp, `alt_set` (0x591290) in map.cpp and
+`monolith` (0x57A050) in veh.cpp; the temp.cpp pointers `alt_set` and `tech_selection` are gone.
+None builds a Popup object on the stack. New exe pointers: `X_pops` (0x5BF5D0),
+`NetDaemon_net_tasks` (0x530360), `NetMsg_close` (0x47A7D0), `FX_stop` (0x446A90); globals
+`ClimateValueA/B/C` and `ClimateFutureChange` (0x9A67CC..0x9A67D8) and `ControlTurnC` (0x93A938),
+Thinker's names. Kept from the original: in `atrocity` the "wantonly" mark tests `FactionsStatus[0]
+& (1 << i)` with the loop counter left at 8, so the test always passes; in `alt_set` a dry tile that
+sinks gets `(rocky + 3) << 6` stored in a byte (one step flatter); `monolith` calls `morale_veh` a
+second time after a repair, as the exe does. `alt_set` calls `base_kill` by name (the DLL's since the merge); `monolith`'s
+computer-player test is `want_monolith` inlined.
+
+Trigger group `events` (tests `tech_selection`, `climactic_changes`, `major_atrocity`, `atrocity`,
+`alt_set_game`, `monolith_visit`). `tech_selection`: factions 1..7 in six variants (single player;
+in a network game another human player whose goal is already there, or arrives on the third
+`net_tasks` call, or whose wait is aborted by `ControlTurnA`; the player at the controls; a computer
+faction); `tech_pick`, `NetDaemon::net_tasks`, `NetMsg::close` and `NetDaemon::synch` recorded.
+`climactic_changes`: six states of the four climate values (nothing pending, counter short of the
+threshold, rising one step, falling with the counter carrying over, a counter far past it) on an
+empty world, `draw_map` and both view clears recorded, the clock pinned. `major_atrocity`: targets
+-1..7 for factions 1..7 in five variants (as loaded, the UN Charter repealed, the target marked
+DTREATY_UNK_80000, pacts and no vendettas with everyone with blemishes near the cap, the faction
+human). `atrocity`: every ordered pair of factions 1..7 in ten variants (counted or not, sunspots,
+the UN Charter repealed, a human faction watched by everyone with a vendetta by chance, everyone
+wanting revenge with the faction at the controls, the fifth atrocity of a human, one past the major
+atrocity limit, aliens counted, SMAC rules); the exe's `major_atrocity` is put back for the
+original's run. `alt_set_game`: every 3rd base, units outside bases and 48 tiles across the map,
+each one level up, one down, under the sea and dry land, and for bases also with the owner at the
+controls, as the owner's last base, in a network game during a battle redraw, at turn 0, during
+world building and at size 2; `base_kill` (stubbed at the DLL function since the merge), `Console::focus`, `popp` and `X_pop_2` recorded,
+`veh_kill` real. `monolith_visit`: 40 combat and 40 other units in 14 variants (as loaded; human
+with the inspect answers 0/1/2; always inspect; a network game; turn 50; a computer owner; at the
+end of a go to and passing through; a battle ogre; upgraded; elite), the two with a chance of using
+the monolith up in 8 random streams each; `NetMsg_pop`, `popp`, `FX::play`, `FX::stop`, `draw_tile`
+and `prefs_save` recorded (`prefs_save` is stubbed at the DLL function itself, as both sides reach
+it there). Compared: the snapshot, the recorded calls with labels and arguments, parse slots and
+`stringTemp`, the random stream after the call (`_rand()`), and per test the globals written outside
+the snapshot (the landmark relief tables, view caches and selection globals for `alt_set`,
+`GameMorePreferences` for `monolith`).
+
+Results:
+
+| test | Council.SAV | 13 sweep saves | mismatches |
+|---|---|---|---|
+| tech_selection | 42 | 546 | 0 |
+| climactic_changes | 6 | 78 | 0 |
+| major_atrocity | 287 | 3,731 | 0 |
+| atrocity | 490 | 6,370 | 0 |
+| alt_set_game | 1,310 | 8,560 | 0 |
+| monolith_visit | 2,240 | 14,896 | 0 |
+
+724-redirect exe (all six redirected), harness DLL, input-free runs in the test folder copy
+G:\SMACX-opensmacx-test-events. The sweep ran `events b28main diplonote protodesign baseprod
+diplotwo natlife`: every test 0 mismatches on all 13 saves (alt_set and tech_selection are also
+reached from earlier tested code). By the original on Council.SAV: 4 sea level steps; 320 vendetta
+notices from major_atrocity; 202 notices, 166 vendetta dialogs and 22 major atrocities from
+atrocity; alt_set 405 units and 93 bases lost, 108 popups, 23 tiles rockier, 9 flatter; monolith 886
+upgrades, 1,160 repairs, 18 monoliths used up, 1,073 notices, 160 dialogs, 40 preference saves. A
+monolith was used up only on the saves at turn 100 or later (Council, aki2213, aki2247, bugged), as
+the rule says. Not reachable in a single player run: real network traffic in tech_selection (the
+waits are driven by the recorders).
+
+### Results
+
+Whole suite (`-Tests ''`) on the merged 736-redirect tree, after the `wants_to_attack` change below:
+
+| test | Council.SAV | 13 sweep saves | mismatches |
+|---|---|---|---|
+| action_feature | 2 | 26 | 0 |
+| action_patrol | 5,724 | 21,060 | 0 |
+| action | 2,280 | 8,550 | 0 |
+| action_gate | 952 | 3,512 | 0 |
+| action_staple | 1,491 | 8,316 | 0 |
+| action_destruct | 206 | 760 | 0 |
+| action_sat_attack | 840 | 10,920 | 0 |
+| action_build | 144 | 912 | 0 |
+| action_arty | 5,187 | 19,197 | 0 |
+| base_kill | 124 | 606 | 0 |
+| give_a_base | 155 | 799 | 0 |
+| base_swap | 156 | 2,028 | 0 |
+| tech_selection | 42 | 546 | 0 |
+| climactic_changes | 6 | 78 | 0 |
+| major_atrocity | 287 | 3,731 | 0 |
+| atrocity | 490 | 6,370 | 0 |
+| alt_set_game | 1,310 | 8,560 | 0 |
+| monolith_visit | 2,240 | 14,896 | 0 |
+
+Every other test was 0 on every save except `social_ai`'s known one on Council.SAV and sw_bugged
+(faction 5, AI self, `bunglist_index` 34 vs 33, the same line as in the 2026-10-15 and 2026-10-16
+full logs). By the original on Council.SAV: `action_patrol` changed state in 4,636 cases;
+`action_staple` left 747 bases stapled; `action_destruct` destroyed 539 units; `base_kill` killed
+295 units and lost 60 projects; `give_a_base` moved 59 units to the new owner and killed 655;
+`base_swap` made 37 trades; `alt_set` lost 405 units and 93 bases; `monolith` upgraded 886 units and
+was used up 18 times (only on the saves at turn 100 or later). Boot test through the
+message-driven UI: Council.SAV 289 -> 291 in 86 s, the game alive, nothing new in the live game
+folder. Logs: `regression-runs/2026-10-18-council-batch30.log` and
+`regression-runs/2026-10-18-sweep-batch30.log`.
+
+## wants_to_attack, 2026-10-18 (deliberate change from the v2.1 exe, chosen by Kiousu)
+
+`wants_to_attack` is the AI's "would I go to war with them?" check, asked by `enemy_strategy`, the
+diplomacy code (`communicate`, `propose_attack`, `threaten`, `call_off_vendetta`, `encounter`), the
+Planetary Council (`wants_prop`) and `tech_val`. Part of it decides, per faction, which land regions
+are its core: those where it has about three quarters of its largest number of bases in any one
+region, or its headquarters. That largest number is a running maximum over the regions, and the
+original never sets its starting value: it starts from whatever its stack holds there (a trace found
+stack and return addresses such as 1,746,744), so in the game as shipped usually only the
+headquarters regions count. The 2026-10-17 version copied those leftovers in from where the
+original's frame would have them, which is exact only while the code that ran just before is the
+exe's; every function moved into the DLL changes them (the whole-suite `tech_val` comparisons
+already differed, 27 on Council.SAV, because the exe's `tech_val` and the DLL's leave different
+leftovers; the 718-redirect build shows the same 27). Kiousu chose to have the function do what its
+code evidently means: the counts start from zero, so every region where a faction has most of its
+bases counts as core. The naked entry is gone. Against the shipped game's leftovers this changes the
+answer in 51 of 5,292 whole-suite cases (Council.SAV 16, sw_bugged 12, sw_aki2120 11, sw_aki2213 6,
+sw_aki2247 6).
+
+Trigger name `wants_to_attack`: every attacker, target and third faction (-1..7); the original run
+with the seven slots zeroed (through `OriginalEntry` and `wta_seeded_call`) against the DLL called
+with zeroed, traced and random stack contents, so the DLL's answer is shown not to depend on the
+stack. 378 compared on Council.SAV and 4,914 on the 13 sweep saves, 0 mismatches; `tech_val` is back
+to 0 (4,676 and 46,752 compared).
+
+## Batch 31, 2026-10-18 (Council.SAV and the 13 sweep saves, 755-redirect exe)
+
+Four worktree agents in parallel (base turn, AI strategy, AI diplomacy, faction turn), each testing
+its own group in its own copy of the test folder, and an independent reviewer per group reading the
+C++ against the disassembly line by line: no transcription mismatches in any of the four. The main
+session merged them on top of batch 30 and ran the whole suite on all 14 saves.
+
+Merge fixes. Tests that stub a function at its exe address are bypassed once the function is DLL
+code, because DLL callers reach it directly; four such stubs were moved to the DLL function's own
+entry (which the exe's calls also reach through the redirect jump): `double_cross` in the batch 29
+`diplotwo` stubs and in `unitact`, `action` in the AI strategy tests (the merged DLL `enemy_veh`
+called the real `action` and the game waited on its dialog), and `tech_selection` in the base turn
+tests. Exe pointers made obsolete by the merge were dropped (`action_sat_attack`, `action`,
+`production_phase`, `enemy_strategy`, `enemy_diplomacy`, `veh_kill`, `kill`), duplicates kept once
+(`boom`, the climate values, `NetDaemon_unlock_veh`, `VehAttackFlags`, the replay and base window
+test globals), and the AI strategy tests' pin of `wants_to_attack`'s stack slots and the faction
+turn group's stack clearing before `tech_val` were removed: `wants_to_attack` no longer reads its
+stack (see "wants_to_attack, 2026-10-18"). The AI strategy group's trigger name is `aiplan`
+(`aistrat` would also run the older test `strat`).
+
+### Base turn (worktree agent)
+
+`drone_riot` (0x4F4FB0), `base_ecology` (0x4F67F0) and `base_upkeep` (0x4F79C0) in base.cpp and
+`production_phase` (0x526E70) in game.cpp; `base_drones` now calls the DLL's `drone_riot`.
+`base_production` (14 KB, a Popup on the stack) stays in the exe. Kept from the original:
+`base_ecology`'s improvement-name search reuses the tile loop's counter, so a sea fungus bloom only
+ever covers one tile; converted units with prototype id exactly 64 are not redesigned (`> 64`); the
+new owner's free facilities are checked against the old owner's techs; the queue loop runs to
+`i <= queue_size`. `drone_riot`'s defection deliberately differs from the shipped exe, see
+"drone_riot defection, 2026-10-18" below.
+
+Trigger group `baseturn`: each function as the exe (`OriginalEntry`, `base_ecology` also put back
+for the `base_upkeep` and `production_phase` runs) against the DLL from the same state. Compared:
+bases, units (new ones too), tiles, players, prototypes, monuments, the base globals block, the
+Secret Project table, the replay record, parse text and numbers, sea level and climate values, the
+random streams and every UI call in order (`popp`, `popb`, `POP2`, `interlude`, `boom`, the draw
+calls, map centring, console focus, `clock_wait`, the base window, `tech_achieved`,
+`tech_selection` recorded). `base_production` runs for real only for computer factions' bases; the
+variants that make the faction the player's stub it (its production dialog and `tech_selection`'s
+research dialog otherwise wait for the player). Not reached: `base_upkeep` returning 1 (a base
+starving to death or defecting during its upkeep), and with it `production_phase`'s second look at
+that slot.
+
+### AI strategy (worktree agent)
+
+`enemy_strategy` (0x561080, 14 KB) in faction.cpp, `enemy_veh` (0x579240) and `enemy_turn`
+(0x579510) in veh.cpp. `enemy_move` (56 KB) stays in the exe. Kept from the original: the
+defensive-unit upgrade check passes prototype ids to `arm_val()`; the expand test adds the aliens'
+(faction 0) good-tile count; the "move to an adjacent tile of the unit's own domain" loop compares
+the unit's own tile and never matches; terraformer re-homing doesn't check whose base it picks;
+`enemy_turn` keeps calling `enemy_veh` after `veh_skip()`. The direction tables at 0x66EF50/0x66EF74
+are `RadiusBaseX/Y`.
+
+Trigger group `aiplan`: `enemy_strategy` for each faction in 7 variants and all factions in
+sequence; `enemy_veh` on sampled units in 12 variants with `enemy_move`, `action` and the network
+calls recorded, plus live runs with the real `enemy_move`; `enemy_turn` with stand-in `enemy_veh`
+patterns plus live runs. Live runs pin `timeGetTime` and first run the original against itself.
+Compared: game state, base globals, production call records, random state, `VehPrototypes`,
+`BaseFindDist`, `VehAttackFlags`, the unit ids `veh_kill` renumbers, `GameTechAchieved` and the
+monument table. The last two were added after a live `enemy_veh` run on sw_artifacts differed: a
+supply pod gave faction 3 a tech in the original's run, and the DLL's run from the same snapshot
+found the tech already owned and gave a unit instead (a test gap, not a transcription error).
+
+### AI diplomacy (worktree agent)
+
+`double_cross` (0x50BCC0), `contiguous` (0x53A780), `pact_of_brotherhood` (0x53CAF0), `comm_check`
+(0x55C430), `enemies_war` (0x55C840) and `enemy_diplomacy` (0x55F930) in faction.cpp; new exe
+pointers `communicate`, `encounter` and `Path_find` (the DLL's `Path::find` is still a stub), globals
+`DiploCommRequest` (0x93F678), `DiploCommRequestPBEM` (0x93F698) and `DiploUnk9` (0x93FA60). Kept from
+the original: `double_cross`'s human-versus-computer test compares the two masked status bits, so
+two different human factions also pass it. `enemy_diplomacy` passes `action_sat_attack` a base
+argument it never set for attack types 0-3; `action_sat_attack` only uses it for type 4, which
+always sets it, so the DLL passes -1 there. `comm_check`'s 0x10004 is a first-contact truce.
+
+Trigger group `aidiplo`: the exe against the DLL from the same snapshot over faction pairs and
+treaty states; `communicate`, `encounter`, `NetDaemon::send_message` (type and payload hash),
+`NetDaemon::await_diplo`, `X_pop`, `wants_to_speak`, `tech_achieved` and `diplomacy_caption`
+recorded. Compared: game state, parse slots, the diplomacy globals 0x93F678-0x93FAE0, the game's
+random seed, the exe C runtime's `rand()` seed and every recorded call. Not reached:
+`enemy_diplomacy`'s `NetMsg_pop` and `X_pop`.
+
+### Faction turn and unit removal (worktree agent)
+
+`veh_kill` (0x5C08C0), `kill` (0x5C0B00) and `interceptor` (0x506650) in veh.cpp; `faction_upkeep`
+(0x527290), `mash_planes` (0x529C00) and `compute_score` (0x5ACBE0, ending at 0x5AD3AC; the score
+window code after it stays in the exe) in game.cpp. Every DLL caller of `veh_kill`/`kill` now
+reaches the DLL's. New: the unit-id globals `veh_kill` renumbers, `DeletionList` and `BaseWin` check
+bindings, `veh_scoot`, `call_council`, `PathXDst`/`PathYDst`, `AscentScoreScale`/`AscentScores`.
+Kept from the original: `interceptor` reads `Bases[-1]` when there is no base on the map;
+`compute_score` reads `diplo_treaties[-1]` when no faction owns the Ascent base, doesn't guard its
+division by zero, zeroes the faction's own score fields even when given other arrays, and in a
+"highest score wins" scenario leaves its victory bonus out of that call's total; `veh_kill`
+decrements `VehIDCurrent` when it equals the killed unit and never when it is 0.
+
+Trigger group `facturn`: `veh_kill` with every unit-id global equal to, above and below the unit;
+`unit_kill` (`kill`) with and without the redraw; `mash_planes` in 13 variants; `interceptor` on
+targets out to 3 tiles; `compute_score` in 21 variants per faction; `faction_upkeep` with every
+phase and dialog recorded (market corners, eliminations, council calls, autosaves recorded and never
+written). Its stubs patch both the exe address and the DLL function the address redirects to. The
+worker planted one bug in each function and every test caught its own.
+
+### Results
+
+Whole suite (`-Tests ''`) on the merged 755-redirect tree:
+
+| test | Council.SAV | 13 sweep saves | mismatches |
+|---|---|---|---|
+| drone_riot | 2,555 | 14,565 | 0 |
+| base_ecology | 3,798 | 21,184 | 0 |
+| base_upkeep | 1,962 | 11,906 | 0 |
+| production_phase | 53 | 809 | 0 |
+| enemy_strategy | 57 | 741 | 0 |
+| enemy_veh | 1,190 | 15,827 | 0 |
+| enemy_turn | 43 | 559 | 0 |
+| contiguous | 256 | 2,394 | 0 |
+| comm_check | 7,602 | 98,826 | 0 |
+| enemies_war | 504 | 6,552 | 0 |
+| pact_of_brotherhood | 210 | 2,730 | 0 |
+| double_cross | 3,528 | 45,864 | 0 |
+| enemy_diplomacy | 238 | 3,094 | 0 |
+| veh_kill | 3,546 | 13,212 | 0 |
+| unit_kill | 1,795 | 6,625 | 0 |
+| mash_planes | 13 | 169 | 0 |
+| interceptor | 216 | 306 | 0 |
+| compute_score | 168 | 2,176 | 0 |
+| faction_upkeep | 72 | 936 | 0 |
+
+Every other test was 0 on every save except `social_ai`'s known line on Council.SAV and sw_bugged.
+By the original on Council.SAV: `drone_riot` destroyed 222 facilities and 250 bases defected;
+`base_ecology` bred 6,231 units with 848 global warming steps and 6 volcanoes; `production_phase`
+paid 9 loans and gave 5 free techs; `faction_upkeep` ran 7 market corners and 24 eliminations;
+`enemy_strategy` disbanded 34 units and launched or gave up 12 attacks. Boot test through the
+message-driven UI: Council.SAV 289 -> 291 in 86 s, the game alive, nothing new in the live game
+folder. Logs:
+`regression-runs/2026-10-18-council-batch31.log` and `regression-runs/2026-10-18-sweep-batch31.log`.
+
+## drone_riot defection, 2026-10-18 (deliberate change from the v2.1 exe, chosen by Kiousu)
+
+When a human player's base keeps rioting under police -3 or worse and the rioters find nothing
+left to destroy, the base defects: to its former owner if it was captured, otherwise to the faction
+with the nearest base (a pact doubles that distance, a treaty adds half, a truce halves it).
+Factions with the REVOLT rule (in SMACX the Free Drones, `REVOLT, 75`: "Revolting bases tend to join
+drones") can take it instead. The shipped code has three slips here:
+
+- It keeps each faction's REVOLT chance in 7 stack slots that it only fills for REVOLT factions;
+  the rest keep whatever is on the stack, though the code reads -1 as "no REVOLT" (the exe even
+  stores a -1 per faction into a scratch variable it never uses). A trace of 303 calls on
+  Council.SAV found leftovers from `base_psych` there, one of them huge, which makes the odds
+  negative: in shipped SMACX the REVOLT roll never fires, unless the Drones happen to be faction 3.
+- It hands the base to a REVOLT faction when the clock roll is at or below the chance that none
+  takes it, the wrong way round (about 23-25% for the Drones instead of 75%), and with clean slots
+  and no REVOLT faction in the game it would always roll and divide by zero.
+- It weighs each candidate base by the treaty with the closest faction found so far, not with that
+  base's owner (before any is found it reads the word before the treaty table).
+
+Kiousu chose the intended behaviour: the slots start at -1; a REVOLT faction takes the base when
+`timeGetTime() % 100 < round(100 * (1 - product of (1 - chance / 100)))`, so exactly 75% with only
+the Free Drones and never without a REVOLT faction; the pick among REVOLT factions is weighted by
+their chances as in the original; each candidate base is weighed by its own owner's treaty. The
+test compares everything else with the exe (riots, facility destruction, no-defection cases, and
+defections where both agree, with the original's roll pinned off) and checks the new rule directly:
+REVOLT 75 alone takes the base on 75 of the 100 clock values (600 of 800 on Council.SAV), no REVOLT
+faction on none, two REVOLT factions at 30/50 on 65 per base with every pick following the weights,
+and the treaty fix on 126 Council.SAV bases (66 of which the slip would have sent elsewhere).

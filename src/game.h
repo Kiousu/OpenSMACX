@@ -163,6 +163,7 @@ struct Monument {
 
 extern Monument *Monuments; // [8]
 extern int *ControlUpkeepA;
+extern int *ControlTurnC;
 extern uint32_t *SolarFlaresEvent;
 extern uint32_t *GameState; // bitfield
 extern int *DiffLevelCurrent;
@@ -176,12 +177,19 @@ extern uint32_t *StartingMissionYear;
 extern uint32_t *EndingMissionYear;
 extern uint32_t *TectonicDetonationCount;
 extern int *SunspotDuration;
+extern int *GlobalWarmingCount;
+extern int *ClimateValueA;
+extern int *ClimateValueB;
+extern int *ClimateValueC;
+extern int *ClimateFutureChange;
 extern uint32_t *GameInterludeState;
 extern uint32_t *MountPlanetX;
 extern uint32_t *MountPlanetY;
 extern int *DustCloudDuration;
 extern BOOL *IsMultiplayerNet;
 extern BOOL *IsMultiplayerPBEM;
+extern int *AscentScoreScale;
+extern int *AscentScores;
 
 DLLEXPORT void __cdecl alien_start();
 DLLEXPORT void __cdecl alien_fauna();
@@ -196,7 +204,12 @@ DLLEXPORT void __cdecl mon_tech_discovered(int faction_id, int tech_id);
 DLLEXPORT void __cdecl repair_phase(uint32_t faction_id);
 DLLEXPORT int __cdecl energy_limit(int faction_id);
 DLLEXPORT void __cdecl allocate_energy(uint32_t faction_id);
+DLLEXPORT void __cdecl production_phase(uint32_t faction_id);
+DLLEXPORT void __cdecl faction_upkeep(uint32_t faction_id);
+DLLEXPORT void __cdecl mash_planes();
+DLLEXPORT void __cdecl compute_score(uint32_t faction_id, int *score_total, int *scores, BOOL is_sub);
 DLLEXPORT void __cdecl do_fungal_towers();
+DLLEXPORT void __cdecl climactic_changes();
 DLLEXPORT void __cdecl mon_colony_founded(int faction_id, LPCSTR base_name);
 DLLEXPORT void __cdecl mon_secrets_of_tech(int faction_id);
 DLLEXPORT void __cdecl mon_prototype_built(int faction_id);

@@ -173,5 +173,6 @@ DLLEXPORT int __cdecl tech_tech(uint32_t tech_id);
 DLLEXPORT int __cdecl tech_infra(uint32_t tech_id);
 DLLEXPORT int __cdecl tech_colonize(uint32_t tech_id);
 DLLEXPORT uint32_t __cdecl tech_rate(uint32_t faction_id);
+DLLEXPORT int __cdecl tech_selection(int faction_id);
 DLLEXPORT int __cdecl tech_advance(int faction_id);
 DLLEXPORT void __cdecl tech_research(int faction_id, int labs);

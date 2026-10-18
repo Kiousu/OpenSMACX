@@ -25,6 +25,8 @@
 #include "faction.h"
 #include "map.h"
 #include "veh.h"
+#include "log.h"
+#include "council.h"
 
 BOOL *ExpansionEnabled = (BOOL *)0x009A6488;
 int *EnergyCredits = (int *)0x0093A958; // credits of the player at the controls as last shown (Thinker's name)
@@ -44,6 +46,8 @@ uint32_t *GameRules = (uint32_t *)0x009A649C;
 uint32_t *GameMoreRules = (uint32_t *)0x009A681C;
 Monument *Monuments = (Monument *)0x0094CA08; // [8]
 int *ControlUpkeepA = (int *)0x0093A934; // Thinker's name; selects which solar flare bit applies
+int *ControlTurnC = (int *)0x0093A938; // Thinker's name; while clear in a network game, alt_set() keeps
+                                      // a flooded base at size 1
 uint32_t *SolarFlaresEvent = (uint32_t *)0x009A6818; // bits 0/1: energy yields tripled
 uint32_t *GameState = (uint32_t *)0x009A64C0;
 int *DiffLevelCurrent = (int *)0x009A64C4;
@@ -52,11 +56,23 @@ uint32_t *ObjectiveReqVictory = (uint32_t *)0x0094B4C0;
 uint32_t *ObjectivesSuddenDeathVictory = (uint32_t *)0x0094B4C4;
 uint32_t *ObjectiveAchievePts = (uint32_t *)0x0094B4C8;
 uint32_t *VictoryAchieveBonusPts = (uint32_t *)0x0094B4CC;
+// compute_score(): once the Ascent to Transcendence is built, the points its builder and their pact
+// partners share by population ([0] of the scores is the total weight, [1..7] each faction's)
+int *AscentScoreScale = (int *)0x009A67DC;
+int *AscentScores = (int *)0x009A67E0; // [8]
 uint32_t *MissionYearCurrent = (uint32_t *)0x009A64D8;
 uint32_t *StartingMissionYear = (uint32_t *)0x0094B4D0;
 uint32_t *EndingMissionYear = (uint32_t *)0x0094B4D4;
 uint32_t *TectonicDetonationCount = (uint32_t *)0x00946138; // [8]; value for each faction
 int *SunspotDuration = (int *)0x009A6800;
+int *GlobalWarmingCount = (int *)0x009A6824; // fungal blooms since the last global warming step
+// Sea level change in progress (Thinker's names): ClimateFutureChange is the change still to come
+// (one step per climactic_changes() that fills the counter), ClimateValueA what each turn adds to
+// the counter ClimateValueC, ClimateValueB the counter's threshold.
+int *ClimateValueA = (int *)0x009A67CC;
+int *ClimateValueB = (int *)0x009A67D0;
+int *ClimateValueC = (int *)0x009A67D4;
+int *ClimateFutureChange = (int *)0x009A67D8;
 uint32_t *GameInterludeState = (uint32_t *)0x009A64A4; // Thinker's name; bit 0x400: Voice of Planet begun
 uint32_t *MountPlanetX = (uint32_t *)0x009A6804;
 uint32_t *MountPlanetY = (uint32_t *)0x009A6808;
@@ -866,6 +882,36 @@ void __cdecl do_fungal_towers() {
 }
 
 /*
+Purpose: Move a pending sea level change on: each turn ClimateValueA is added to the counter and
+         when it reaches ClimateValueB the sea rises or falls by one step (the rest of the counter
+         carries over), the climate and the map are redone and the SEARISING / SEAFALLING notice is
+         shown.
+Original Offset: 00524210
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-18-council-batch30.log)
+*/
+void __cdecl climactic_changes() {
+    if (!*ClimateFutureChange) {
+        return;
+    }
+    *ClimateValueC += *ClimateValueA;
+    if (*ClimateValueC < *ClimateValueB) {
+        return;
+    }
+    *ClimateValueC -= *ClimateValueB;
+    int step = *ClimateFutureChange > 0 ? 1 : (*ClimateFutureChange < 0 ? -1 : 0);
+    *ClimateFutureChange -= step;
+    *MapSeaLevel += step;
+    world_climate();
+    draw_map(1);
+    if (step > 0) {
+        popp(ScriptTxtID, "SEARISING", 0, "searis_sm.pcx", NULL);
+    } else {
+        popp(ScriptTxtID, "SEAFALLING", 0, "seafal_sm.pcx", NULL);
+    }
+}
+
+/*
 Purpose: Start-of-turn upkeep for a faction's units: reset their per-turn counters and flags, count
          down timed sentry/hold orders, lift the "needs cover" flag at a base, bunker or airbase,
          hand fungal towers to the natives, and repair damage. Units that didn't move repair one
@@ -1186,6 +1232,247 @@ void __cdecl allocate_energy(uint32_t faction_id) {
 }
 
 /*
+Purpose: Run the specified faction's upkeep for the turn: social engineering, repairs and
+         production, then (in single player and hotseat, or in a network game with STATE_UNK_8)
+         energy allocation, diplomacy, strategy and social engineering choices; a computer player
+         with more energy than the cost of cornering the Global Energy Market starts doing so when
+         the economic victory is allowed. Then its bases' BSTATE_UNK_1 and hurried flags are
+         cleared, the turn's hurry costs are taken out of its reserves, a faction without bases,
+         colony pods or sea colony pods is eliminated, and the Planetary Council is offered to
+         the player at the controls (once) or called by a computer player. Ends with the
+         autosave for the player at the controls.
+Original Offset: 00527290
+Return Value: n/a
+Status: Complete
+*/
+void __cdecl faction_upkeep(uint32_t faction_id) {
+    *ControlUpkeepA = 1;
+    social_upkeep(faction_id);
+    do_all_non_input();
+    repair_phase(faction_id);
+    do_all_non_input();
+    production_phase(faction_id);
+    do_all_non_input();
+    PlayerData *p = &PlayersData[faction_id];
+    if (!(*GameState & STATE_UNK_1) || *GameState & STATE_UNK_8) {
+        allocate_energy(faction_id);
+        do_all_non_input();
+        enemy_diplomacy(faction_id);
+        do_all_non_input();
+        enemy_strategy(faction_id);
+        do_all_non_input();
+        social_ai(faction_id, -1, -1, -1, -1, 0);
+        do_all_non_input();
+        if (!is_human(faction_id) && p->energy_reserves > (int)corner_market(faction_id)
+            && has_tech(Rules->tech_economic_victory, faction_id)
+            && *GameRules & RULES_VICTORY_ECONOMIC) {
+            p->corner_market_turn = Rules->turns_corner_gbl_energy_mrkt + *TurnCurrentNum;
+            p->corner_market_active = corner_market(faction_id);
+            p->energy_reserves -= corner_market(faction_id);
+            parse_set(Players[faction_id].is_leader_female, false);
+            parse_says(0, Players[faction_id].title_leader, -1, -1);
+            parse_set(Players[faction_id].is_leader_female, false);
+            parse_says(1, Players[faction_id].name_leader, -1, -1);
+            parse_set(Players[faction_id].noun_gender, Players[faction_id].is_noun_plural);
+            parse_says(2, Players[faction_id].noun_faction, -1, -1);
+            parse_says(3, Players[faction_id].adj_name_faction, -1, -1);
+            parse_num(0, game_year(p->corner_market_turn));
+            popp(ScriptTxtID, "CORNERWARNING", 0, "econwin_sm.pcx", 0);
+        }
+    }
+    for (int base_id = 0; base_id < *BaseCurrentCount; base_id++) {
+        if (Bases[base_id].faction_id_current == faction_id) {
+            Bases[base_id].state &= ~(BSTATE_UNK_1 | BSTATE_PRODUCTION_HURRIED);
+        }
+    }
+    p->energy_reserves -= p->hurry_cost_total;
+    p->hurry_cost_total = 0;
+    if (p->energy_reserves < 0) {
+        p->energy_reserves = 0;
+    }
+    if (!p->current_num_bases && !p->proto_id_active[BSC_COLONY_POD]
+        && !p->proto_id_active[BSC_SEA_ESCAPE_POD]) {
+        eliminate_player(faction_id, 0);
+    }
+    *ControlUpkeepA = 0;
+    *PathXDst = -1;
+    *PathYDst = -1;
+    if (!(*GameState & STATE_UNK_1) || *GameState & STATE_UNK_8) {
+        if (faction_id == (uint32_t)*FactionIDCurrent
+            && !(*GameState & (STATE_DISPLAYED_COUNCIL_AVAIL_MSG | STATE_COUNCIL_HAS_CONVENED))
+            && can_call_council(faction_id, false) && !(*GameState & STATE_UNK_1)) {
+            *GameState |= STATE_DISPLAYED_COUNCIL_AVAIL_MSG;
+            popp(ScriptTxtID, "COUNCILOPEN", 0, "council_sm.pcx", 0);
+        }
+        if (!is_human(faction_id)) {
+            call_council(faction_id);
+        }
+    }
+    if (!*IsMultiplayerNet && *GamePreferences & PREF_BSC_AUTOSAVE_EACH_TURN
+        && faction_id == (uint32_t)*FactionIDCurrent) {
+        auto_save();
+    }
+}
+
+/*
+Purpose: Ground the air units that end the turn away from a base, an airbase or a carrier with
+         moves left over (only chassis with a range): copters lose 30% of their reactor's hit
+         points, every other air unit all of them, and a unit with nothing left is killed. A
+         crash the player at the controls can see is centred on and shown with an explosion.
+         Units are visited from the last to the first, as kill() compacts the unit table.
+Original Offset: 00529C00
+Return Value: n/a
+Status: Complete
+*/
+void __cdecl mash_planes() {
+    for (int veh_id = *VehCurrentCount - 1; veh_id >= 0; veh_id--) {
+        uint32_t chassis_id = VehPrototypes[Vehs[veh_id].proto_id].chassis_id;
+        if (Chassis[chassis_id].triad != TRIAD_AIR || !Chassis[chassis_id].range
+            || !veh_moves(veh_id)) {
+            continue;
+        }
+        Map *tile = map_loc(Vehs[veh_id].x, Vehs[veh_id].y);
+        if ((tile->bit & BIT_BASE_IN_TILE && (tile->val2 & 0xF) < 8) || tile->bit & BIT_AIRBASE
+            || stack_check(veh_id, 6, ABL_CARRIER, -1, -1)) {
+            continue;
+        }
+        BOOL seen = false;
+        uint32_t faction_id = Vehs[veh_id].faction_id;
+        if (faction_id == (uint32_t)*FactionIDCurrent
+            || Vehs[veh_id].visibility & (1 << *FactionIDCurrent)) {
+            Console_focus(ConsoleVar, 0, Vehs[veh_id].x, Vehs[veh_id].y, faction_id);
+            seen = true;
+        }
+        Vehs[veh_id].state |= VSTATE_UNK_4;
+        if (seen) {
+            boom(Vehs[veh_id].x, Vehs[veh_id].y, 0x80);
+        }
+        int proto_id = Vehs[veh_id].proto_id;
+        chassis_id = VehPrototypes[proto_id].chassis_id;
+        if (Chassis[chassis_id].range == 1 && chassis_id == CHSI_COPTER) {
+            Vehs[veh_id].dmg_incurred += (uint8_t)(VehPrototypes[proto_id].reactor_id * 3);
+        } else {
+            Vehs[veh_id].dmg_incurred += (uint8_t)veh_health(veh_id);
+        }
+        if (!veh_health(veh_id)) {
+            kill(veh_id);
+        } else {
+            Vehs[veh_id].terraforming_turns = 0;
+            draw_tile(Vehs[veh_id].x, Vehs[veh_id].y, 2);
+        }
+    }
+}
+
+/*
+Purpose: A faction's production phase. Clears the per-turn energy totals and recomputes the tech
+         effects; pays the faction's loans to its living partners not under sanctions (all it can,
+         the rest added back to the balance; at vendetta the payment is added to the balance
+         instead); clears the AI's economy tallies; runs every one of its bases' upkeep, keeping
+         the message queue going in between. On the two hardest levels an AI faction gets a
+         third (Thinker) or two thirds (Transcend) of its facility maintenance back. A faction
+         with the interest rule earns 1 energy per base or its rate in percent on the reserves.
+         On the first turn the faction's free techs are awarded, and the end of sanctions is
+         announced to the player at the controls.
+Original Offset: 00526E70
+Return Value: n/a
+Status: Complete
+*/
+void __cdecl production_phase(uint32_t faction_id) {
+    PlayerData *player = &PlayersData[faction_id];
+    player->unk_28 = 0;
+    player->energy_surplus_total = 0;
+    player->maint_cost_total = 0;
+    player->turn_commerce_income = 0;
+    tech_effects(faction_id);
+    for (uint32_t f = 1; f < MaxPlayerNum; f++) {
+        if (f == faction_id || !(FactionsStatus[1] & (1 << f)) || !(FactionsStatus[1] & (1 << faction_id))) {
+            continue;
+        }
+        int balance = player->loan_balance[f];
+        if (!balance || PlayersData[f].sanction_turns) {
+            continue;
+        }
+        if (player->diplo_treaties[f] & DTREATY_VENDETTA) {
+            player->loan_balance[f] = player->loan_payment[f] + balance;
+        } else {
+            int payment = player->loan_payment[f];
+            if (payment >= player->energy_reserves) {
+                payment = player->energy_reserves;
+            }
+            PlayersData[f].energy_reserves += payment;
+            player->loan_balance[f] -= payment;
+            player->energy_reserves -= payment;
+            if (payment < player->loan_payment[f]) {
+                player->loan_balance[f] += player->loan_payment[f] - payment;
+            }
+        }
+    }
+    player->flags &= ~PFLAG_SELF_AWARE_COLONY_LOST_MAINT;
+    *EnergyCredits = player->energy_reserves;
+    memset(player->unk_46, 0, sizeof(player->unk_46));
+    for (int i = 0; i < 8; i++) {
+        player->support_cost_by_level[i] = 0;
+        memset(player->unk_39[i], 0, sizeof(player->unk_39[i]));
+    }
+    player->unk_47 = 0;
+    player->armed_unit_weight = 0;
+    player->unk_49 = 0;
+    player->nutrient_surplus_total = 0;
+    player->labs_total = 0;
+    for (int base_id = 0; base_id < *BaseCurrentCount; base_id++) {
+        if (Bases[base_id].faction_id_current == faction_id) {
+            if (base_upkeep(base_id)) {
+                base_id--; // the base is gone or no longer the faction's: look at its slot again
+            }
+            do_all_non_input();
+        }
+    }
+    int maint = (int)player->maint_cost_total;
+    if (!is_human(faction_id) && *DiffLevelCurrent > DLVL_LIBRARIAN && maint) {
+        if (*DiffLevelCurrent == DLVL_THINKER) {
+            player->energy_reserves += maint / 3;
+            maint = (int)player->maint_cost_total;
+            player->maint_cost_total = maint - maint / 3;
+        } else {
+            player->energy_reserves += maint * 2 / 3;
+            maint = (int)player->maint_cost_total;
+            player->maint_cost_total = maint - maint * 2 / 3;
+        }
+    }
+    if (Players[faction_id].rule_flags & RFLAG_INTEREST) {
+        if (!Players[faction_id].rule_interest) {
+            for (int base_id = 0; base_id < *BaseCurrentCount; base_id++) {
+                if (Bases[base_id].faction_id_current == faction_id) {
+                    player->energy_reserves++;
+                    player->energy_surplus_total++;
+                }
+            }
+        } else {
+            player->energy_reserves = Players[faction_id].rule_interest * player->energy_reserves / 100
+                + player->energy_reserves;
+        }
+    }
+    player->unk_18 = player->energy_surplus_total;
+    player->unk_17 = player->turn_commerce_income - player->maint_cost_total + player->energy_surplus_total;
+    if (*TurnCurrentNum == 1) {
+        *SkipTechScreenA = 1;
+        for (int i = 0; i < Players[faction_id].rule_tech_selected; i++) {
+            log_say("Freebie Advance", Players[faction_id].name_leader, faction_id, 0, 0);
+            tech_advance(faction_id);
+        }
+        *SkipTechScreenA = 0;
+    }
+    if ((!(*GameState & STATE_UNK_1) || (*GameState & STATE_UNK_8)) && player->sanction_turns
+        && !--player->sanction_turns && faction_id == (uint32_t)*FactionIDCurrent) {
+        if (Players[faction_id].rule_flags & RFLAG_ALIEN) {
+            popp(ScriptTxtID, "SANCTIONSENDALIEN", 0, "Alopdir.pcx", 0);
+            return;
+        }
+        popp(ScriptTxtID, "SANCTIONSEND", 0, "council_sm.pcx", 0);
+    }
+}
+
+/*
 Purpose: When a new SMACX game is set up and the player's faction is neither an alien faction nor
          FUNGBOY, remove every computer controlled alien or FUNGBOY faction from a single player
          game: its bases and units are destroyed, it no longer counts as alive and its flags and
@@ -1285,6 +1572,219 @@ void __cdecl yearmotize(LPSTR str) {
             p[2] = digits[2];
             p[3] = digits[3];
         }
+    }
+}
+
+/*
+Purpose: Compute the specified faction's score into score_total and nine score lines (with NULL
+         pointers, the faction's own fields): [0] citizens (its bases, plus those of pact
+         partners or factions surrendered to it, depending on the rules), [1] commerce, [2] techs,
+         [3] theory_of_everything x 10, [4] 25 per Secret Project, [5] the native life bonus, [6]
+         objectives (its share of the Ascent points once the Ascent to Transcendence is built), [7]
+         victory points and [8], left at 0. is_sub is set when a "highest score wins" scenario
+         scores every faction: the function then ends without the scenario check and without
+         recording the total; otherwise the total is recorded (doubled under Iron Man unless
+         the scenario was cheated).
+Original Offset: 005ACBE0
+Return Value: n/a
+Status: Complete
+*/
+void __cdecl compute_score(uint32_t faction_id, int *score_total, int *scores, BOOL is_sub) {
+    if (*GameState & STATE_UNK_8 && !is_sub) {
+        return;
+    }
+    PlayerData *p = &PlayersData[faction_id];
+    int *stored = &p->unk_110; // [9] the faction's own score lines: unk_110 .. unk_118
+    if (!score_total) {
+        score_total = &p->unk_109;
+    }
+    if (!scores) {
+        scores = stored;
+    }
+    *score_total = 0;
+    if (!is_sub) {
+        p->unk_107 = 0;
+    }
+    memset(scores, 0, sizeof(int) * 9);
+    for (int base_id = 0; base_id < *BaseCurrentCount; base_id++) {
+        uint32_t owner = Bases[base_id].faction_id_current;
+        int pop = Bases[base_id].population_size;
+        if (owner == faction_id) {
+            scores[0] += pop;
+            set_base(base_id);
+            base_compute(false);
+            for (uint32_t i = 1; i < MaxPlayerNum; i++) {
+                if (!(Players[faction_id].rule_flags & RFLAG_ALIEN)
+                    && !(Players[i].rule_flags & RFLAG_ALIEN) && !p->sanction_turns
+                    && !PlayersData[i].sanction_turns) {
+                    scores[1] += BaseCommerceImport[i];
+                }
+            }
+        } else if (!(p->flags & (PFLAG_UNK_20000 | PFLAG_UNK_40000))) {
+            uint32_t treaty = PlayersData[owner].diplo_treaties[faction_id];
+            if (treaty & DTREATY_HAVE_SURRENDERED) {
+                if (treaty & DTREATY_PACT) {
+                    scores[0] += pop;
+                }
+            } else if (treaty & DTREATY_PACT && *GameRules & RULES_VICTORY_COOPERATIVE) {
+                scores[0] += pop / 2;
+            }
+        } else if (p->diplo_treaties[owner] & DTREATY_PACT
+            && *GameRules & RULES_VICTORY_COOPERATIVE) {
+            scores[0] += pop;
+        } else {
+            scores[0] += pop / 2;
+        }
+    }
+    for (int tech_id = 0; tech_id < MaxTechnologyNum; tech_id++) {
+        if (has_tech(tech_id, faction_id)) {
+            scores[2]++;
+        }
+    }
+    scores[3] = p->theory_of_everything * 10;
+    int objective_pts = (int)*ObjectiveAchievePts;
+    if (objective_pts < 1) {
+        objective_pts = 1;
+    }
+    scores[6] = num_objectives(faction_id, *GameRules & RULES_VICTORY_COOPERATIVE) * objective_pts;
+    for (int i = 0; i < MaxSecretProjectNum; i++) {
+        int base_id = base_project(i);
+        if (base_id >= 0 && Bases[base_id].faction_id_current == faction_id) {
+            scores[4] += 25;
+        }
+    }
+    *AscentScoreScale = 0;
+    memset(AscentScores, 0, sizeof(int) * MaxPlayerNum);
+    int ascent_base_id = base_project(SP_ASCENT_TO_TRANSCENDENCE);
+    if (ascent_base_id >= 0) {
+        *AscentScoreScale = 300;
+        int scale = (1000 - *TurnCurrentNum) * 2;
+        if (scale >= 300) {
+            *AscentScoreScale = scale;
+        }
+        int faction_id_ascent = -1;
+        int pop_total = 0;
+        int pop_share = 0;
+        for (int i = 1; i < MaxPlayerNum; i++) {
+            if (Bases[ascent_base_id].faction_id_current == i) {
+                faction_id_ascent = i;
+                pop_total = PlayersData[i].pop_total * 2;
+                AscentScores[i] = pop_total;
+                if (i == (int)faction_id) {
+                    pop_share = pop_total;
+                }
+                break;
+            }
+        }
+        for (int i = 1; i < MaxPlayerNum; i++) {
+            // with no faction 1-7 owning the base the original reads diplo_treaties[-1]
+            if (faction_id_ascent != i
+                && (&PlayersData[i].diplo_treaties[0])[faction_id_ascent] & DTREATY_PACT) {
+                pop_total += PlayersData[i].pop_total;
+                AscentScores[i] = PlayersData[i].pop_total;
+                if (i == (int)faction_id) {
+                    pop_share += PlayersData[i].pop_total;
+                }
+            }
+        }
+        scores[6] = *AscentScoreScale * pop_share / pop_total; // no check for 0 in the original
+        AscentScores[0] = pop_total;
+    }
+    int conquest = (500 - *TurnCurrentNum) * 2;
+    scores[7] = (conquest < 0) ? 0 : conquest;
+    if (!(*GameRules & RULES_VICTORY_CONQUEST)) {
+        scores[7] = 0;
+    }
+    if (*GameState & STATE_VICTORY_CONQUER && *GameRules & RULES_VICTORY_CONQUEST && scores[7]) {
+        int pop_share = 0;
+        int pop_total = 0;
+        for (int base_id = 0; base_id < *BaseCurrentCount; base_id++) {
+            int pop = Bases[base_id].population_size;
+            pop_total += pop;
+            uint32_t owner = Bases[base_id].faction_id_current;
+            uint32_t treaty = PlayersData[owner].diplo_treaties[faction_id];
+            if (owner == faction_id
+                || (treaty & DTREATY_PACT && treaty & DTREATY_HAVE_SURRENDERED)) {
+                pop_share += pop;
+            }
+        }
+        if (pop_total) {
+            scores[7] = stored[7] * pop_share / pop_total;
+        }
+    } else {
+        scores[7] = 0;
+        if (p->flags & (PFLAG_UNK_20000 | PFLAG_UNK_40000)) {
+            int points = (600 - *TurnCurrentNum) * 2;
+            scores[7] = (points < 200) ? 200 : points;
+        } else if (p->flags & PFLAG_UNK_100000) {
+            int points = (1000 - *TurnCurrentNum) * 2;
+            scores[7] = (points < 300) ? 300 : points;
+        } else {
+            for (uint32_t i = 1; i < MaxPlayerNum; i++) {
+                if (PlayersData[i].flags & (PFLAG_UNK_20000 | PFLAG_UNK_40000)
+                    && p->diplo_treaties[i] & DTREATY_PACT
+                    && *GameRules & RULES_VICTORY_COOPERATIVE) {
+                    int points = 600 - *TurnCurrentNum;
+                    scores[7] = (points < 100) ? 100 : points;
+                }
+            }
+        }
+    }
+    if (!(FactionsStatus[1] & (1 << faction_id))) {
+        scores[7] = 0;
+        scores[8] = 0;
+    }
+    if (((int)*ObjectiveReqVictory < 9000 || (int)*ObjectivesSuddenDeathVictory < 9000)
+        && !(*GameState & STATE_SCN_VICT_HIGHEST_AC_SCORE_WINS)) {
+        for (int i = 0; i < 9; i++) {
+            if (i != 6) {
+                stored[i] = 0; // the faction's own lines, even when scores points elsewhere
+            }
+        }
+    }
+    if (!stored[7]) {
+        if (!*ObjectiveReqVictory) {
+            int most = (most_objectives(NULL, NULL) < 1) ? 1 : most_objectives(NULL, NULL);
+            if (num_objectives(faction_id, *GameRules & RULES_VICTORY_COOPERATIVE) >= most) {
+                scores[7] = *VictoryAchieveBonusPts;
+            }
+        } else if (num_objectives(faction_id, *GameRules & RULES_VICTORY_COOPERATIVE)
+            >= (int)*ObjectiveReqVictory) {
+            scores[7] = *VictoryAchieveBonusPts;
+        }
+    }
+    for (int i = 0; i < 9; i++) {
+        *score_total += scores[i];
+    }
+    if (*MapNativeLifeForms != 1 && !(*GameState & STATE_IS_SCENARIO)) {
+        int bonus = (int)(*MapNativeLifeForms - 1) * *score_total / 4;
+        scores[5] = bonus;
+        *score_total += bonus;
+    }
+    if (*GameState & STATE_SCN_VICT_HIGHEST_AC_SCORE_WINS) {
+        if (is_sub) {
+            return;
+        }
+        int score_best = 0;
+        for (uint32_t i = 1; i < MaxPlayerNum; i++) {
+            int total;
+            int lines[9];
+            compute_score(i, &total, lines, true);
+            if (total > score_best) {
+                score_best = total;
+            }
+        }
+        if (*score_total >= score_best) {
+            // set after the total was summed: the original leaves it out of this total
+            scores[7] = *VictoryAchieveBonusPts ? *VictoryAchieveBonusPts : 1000;
+        }
+    } else if (is_sub) {
+        return;
+    }
+    int total = *score_total;
+    p->unk_107 = total;
+    if (*GameRules & RULES_IRONMAN && !(*GameState & STATE_SCENARIO_CHEATED_FLAG)) {
+        p->unk_107 = total * 2;
     }
 }
 

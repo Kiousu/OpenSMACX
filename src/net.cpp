@@ -21,6 +21,7 @@
 #include "game.h"
 #include "log.h"
 #include "net.h"
+#include "base.h"
 
 static_assert(sizeof(NetMsgHeader) == 0x10, "NetMsgHeader size");
 static_assert(sizeof(NetMsgVeh) == 0x18, "NetMsgVeh size");

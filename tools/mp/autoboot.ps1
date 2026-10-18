@@ -1,12 +1,14 @@
 param([string]$Save = "Council.SAV", [int]$Turns = 1, [int]$TurnTimeoutSec = 150, [string]$Tag = "autoboot",
-      [switch]$Background)
+      [switch]$Background, [string]$GameDir = "G:\SMACX-opensmacx-test")
 # Boot / multi-turn test without the real mouse or keyboard (messages, see msg.ps1): the harness DLL
 # loads $Save, then each turn: TURN COMPLETE, "Yes, end the turn" if the Operations Director asks,
 # then Enter on whatever pops up during the other factions' moves, until the turn counter in the
 # game's memory moves on. Needs the harness DLL and [OpenSMACX] Windowed=1. Log and screenshots in
 # build\boot\.
+$script:GameDir = $GameDir.TrimEnd('\')
 . "$PSScriptRoot\msg.ps1"
-$Out = "C:\Programming\OpenSMACX\build\boot"
+$Out = if ($script:GameDir -eq "G:\SMACX-opensmacx-test") { "C:\Programming\OpenSMACX\build\boot" }
+       else { "C:\Programming\OpenSMACX\build\boot_" + (Split-Path $script:GameDir -Leaf) }
 New-Item -ItemType Directory -Force $Out | Out-Null
 $Log = "$Out\$Tag.log"
 function L($m) { $line = "[{0}] {1}" -f (Get-Date -Format "HH:mm:ss"), $m; $line | Add-Content $Log; $line }

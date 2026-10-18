@@ -505,6 +505,7 @@ extern int *BaseFindDist;
 extern Base **BaseCurrent;
 extern uint32_t *ScnVictFacilityObj;
 extern uint32_t *BaseUpkeepStage;
+extern BOOL *BaseUpkeepZoom;
 extern BOOL *BaseBitsErrorActive;
 extern int *BaseGovPickID; // [4]
 extern int *BaseGovPickValue; // [4]
@@ -546,6 +547,9 @@ DLLEXPORT BOOL __cdecl has_fac_announced(uint32_t faction_id, uint32_t facility_
 DLLEXPORT void __cdecl set_fac_announced(uint32_t faction_id, uint32_t facility_id, BOOL set);
 DLLEXPORT void __cdecl base_first(uint32_t base_id);
 DLLEXPORT int __cdecl base_init(uint32_t faction_id, int x, int y);
+DLLEXPORT void __cdecl base_kill(uint32_t base_id);
+DLLEXPORT void __cdecl give_a_base(uint32_t base_id, uint32_t faction_id);
+DLLEXPORT int __cdecl base_swap(uint32_t faction_id, uint32_t faction_id_with);
 DLLEXPORT void __cdecl base_change(uint32_t base_id, int production_id);
 DLLEXPORT void __cdecl base_reset(uint32_t base_id, BOOL governor_priorities);
 DLLEXPORT void __cdecl base_hurry();
@@ -563,6 +567,7 @@ DLLEXPORT BOOL __cdecl base_queue(uint32_t base_id);
 DLLEXPORT void __cdecl base_energy_costs();
 DLLEXPORT void __cdecl base_check_support();
 DLLEXPORT void __cdecl base_research();
+DLLEXPORT void __cdecl drone_riot();
 DLLEXPORT void __cdecl farm_compute();
 DLLEXPORT void __cdecl base_support();
 DLLEXPORT void __cdecl base_yield();
@@ -576,6 +581,8 @@ DLLEXPORT void __cdecl assemble_passengers(int base_id, int plan, int priority);
 DLLEXPORT int __cdecl alien_base(int veh_id, int x, int y);
 DLLEXPORT uint32_t __cdecl fac_maint(uint32_t facility_id, uint32_t faction_id);
 DLLEXPORT void __cdecl base_maint();
+DLLEXPORT void __cdecl base_ecology();
+DLLEXPORT int __cdecl base_upkeep(uint32_t base_id);
 DLLEXPORT void __cdecl make_base_unique(uint32_t base_id);
 DLLEXPORT BOOL __cdecl has_project(uint32_t project_id, uint32_t faction_id);
 DLLEXPORT BOOL __cdecl has_fac_built(uint32_t facility_id);

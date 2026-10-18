@@ -761,3 +761,47 @@
 0x001C38B0	?world_rivers@@YAXXZ
 0x001C5A30	?world_climate@@YAXXZ
 0x001C2CB0	?world_erosion@@YAXXZ
+# --- batch 30: unit actions
+0x000CD060	?action_feature@@YAXXZ
+0x000CDA30	?action_patrol@@YAXHHH@Z
+0x000CF740	?action@@YAHH@Z
+0x000CF380	?action_gate@@YAXHH@Z
+0x000CA7F0	?action_staple@@YAXH@Z
+0x000CD2F0	?action_destruct@@YAXH@Z
+0x000CF480	?action_sat_attack@@YAXHHHH@Z
+0x000C96E0	?action_build@@YAHHPBD@Z
+0x000CD090	?action_arty@@YAXHHH@Z
+# --- batch 30: base removal
+0x000E5250	?base_kill@@YAXI@Z
+0x0014CF40	?give_a_base@@YAXII@Z
+0x0014D410	?base_swap@@YAHII@Z
+# --- batch 30: planet events
+0x0015EEE0	?atrocity@@YAXHHHH@Z
+0x0015F450	?major_atrocity@@YAXHH@Z
+0x001BE380	?tech_selection@@YAHH@Z
+0x00124210	?climactic_changes@@YAXXZ
+0x00191290	?alt_set@@YAXHHI@Z
+0x0017A050	?monolith@@YAXI@Z
+# --- batch 31: AI diplomacy
+0x0010BCC0	?double_cross@@YAXHHH@Z
+0x0013A780	?contiguous@@YAHHHIH@Z
+0x0013CAF0	?pact_of_brotherhood@@YAXHH@Z
+0x0015C430	?comm_check@@YAXHH@Z
+0x0015C840	?enemies_war@@YAXHH@Z
+0x0015F930	?enemy_diplomacy@@YAXI@Z
+# --- batch 31: AI strategy
+0x00161080	?enemy_strategy@@YAXI@Z
+0x00179240	?enemy_veh@@YAHI@Z
+0x00179510	?enemy_turn@@YAXI@Z
+# --- batch 31: faction turn
+0x001C08C0	?veh_kill@@YAXH@Z
+0x001C0B00	?kill@@YAXH@Z
+0x00129C00	?mash_planes@@YAXXZ
+0x00106650	?interceptor@@YAHIIHH@Z
+0x00127290	?faction_upkeep@@YAXI@Z
+0x001ACBE0	?compute_score@@YAXIPAH0H@Z
+# --- batch 31: base turn
+0x000F4FB0	?drone_riot@@YAXXZ
+0x000F67F0	?base_ecology@@YAXXZ
+0x000F79C0	?base_upkeep@@YAHI@Z
+0x00126E70	?production_phase@@YAXI@Z

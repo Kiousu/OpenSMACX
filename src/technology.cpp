@@ -26,6 +26,7 @@
 #include "game.h"
 #include "general.h"
 #include "map.h"
+#include "net.h"
 #include "random.h"
 #include "strings.h"
 #include "veh.h"
@@ -740,6 +741,44 @@ uint32_t __cdecl tech_rate(uint32_t faction_id) {
         cost += cost / 2; // Slower Rate of Research Discoveries
     }
     return range(cost, 1, 99999999);
+}
+
+/*
+Purpose: Pick the faction's next research goal with tech_pick() (the research dialog for the player
+         at the controls, the AI's choice for the others) and store it. In a network game another
+         human player's goal comes from that player's own machine: the game waits for it, showing
+         PICKINGTECH once, and returns it; a goal picked here for a human player is sent to the
+         others and its arrival waited for in the same way.
+Original Offset: 005BE380
+Return Value: The tech id picked
+Status: Complete (verified vs original: docs/regression-runs/2026-10-18-council-batch30.log)
+*/
+int __cdecl tech_selection(int faction_id) {
+    PlayerData *p = &PlayersData[faction_id];
+    if (*IsMultiplayerNet && (FactionsStatus[0] & (1 << faction_id)) && faction_id != *FactionIDCurrent) {
+        BOOL shown = false;
+        while (!*ControlTurnA && p->tech_id_researching < 0) {
+            NetDaemon_net_tasks(NetDaemonVar, NULL);
+            if (!shown) {
+                shown = true;
+                parse_says(0, get_title(faction_id), -1, -1);
+                parse_says(1, get_name(faction_id), -1, -1);
+                NetMsg_pop(NetMsgVar, NULL, "PICKINGTECH", 0, 0, NULL);
+            }
+        }
+        NetMsg_close(NetMsgVar, NULL);
+        return p->tech_id_researching;
+    }
+    int tech_id = tech_pick(faction_id, 0, -1, NULL);
+    p->tech_id_researching = tech_id;
+    if (*IsMultiplayerNet && (FactionsStatus[0] & (1 << faction_id))) {
+        synch_researching(faction_id);
+        p->tech_id_researching = -1;
+        while (!*ControlTurnA && p->tech_id_researching < 0) {
+            NetDaemon_net_tasks(NetDaemonVar, NULL);
+        }
+    }
+    return tech_id;
 }
 
 /*

@@ -27,9 +27,11 @@
 #include "game.h"
 #include "map.h"
 #include "net.h"
+#include "path.h"
 #include "probe.h"
 #include "random.h"
 #include "technology.h"
+#include "terraforming.h"
 #include "veh.h"
 
 Player *Players = (Player *)0x00946A50;
@@ -80,8 +82,18 @@ int *DiploUnk4 = (int *)0x0093FA68;
 int *DiploUnk5 = (int *)0x0093FA98;
 int *DiploUnk6 = (int *)0x0093FA78;
 int *DiploUnk7 = (int *)0x0093FA3C; // doubles the price buy_tech() asks
+int *DiploBaseSwapAskID = (int *)0x0093FA7C; // Thinker: diplo_ask_base_swap_id
+int *DiploBaseSwapBidID = (int *)0x0093FA30; // Thinker: diplo_bid_base_swap_id
 int *DiploUnk8 = (int *)0x0093FA5C; // faction named in buy_tech()'s COMMLINK offer
 int *DiploCounterProposalID = (int *)0x0093FAB0; // Thinker: diplo_counter_proposal_id
+int *DiploUnk9 = (int *)0x0093FA60; // set by diplomacy_check(); read by enemy_diplomacy()
+// Why an AI faction wants to call the player at the controls, indexed by the AI faction: 1 to
+// talk, 2 first contact (comm_check), 0x40 a common enemy stronger than the AI, 4 / 0x20 units
+// in its territory under a treaty, 8 / 0x10 / 0x18 units in its territory otherwise
+// (enemy_diplomacy). Hotseat/PBEM games keep them per human player:
+// DiploCommRequestPBEM[human * 8 + faction].
+uint32_t *DiploCommRequest = (uint32_t *)0x0093F678; // [8]
+uint32_t *DiploCommRequestPBEM = (uint32_t *)0x0093F698; // [8][8]
 
 /*
 Purpose: Determine if the specified faction is a Progenitor alien faction (Caretakers / Usurpers).
@@ -750,6 +762,55 @@ void __cdecl scan_prototypes(uint32_t faction_id, uint32_t faction_id_other) {
 }
 
 /*
+Purpose: Check whether a base of faction_id can reach a base of faction_id_2 (in the specified
+         region, or anywhere with region 0, in which case both must have bases there). The map's
+         path markers are cleared, then for each base of faction_id not on a marked tile the
+         faction's territory around it is marked and Path::find() is tried from it to each base
+         of faction_id_2 on an unmarked tile of the same region (after marking that faction's
+         territory around the target). unk picks the wider Path::find() mode (0xE01 over 0x201).
+Original Offset: 0053A780
+Return Value: Is there a path? true/false
+Status: Complete
+*/
+BOOL __cdecl contiguous(int faction_id, int faction_id_2, uint32_t region, BOOL unk) {
+    if (region && (!PlayersData[faction_id].region_total_bases[region]
+        || !PlayersData[faction_id_2].region_total_bases[region])) {
+        return false;
+    }
+    for (int i = 0; i < (int)*MapArea; i++) {
+        (*MapTiles)[i].unk_1 = 0;
+    }
+    for (int base_id = 0; base_id < *BaseCurrentCount; base_id++) {
+        Base *base = &Bases[base_id];
+        if (base->faction_id_current != faction_id) {
+            continue;
+        }
+        Map *tile = map_loc(base->x, base->y);
+        uint32_t base_region = tile->region;
+        if ((region && base_region != region) || tile->unk_1) {
+            continue;
+        }
+        Paths->territory(base->x, base->y, base_region, faction_id);
+        for (int base_id_2 = 0; base_id_2 < *BaseCurrentCount; base_id_2++) {
+            Base *base_2 = &Bases[base_id_2];
+            if (base_2->faction_id_current != faction_id_2) {
+                continue;
+            }
+            Map *tile_2 = map_loc(base_2->x, base_2->y);
+            if (tile_2->region != base_region || tile_2->unk_1) {
+                continue;
+            }
+            Paths->territory(base_2->x, base_2->y, base_region, faction_id_2);
+            if (Path_find(Paths, NULL, base->x, base->y, base_2->x, base_2->y, faction_id,
+                faction_id_2, unk ? 0xE01 : 0x201, -1) >= 0) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+/*
 Purpose: Copy a faction leader's title and name and the faction's noun into three consecutive
          parse slots, each with its gender and plurality, as the diplomacy notices do.
 Original Offset: n/a (inlined in the original)
@@ -760,6 +821,45 @@ static void parse_leader(uint32_t slot, int faction_id) {
     parse_says(slot, get_title(faction_id), -1, -1);
     parse_says(slot + 1, get_name(faction_id), -1, -1);
     parse_says(slot + 2, get_noun(faction_id), -1, -1);
+}
+
+/*
+Purpose: Conclude a Pact of Brotherhood between the faction and the faction it is talking with:
+         pact flags (relayed in a network game), the other side's patience reset, the last contact
+         set, both reputations raised. MAKEPACT is shown, the maps are exchanged (HERESTHEMAP),
+         prototypes are scanned and offered, and at low difficulty or the first time the PACT
+         tutorial message follows (not in network games).
+Original Offset: 0053CAF0
+Return Value: n/a
+Status: Complete
+*/
+void __cdecl pact_of_brotherhood(int faction_id, int faction_id_with) {
+    *DiploSecondFaction = faction_id_with;
+    net_treaty_on(faction_id_with, faction_id, DTREATY_PACT | DTREATY_UNK_1000000, false);
+    PlayersData[faction_id_with].diplo_patience[faction_id] = 0;
+    PlayersData[faction_id].diplo_spoke[faction_id_with] = *TurnCurrentNum;
+    diplomacy_check(faction_id, faction_id_with, 0);
+    *DiploUnk2 = 0;
+    PlayersData[faction_id].global_reputation++;
+    PlayersData[faction_id_with].global_reputation++;
+    diplomacy_caption(faction_id, faction_id_with);
+    parse_leader(0, faction_id_with);
+    parse_says(3, get_pact(faction_id), -1, -1);
+    parse_says(4, get_phrase(faction_id, 0), -1, -1);
+    parse_says(5, get_phrase(faction_id_with, 0), -1, -1);
+    X_pops_11("MAKEPACT", 0x100000, FactionPortraits[faction_id_with], pop_wait);
+    net_maps(faction_id, faction_id_with, true);
+    parse_says(0, get_pact(faction_id), -1, -1);
+    X_pops_11("HERESTHEMAP", 0x100000, FactionPortraits[faction_id_with], pop_wait);
+    scan_prototypes(faction_id, faction_id_with);
+    mention_prototypes(faction_id, faction_id_with);
+    if ((*DiffLevelCurrent <= DLVL_SPECIALIST || tut_check2(0x1000)) && !*IsMultiplayerNet) {
+        parse_says(0, get_noun(faction_id_with), -1, -1);
+        parse_says(1, get_title(faction_id_with), -1, -1);
+        parse_says(2, get_name(faction_id_with), -1, -1);
+        parse_says(3, Players[faction_id_with].adj_name_faction, -1, -1);
+        X_pop_2(TutorTxtID, "PACT", NULL);
+    }
 }
 
 /*
@@ -924,6 +1024,141 @@ void __cdecl intervention(int faction_id, int faction_id_atk) {
         } else if (faction_id == *FactionIDCurrent) {
             X_pop("AIDSUS", NULL);
         }
+    }
+}
+
+/*
+Purpose: A human attacker's betrayal makes the betrayed faction want revenge: the agenda flag
+         0x400 becomes 0x800, a revenge wish becomes agenda flag 0x400, and the revenge wish is set.
+Original Offset: n/a (inlined three times in double_cross)
+Return Value: n/a
+Status: Complete
+*/
+static void double_cross_revenge(int faction_id_atk, int faction_id_def) {
+    if (PlayersData[faction_id_def].diplo_agenda[faction_id_atk] & DAGENDA_UNK_400) {
+        set_agenda(faction_id_def, faction_id_atk, DAGENDA_UNK_800, true);
+    }
+    if (PlayersData[faction_id_def].diplo_treaties[faction_id_atk] & DTREATY_WANT_REVENGE) {
+        set_agenda(faction_id_def, faction_id_atk, DAGENDA_UNK_400, true);
+    }
+    set_treaty(faction_id_def, faction_id_atk, DTREATY_WANT_REVENGE, true);
+}
+
+/*
+Purpose: The attacker breaks its agreements with the defender and goes to war (faction_id_other is
+         the faction it does so for, or -1). In a network game the player at the controls being
+         betrayed is told: INCITED (with the other faction) or VENDETTAWARNING from a human
+         attacker. The defender's loan to the attacker is forgiven. Breaking a pact (unless agenda
+         flag 0x20 excuses it) costs a point of reputation and integrity (none against a faction
+         that committed a major atrocity or one the attacker is the atrocity victim of, none from a
+         Citizen-level attacker, and none if the attacker is closer to the other faction), counts a
+         wrong and a betrayal and annoys the other faction; then the pact ends with a vendetta.
+         Breaking a treaty or truce does the same with a smaller toll (the reputation point unless
+         flag 0x10000, integrity for a threat or a top attacker of a low ranked defender), and a
+         vendetta without one only annoys the other faction. A human attacker makes the defender
+         want revenge. Unless agenda flag 0x20 excuses it, war involving a human sets flag 0x40
+         (the attacker's last contact this turn) and the defender's allies intervene.
+Original Offset: 0050BCC0
+Return Value: n/a
+Status: Complete
+*/
+void __cdecl double_cross(int faction_id_atk, int faction_id_def, int faction_id_other) {
+    if (*IsMultiplayerNet) {
+        if (faction_id_def == *FactionIDCurrent && faction_id_other > 0) {
+            parse_leader(0, faction_id_other);
+            parse_leader(3, faction_id_atk);
+            NetMsg_pop(NetMsgVar, 0, "INCITED", 5000, 0, NULL);
+        } else if (faction_id_def == *FactionIDCurrent
+            && FactionsStatus[0] & (1 << faction_id_atk)) {
+            parse_leader(0, faction_id_atk);
+            NetMsg_pop(NetMsgVar, 0, "VENDETTAWARNING", 5000, 0, NULL);
+        }
+    }
+    PlayerData *atk = &PlayersData[faction_id_atk];
+    PlayerData *def = &PlayersData[faction_id_def];
+    def->loan_balance[faction_id_atk] = 0;
+    uint32_t treaties = atk->diplo_treaties[faction_id_def];
+    BOOL excused = (treaties & DTREATY_ATROCITY_VICTIM) || def->major_atrocities;
+    BOOL closer_to_other = false; // the attacker is on better terms with the other faction
+    if (faction_id_other >= 0) {
+        uint32_t treaties_other = atk->diplo_treaties[faction_id_other];
+        if (treaties_other & DTREATY_PACT) {
+            closer_to_other = !(treaties & DTREATY_PACT);
+        } else if (treaties_other & DTREATY_TREATY) {
+            closer_to_other = !(treaties & DTREATY_TREATY);
+        } else if (treaties_other & DTREATY_TRUCE) {
+            closer_to_other = !(treaties & DTREATY_TRUCE);
+        }
+        atk->diplo_unk1[faction_id_other]++;
+    }
+    if (atk->diplo_treaties[faction_id_def] & DTREATY_PACT) {
+        if (!(atk->diplo_agenda[faction_id_def] & DAGENDA_UNK_20)) {
+            int reputation_new = atk->global_reputation - 1;
+            atk->global_reputation = (reputation_new < 0) ? 0 : reputation_new;
+            if (atk->diff_level && !excused && !closer_to_other) {
+                atk->integrity_blemishes++;
+                def->diplo_betrayed[faction_id_atk]++;
+            }
+            if (faction_id_other < 0) {
+                if (!excused) {
+                    atk->integrity_blemishes++;
+                }
+                atk->diplo_wrongs[faction_id_def]++;
+                def->diplo_betrayed[faction_id_atk]++;
+            } else {
+                cause_friction(faction_id_other, faction_id_atk, -4);
+            }
+            if (FactionsStatus[0] & (1 << faction_id_atk)) {
+                double_cross_revenge(faction_id_atk, faction_id_def);
+            }
+        }
+        pact_ends(faction_id_atk, faction_id_def);
+        treaty_on(faction_id_atk, faction_id_def, DTREATY_VENDETTA);
+        return;
+    }
+    treaties = atk->diplo_treaties[faction_id_def];
+    if (!(atk->diplo_agenda[faction_id_def] & DAGENDA_UNK_20)) {
+        if (treaties & (DTREATY_TREATY | DTREATY_TRUCE)) {
+            if (!(treaties & DTREATY_UNK_10000)) {
+                int reputation_new = atk->global_reputation - 1;
+                atk->global_reputation = (reputation_new < 0) ? 0 : reputation_new;
+                if ((great_satan(faction_id_atk, false)
+                    || ((int)atk->ranking >= 6 && (int)def->ranking <= 4))
+                    && faction_id_other < 0 && !excused) {
+                    atk->integrity_blemishes++;
+                    def->diplo_betrayed[faction_id_atk]++;
+                }
+            }
+            if (atk->diff_level && !excused && !closer_to_other) {
+                atk->integrity_blemishes++;
+                def->diplo_betrayed[faction_id_atk]++;
+            }
+            if (faction_id_other < 0) {
+                atk->diplo_wrongs[faction_id_def]++;
+            }
+            if (FactionsStatus[0] & (1 << faction_id_atk)) {
+                double_cross_revenge(faction_id_atk, faction_id_def);
+            }
+            if (faction_id_other >= 0) {
+                cause_friction(faction_id_other, faction_id_atk, -2);
+            }
+        } else if (faction_id_other >= 0) {
+            if (FactionsStatus[0] & (1 << faction_id_atk)) {
+                double_cross_revenge(faction_id_atk, faction_id_def);
+            }
+            cause_friction(faction_id_other, faction_id_atk, -2);
+        }
+    }
+    treaty_on(faction_id_atk, faction_id_def, DTREATY_VENDETTA);
+    if (!(atk->diplo_agenda[faction_id_def] & DAGENDA_UNK_20)) {
+        // vanilla quirk: compares the two masked bits, not whether each side is human, so this
+        // holds for any two human factions too and fails only for two AI factions
+        if ((FactionsStatus[0] & (1 << faction_id_atk))
+            != (FactionsStatus[0] & (1 << faction_id_def))) {
+            set_treaty(faction_id_atk, faction_id_def, DTREATY_UNK_40, true);
+            atk->diplo_spoke[faction_id_def] = *TurnCurrentNum;
+        }
+        intervention(faction_id_def, faction_id_atk);
     }
 }
 
@@ -1886,15 +2121,14 @@ BOOL __cdecl spying(int faction_id) {
 }
 
 /*
-Purpose: Body of wants_to_attack(). region_top_base_count[1..7] holds what the original finds in its
-         uninitialized stack buffer and is left with the values the original leaves there.
-Original Offset: n/a
+Purpose: Determine if the specified faction want to attack the target faction.
+Original Offset: 0055BC80
 Return Value: Does the faction want to attack target? true/false
-Status: Complete (verified vs original: docs/regression-runs/2026-10-17-council-wta-stack.log and
-        2026-10-17-sweep-wta-stack.log)
+Status: Complete. Deliberately differs from the original (Kiousu's choice, 2026-10-18): each
+        faction's most bases in one region starts from zero instead of uninitialized stack memory;
+        see "wants_to_attack, 2026-10-18" in docs/regression-testing.md.
 */
-static BOOL __cdecl wants_to_attack_body(uint32_t faction_id, uint32_t faction_id_tgt,
-    int faction_id_unk, int *region_top_base_count) {
+BOOL __cdecl wants_to_attack(uint32_t faction_id, uint32_t faction_id_tgt, int faction_id_unk) {
     uint32_t peace_faction_id = 0;
     BOOL unk_tgl = false;
     if (Players[faction_id].rule_flags & RFLAG_ALIEN
@@ -1970,9 +2204,12 @@ static BOOL __cdecl wants_to_attack_body(uint32_t faction_id, uint32_t faction_i
     if (PlayersData[faction_id].ai_fight < 0 && !unk_tgl && FactionRankings[7] != faction_id_tgt) {
         return false;
     }
-    // The original never initializes this array (7 slots at [ebp-0x130], faction 1 first): each
-    // slot starts with whatever the stack holds and is max()'d (signed) against the bases counts,
-    // so a leftover larger than the real maximum survives into the thresholds below.
+    // Each faction's most bases in any one region, which decides the regions counted as its core
+    // below. The original never initializes this array (7 slots at [ebp-0x130], faction 1 first),
+    // so each slot starts with whatever the stack holds and a leftover above the real maximum
+    // (usually a stack or return address) leaves only the HQ regions counted. Starting from zero
+    // is what the code evidently means to do; Kiousu chose that over the leftovers (2026-10-18).
+    int region_top_base_count[8] = { 0 };
     for (int region = 1; region < MaxRegionLandNum; region++) {
         for (uint32_t f = 1; f < MaxPlayerNum; f++) {
             int total_bases = PlayersData[f].region_total_bases[region];
@@ -2007,10 +2244,8 @@ static BOOL __cdecl wants_to_attack_body(uint32_t faction_id, uint32_t faction_i
                     = PlayersData[faction_id_tgt].region_total_combat_vehs[region];
                 uint32_t total_bases_tgt = PlayersData[faction_id_tgt].region_total_bases[region];
                 if (total_cmbt_vehs || total_bases_tgt) {
-                    // leftovers can be any value: the original's * 3 wraps before the signed / 4
                     if ((int)PlayersData[faction_id].region_total_bases[region]
-                        >= (int)((uint32_t)region_top_base_count[faction_id] * 3) / 4
-                        || region == region_hq) {
+                        >= ((region_top_base_count[faction_id] * 3) / 4) || region == region_hq) {
                         uint32_t compare = force_rating +
                             PlayersData[faction_id].region_total_combat_vehs[region] +
                             (faction_id_unk > 0 
@@ -2023,8 +2258,7 @@ static BOOL __cdecl wants_to_attack_body(uint32_t faction_id, uint32_t faction_i
                         factor_force_rating += force_rating + (faction_id_unk > 0
                             ? PlayersData[faction_id_unk].region_force_rating[region] / 2 : 0);
                     }
-                    if (((int)total_bases_tgt
-                        >= (int)((uint32_t)region_top_base_count[faction_id_tgt] * 3) / 4
+                    if (((int)total_bases_tgt >= ((region_top_base_count[faction_id_tgt] * 3) / 4)
                         || region == region_target_hq) && force_rating > total_cmbt_vehs) {
                         factor_force_rating += force_rating + (faction_id_unk > 0
                             ? PlayersData[faction_id_unk].region_force_rating[region] / 2 : 0);
@@ -2086,42 +2320,71 @@ static BOOL __cdecl wants_to_attack_body(uint32_t faction_id, uint32_t faction_i
 }
 
 /*
-Purpose: Determine if the specified faction want to attack the target faction. The original reads a
-         buffer on its stack it never initializes (slot f at esp_entry - 0x138 + 4 * f), so what
-         ran before at the same stack depth sets some of its thresholds. The slots are copied in
-         before this DLL's own frame overwrites them and written back afterwards, where the
-         original leaves them for the next call.
-Original Offset: 0055BC80
-Return Value: Does the faction want to attack target? true/false
-Status: Complete (verified vs original: docs/regression-runs/2026-10-17-council-wta-stack.log and
-        2026-10-17-sweep-wta-stack.log)
+Purpose: A human faction (faction_id) meets another faction. Unless they already have a commlink,
+         spoke within the last 16 turns and neither wants to talk, the diplomacy dialog opens. In
+         a network game the player at the controls instead marks an AI faction as wanting to talk
+         (flag 2 and a first contact truce, flag 0x10000, if there was no commlink), and two humans
+         get that truce and the NETMET notice. In a hotseat/PBEM game a human met by another
+         player gets the truce, and an AI met by a player not at the controls queues its request
+         (and the truce).
+Original Offset: 0055C430
+Return Value: n/a
+Status: Complete
 */
-__declspec(naked) BOOL __cdecl wants_to_attack(uint32_t UNUSED(faction_id),
-    uint32_t UNUSED(faction_id_tgt), int UNUSED(faction_id_unk)) {
-    __asm {
-        sub esp, 32                         // slots[8] above where the original's frame would be
-        mov ecx, 7
-    copy_in:
-        mov eax, [esp + ecx * 4 - 0x118]    // esp_entry - 0x138 + 4 * f
-        mov [esp + ecx * 4], eax
-        dec ecx
-        jnz copy_in
-        mov eax, esp
-        push eax
-        push dword ptr [esp + 48]           // faction_id_unk
-        push dword ptr [esp + 48]           // faction_id_tgt
-        push dword ptr [esp + 48]           // faction_id
-        call wants_to_attack_body
-        add esp, 16
-        mov ecx, 7
-    copy_out:
-        mov edx, [esp + ecx * 4]
-        mov [esp + ecx * 4 - 0x118], edx
-        dec ecx
-        jnz copy_out
-        add esp, 32
-        ret
+void __cdecl comm_check(int faction_id, int faction_id_with) {
+    uint32_t human = FactionsStatus[0];
+    if (!(human & (1 << faction_id))) {
+        return;
     }
+    uint32_t treaties = PlayersData[faction_id].diplo_treaties[faction_id_with];
+    uint32_t commlink = treaties & DTREATY_COMMLINK;
+    if (commlink && !(treaties & DTREATY_WANT_TO_TALK)
+        && PlayersData[faction_id].diplo_spoke[faction_id_with] >= 0
+        && *TurnCurrentNum - PlayersData[faction_id].diplo_spoke[faction_id_with] < 16) {
+        return;
+    }
+    const uint32_t truce_new = DTREATY_TRUCE | DTREATY_UNK_10000; // the truce of a first contact
+    if (*IsMultiplayerNet) {
+        if (faction_id == *FactionIDCurrent && !(human & (1 << faction_id_with))) {
+            DiploCommRequest[faction_id_with] |= 1;
+            if (!commlink) {
+                DiploCommRequest[faction_id_with] |= 2;
+                net_treaty_on(faction_id, faction_id_with, truce_new, false);
+            }
+            return;
+        }
+        if ((human & (1 << faction_id_with)) && !commlink) {
+            treaty_on(faction_id, faction_id_with, truce_new);
+        }
+        if (faction_id == *FactionIDCurrent
+            && !(PlayersData[faction_id].diplo_treaties[faction_id_with] & DTREATY_UNK_8000000)) {
+            parse_leader(0, faction_id_with);
+            NetMsg_pop(NetMsgVar, 0, "NETMET", 5000, 0, NULL);
+        }
+        if (faction_id_with == *FactionIDCurrent
+            && !(PlayersData[faction_id].diplo_treaties[faction_id_with] & DTREATY_UNK_8000000)) {
+            parse_leader(0, faction_id);
+            NetMsg_pop(NetMsgVar, 0, "NETMET", 5000, 0, NULL);
+        }
+        return;
+    }
+    if (*IsMultiplayerPBEM) {
+        if (human & (1 << faction_id_with)) {
+            if (!commlink) {
+                treaty_on(faction_id, faction_id_with, truce_new);
+            }
+            return;
+        }
+        if (faction_id != *FactionIDCurrent) {
+            DiploCommRequestPBEM[faction_id * 8 + faction_id_with] |= 1;
+            if (!commlink) {
+                DiploCommRequestPBEM[faction_id * 8 + faction_id_with] |= 2;
+                treaty_on(faction_id, faction_id_with, truce_new);
+            }
+            return;
+        }
+    }
+    communicate(faction_id, faction_id_with, 0);
 }
 
 /*
@@ -2135,6 +2398,60 @@ void __cdecl pact_attacks(int faction_id, int faction_id_tgt) {
     parse_says(3, get_he_she(faction_id, 0), -1, -1);
     parse_says(4, get_noun(faction_id_tgt), -1, -1);
     NetMsg_pop(NetMsgVar, 0, "PACTATTACKS", 5000, 0, NULL);
+}
+
+/*
+Purpose: Two factions go to war. The player at the controls hears of it through a pact partner
+         (PACTATTACKS, inlined) or, with full intelligence on either side or omniscient view,
+         ENEMYWAR. The vendetta is set and the maps exchanged (unless flag 0x40000000). A revenge
+         wish on either side (not after an atrocity) is usually settled by the war at difficulty
+         above Specialist: rand() % difficulty != 0. For the first faction the wish becomes flag
+         0x40 for 50 turns; for the second the flag is set through set_treaty().
+Original Offset: 0055C840
+Return Value: n/a (the original leaves a meaningless value in eax; its one caller ignores it)
+Status: Complete
+*/
+void __cdecl enemies_war(int faction_id, int faction_id_with) {
+    if (PlayersData[faction_id].diplo_treaties[faction_id_with] & DTREATY_VENDETTA) {
+        return;
+    }
+    int faction_id_current = *FactionIDCurrent;
+    if (PlayersData[faction_id_current].diplo_treaties[faction_id] & DTREATY_PACT) {
+        pact_attacks(faction_id, faction_id_with);
+    } else if (PlayersData[faction_id_current].diplo_treaties[faction_id_with] & DTREATY_PACT) {
+        pact_attacks(faction_id_with, faction_id);
+    } else if (spying(faction_id) || spying(faction_id_with)
+        || *GameState & STATE_OMNISCIENT_VIEW) { // spying() inlined in the original
+        parse_says(0, get_noun(faction_id), -1, -1);
+        parse_says(1, get_noun(faction_id_with), -1, -1);
+        NetMsg_pop(NetMsgVar, 0, "ENEMYWAR", 5000, 0, NULL);
+    }
+    treaty_on(faction_id, faction_id_with, DTREATY_VENDETTA);
+    if (!(PlayersData[faction_id].diplo_treaties[faction_id_with] & DTREATY_UNK_40000000)) {
+        trade_maps(faction_id, faction_id_with);
+    }
+    const int agenda_revenge = DAGENDA_UNK_400 | DAGENDA_UNK_800;
+    uint32_t treaties = PlayersData[faction_id].diplo_treaties[faction_id_with];
+    int diff_level = *DiffLevelCurrent;
+    if ((treaties & DTREATY_WANT_REVENGE) && !(treaties & DTREATY_ATROCITY_VICTIM)
+        && diff_level - 1 > 0 && _rand() % diff_level) {
+        PlayersData[faction_id].diplo_agenda[faction_id_with] &= ~agenda_revenge;
+        PlayersData[faction_id_with].diplo_agenda[faction_id] &= ~agenda_revenge;
+        PlayersData[faction_id].diplo_treaties[faction_id_with] &= ~DTREATY_WANT_REVENGE;
+        PlayersData[faction_id_with].diplo_treaties[faction_id] &= ~DTREATY_WANT_REVENGE;
+        PlayersData[faction_id].diplo_treaties[faction_id_with] |= DTREATY_UNK_40;
+        PlayersData[faction_id].diplo_merc[faction_id_with] = 50;
+    }
+    treaties = PlayersData[faction_id_with].diplo_treaties[faction_id];
+    diff_level = *DiffLevelCurrent;
+    if ((treaties & DTREATY_WANT_REVENGE) && !(treaties & DTREATY_ATROCITY_VICTIM)
+        && diff_level - 1 > 0 && _rand() % diff_level) {
+        PlayersData[faction_id_with].diplo_agenda[faction_id] &= ~agenda_revenge;
+        PlayersData[faction_id].diplo_agenda[faction_id_with] &= ~agenda_revenge;
+        PlayersData[faction_id_with].diplo_treaties[faction_id] &= ~DTREATY_WANT_REVENGE;
+        PlayersData[faction_id].diplo_treaties[faction_id_with] &= ~DTREATY_WANT_REVENGE;
+        set_treaty(faction_id_with, faction_id, DTREATY_UNK_40, true);
+    }
 }
 
 /*
@@ -2414,6 +2731,166 @@ int __cdecl territory(uint32_t faction_id, uint32_t faction_id_tgt, uint8_t flag
 }
 
 /*
+Purpose: Handle an atrocity by the faction against faction_id_tgt (nerve staple, genetic warfare,
+         and the like). The victim always holds it against the faction. Unless the UN Charter is
+         repealed, sunspots hide it (ATROCITYSPOTS to the player at the controls) or, in SMACX
+         with is_alien_counted clear, an alien faction is on either side, the factions in contact
+         react: those keeping watch (DTREATY_UNK_200000) gain friction and a computer faction may
+         declare a vendetta on a human faction (always when it wants revenge, else by chance:
+         less likely against a "great satan"); every faction not at war marks the faction
+         (DTREATY_UNK_400000). The atrocity counts (when counted or the first one), adds to the
+         integrity blemishes unless the target had wronged the faction this way first, and
+         beyond (8 - difficulty) * 4 atrocities it becomes a major atrocity. Otherwise the
+         ATROCITY notice and sanctions of ten turns per atrocity follow.
+Original Offset: 0055EEE0
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-18-council-batch30.log)
+*/
+void __cdecl atrocity(int faction_id, int faction_id_tgt, int counted, BOOL is_alien_counted) {
+    PlayerData *p = &PlayersData[faction_id];
+    PlayerData *p_tgt = &PlayersData[faction_id_tgt];
+    uint32_t was_victim = p_tgt->diplo_treaties[faction_id] & DTREATY_ATROCITY_VICTIM;
+    p_tgt->diplo_treaties[faction_id] |= DTREATY_WANT_REVENGE | DTREATY_ATROCITY_VICTIM;
+    p_tgt->diplo_agenda[faction_id] |= DAGENDA_UNK_4;
+    if (ProposalPassCount[PROP_REPEAL_UN_CHARTER] > ProposalPassCount[PROP_REINSTATE_UN_CHARTER]) {
+        return;
+    }
+    if (*SunspotDuration > 0) {
+        if (faction_id == *FactionIDCurrent) {
+            NetMsg_pop(NetMsgVar, NULL, "ATROCITYSPOTS", 5000, 0, NULL);
+        }
+        return;
+    }
+    if (*ExpansionEnabled && !is_alien_counted && ((Players[faction_id].rule_flags & RFLAG_ALIEN)
+        || (Players[faction_id_tgt].rule_flags & RFLAG_ALIEN))) {
+        return;
+    }
+    int i;
+    for (i = 1; i < MaxPlayerNum; i++) {
+        PlayerData *p_i = &PlayersData[i];
+        if (i == faction_id || i == faction_id_tgt || !(p_i->diplo_treaties[faction_id] & DTREATY_COMMLINK)
+            || (*ExpansionEnabled && is_alien_counted && !(Players[faction_id].rule_flags & RFLAG_ALIEN)
+                && (Players[i].rule_flags & RFLAG_ALIEN))) {
+            continue;
+        }
+        if (p_i->diplo_treaties[faction_id] & DTREATY_UNK_200000) {
+            cause_friction(i, faction_id, 5);
+            if (!(FactionsStatus[0] & (1 << i)) && (FactionsStatus[0] & (1 << faction_id))
+                && (p->diplo_treaties[i] & DTREATY_COMMLINK)
+                && !(p->diplo_treaties[i] & (DTREATY_PACT | DTREATY_VENDETTA)) && !was_victim) {
+                BOOL vendetta = true;
+                if (!(p_i->diplo_treaties[faction_id] & DTREATY_WANT_REVENGE)) {
+                    if (great_satan(faction_id, false)) {
+                        vendetta = _rand() % 16 - p->atrocities <= 8;
+                    } else {
+                        int range = (8 - ((*GameRules & RULES_INTENSE_RIVALRY) ? 5 : *DiffLevelCurrent)) * 2;
+                        vendetta = !((range - 1 > 0) ? _rand() % range : 0);
+                    }
+                }
+                if (vendetta) {
+                    if (faction_id == *FactionIDCurrent) {
+                        parse_says(0, get_title(faction_id), -1, -1);
+                        parse_says(1, get_name(faction_id), -1, -1);
+                        diplomacy_caption(faction_id, i);
+                        X_pops("ATROCIOUSITY", FactionPortraits[i], NULL);
+                    }
+                    treaty_on(faction_id, i, DTREATY_VENDETTA);
+                    p_i->diplo_treaties[faction_id] |= DTREATY_UNK_40;
+                    p_i->diplo_merc[faction_id] = 50;
+                }
+            }
+        }
+        if (!(p_i->diplo_treaties[faction_id] & DTREATY_VENDETTA)) {
+            treaty_on(i, faction_id, DTREATY_UNK_400000);
+        }
+    }
+    if (counted || !p->atrocities) {
+        p->atrocities++;
+        if (!(p->diplo_treaties[faction_id_tgt] & DTREATY_ATROCITY_VICTIM)) {
+            p->integrity_blemishes++;
+        }
+    }
+    int atrocities = p->atrocities;
+    if (atrocities > (8 - p->diff_level) * 4) {
+        major_atrocity(faction_id, faction_id_tgt);
+        return;
+    }
+    // The original tests the loop counter (8 here) where the target is meant: 1 << 8 is never
+    // among the human bits, so a human's repeated atrocities always mark the target.
+    if ((FactionsStatus[0] & (1 << faction_id)) && !(FactionsStatus[0] & (1 << i)) && !was_victim
+        && atrocities >= 5) {
+        p_tgt->flags |= PFLAG_COMMIT_ATROCIT_WANTONLY;
+    }
+    parse_says(0, get_title(faction_id), -1, -1);
+    parse_says(1, get_name(faction_id), -1, -1);
+    parse_says(2, get_title(faction_id_tgt), -1, -1);
+    parse_says(3, get_name(faction_id_tgt), -1, -1);
+    parse_num(0, p->atrocities * 10);
+    stringTemp->str[0] = 0;
+    strcat(stringTemp->str, "ATROCITY");
+    if (faction_id == *FactionIDCurrent) {
+        strcat(stringTemp->str, "2");
+    } else if (faction_id_tgt == faction_id) {
+        strcat(stringTemp->str, "1");
+    }
+    if (!(Players[faction_id].rule_flags & RFLAG_ALIEN)) {
+        NetMsg_pop(NetMsgVar, NULL, stringTemp->str, 5000, 0, NULL);
+    }
+    p->sanction_turns += atrocities * 10;
+}
+
+/*
+Purpose: Handle a major atrocity by the faction (faction_id_tgt -1: against no one in
+         particular). The victim holds it against the faction. Unless the UN Charter is repealed,
+         the integrity blemishes rise by 2 (at least to 6, at most 99, against a faction not
+         marked DTREATY_UNK_80000; not touched otherwise), the major atrocities count goes up,
+         and every other computer faction still in play that is not at war with it (a pact is
+         ended first) declares a vendetta on it with the MAJORATROCITY notice.
+Original Offset: 0055F450
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-18-council-batch30.log)
+*/
+void __cdecl major_atrocity(int faction_id, int faction_id_tgt) {
+    if (faction_id_tgt >= 0) {
+        PlayersData[faction_id_tgt].diplo_treaties[faction_id]
+            |= DTREATY_WANT_REVENGE | DTREATY_ATROCITY_VICTIM | DTREATY_UNK_80000;
+        PlayersData[faction_id_tgt].diplo_agenda[faction_id] |= DAGENDA_UNK_4;
+    }
+    if (ProposalPassCount[PROP_REPEAL_UN_CHARTER] > ProposalPassCount[PROP_REINSTATE_UN_CHARTER]) {
+        return;
+    }
+    PlayerData *p = &PlayersData[faction_id];
+    if (faction_id_tgt < 0) {
+        p->integrity_blemishes += 2;
+    } else if (!(p->diplo_treaties[faction_id_tgt] & DTREATY_UNK_80000)) {
+        int blemishes = p->integrity_blemishes + 2;
+        p->integrity_blemishes = blemishes < 6 ? 6 : (blemishes > 99 ? 99 : blemishes);
+    }
+    p->major_atrocities++;
+    for (int i = 1; i < MaxPlayerNum; i++) {
+        if (i == faction_id || i == faction_id_tgt || (FactionsStatus[0] & (1 << i))
+            || !(FactionsStatus[1] & (1 << i)) || (p->diplo_treaties[i] & DTREATY_VENDETTA)) {
+            continue;
+        }
+        if (p->diplo_treaties[i] & DTREATY_PACT) {
+            pact_ends(faction_id, i);
+        }
+        treaty_on(i, faction_id, DTREATY_COMMLINK | DTREATY_VENDETTA);
+        PlayersData[i].diplo_treaties[faction_id] |= DTREATY_UNK_40;
+        PlayersData[i].diplo_merc[faction_id] = 50;
+        p->diplo_spoke[i] = *TurnCurrentNum;
+        parse_leader(0, i);
+        parse_leader(3, faction_id);
+        char number[80];
+        stringTemp->str[0] = 0;
+        strcat(stringTemp->str, "MAJORATROCITY");
+        _itoa(faction_id != *FactionIDCurrent, number, 10);
+        strcat(stringTemp->str, number);
+        popp(ScriptTxtID, stringTemp->str, 0, "council_sm.pcx", NULL);
+    }
+}
+
+/*
 Purpose: Check an action against the agreements with another faction it would break (any of the
          treaty flags given in force, factions not at war). A pact can't be broken this way
          (BREAKINGPACT); breaking a treaty, a truce (not one marked DTREATY_UNK_10000) or
@@ -2444,6 +2921,452 @@ BOOL __cdecl break_treaty(int faction_id, int faction_id_with, uint32_t treaty) 
         return !popp(ScriptTxtID, "BEGINVENDETTA", 0, "break_sm.pcx", NULL);
     }
     return false;
+}
+
+/*
+Purpose: Ask the player at the controls to talk (or queue the request in network and
+         hotseat/PBEM games), as enemy_diplomacy() does in two places.
+Original Offset: n/a (inlined in enemy_diplomacy)
+Return Value: n/a
+Status: Complete
+*/
+static void diplomacy_call(uint32_t faction_id, uint32_t faction_id_human) {
+    if (!*IsMultiplayerNet && !*IsMultiplayerPBEM) {
+        communicate(faction_id_human, faction_id, 0);
+        treaty_on(faction_id_human, faction_id, DTREATY_UNK_80000000 | DTREATY_UNK_8000000
+            | DTREATY_COMMLINK);
+    } else {
+        DiploCommRequest[faction_id] |= 1;
+        DiploCommRequestPBEM[faction_id_human * 8 + faction_id] |= 1;
+    }
+}
+
+/*
+Purpose: Each turn's diplomacy of an AI faction. Revenge agendas age (flag 0x20 sets 0x40; the
+         next turn 0x20 clears and 0x40 stays). Then for each other living faction: count the
+         wars, run down the 50 turn timer of flag 0x40, recover patience on odd turns, carry out a
+         planned betrayal (always under a pact, else with odds 1 in 8 - blemishes, less with
+         agenda 0x400), clear flag 0x8000 every 16 turns. A human faction in contact (sunspots
+         permitting) may be called: to ask for help against a stronger common enemy (0x41), or
+         after 32 turns of silence; diplomacy_check() may make the AI plan a betrayal (0x800 /
+         0x40). With a lower numbered AI faction, every 8 turns or when one wants to talk: a pact
+         trades tech; a treaty under game state flag 0x200, the Empath Guild or flags
+         0x20000000 / 0x10000000 lead to an encounter().
+         Next the friction with each human faction in contact: units in the AI's territory raise
+         requests to talk (or, under sunspots, plans to betray), then (count + 3 + odd turn) / 5 is
+         adjusted for tech, rank, military strength, threats, ideology, aggression, energy (Morgan)
+         and cooperative victory, and applied unless it would calm a war. Last, while the faction
+         has more free orbital defense pods than any non-pact rival has planet busters (half
+         under a treaty without a revenge wish), it shoots at the satellites of factions at war
+         with it (or flagged 0x800) that have fewer pods, one per action_sat_attack() call.
+Original Offset: 0055F930
+Return Value: n/a
+Status: Complete
+*/
+void __cdecl enemy_diplomacy(uint32_t faction_id) {
+    if (!faction_id) {
+        return;
+    }
+    PlayerData *player = &PlayersData[faction_id];
+    for (int i = 1; i < MaxPlayerNum; i++) {
+        player->diplo_treaties[i] &= ~DTREATY_UNK_100;
+        int agenda = player->diplo_agenda[i];
+        if (agenda & DAGENDA_UNK_20) {
+            if (!(agenda & DAGENDA_UNK_40)) {
+                player->diplo_agenda[i] = agenda | DAGENDA_UNK_40;
+                PlayersData[i].diplo_agenda[faction_id] |= DAGENDA_UNK_40;
+            } else {
+                player->diplo_agenda[i] = agenda & ~DAGENDA_UNK_20;
+                PlayersData[i].diplo_agenda[faction_id] &= ~DAGENDA_UNK_20;
+            }
+        }
+    }
+    if (FactionsStatus[0] & (1 << faction_id)) {
+        return;
+    }
+    const uint32_t betray_flags = DTREATY_SHALL_BETRAY | DTREATY_UNK_20000;
+    int war_count = 0;
+    for (uint32_t i = 1; i < MaxPlayerNum; i++) {
+        if (i == faction_id || !(FactionsStatus[1] & (1 << i))) {
+            continue;
+        }
+        PlayerData *other = &PlayersData[i];
+        uint32_t *treaties = &player->diplo_treaties[i];
+        uint32_t *treaties_with = &other->diplo_treaties[faction_id];
+        if (*treaties & DTREATY_VENDETTA) {
+            war_count++;
+        }
+        if (player->diplo_merc[i] && !--player->diplo_merc[i]) {
+            *treaties &= ~DTREATY_UNK_40;
+        }
+        if (*TurnCurrentNum & 1 && player->diplo_patience[i] > 0) {
+            player->diplo_patience[i]--;
+        }
+        if (*treaties & DTREATY_SHALL_BETRAY) {
+            int odds = 8 - (((uint32_t)player->diplo_agenda[i] >> 9) & 2)
+                - other->integrity_blemishes;
+            if (odds < 1) {
+                odds = 1;
+            } else if (odds > 8) {
+                odds = 8;
+            }
+            if (odds - 1 <= 0 || !(_rand() % odds) || (*treaties & DTREATY_PACT)) {
+                if (*treaties & DTREATY_PACT) {
+                    cause_friction(faction_id, i, 20);
+                    *treaties &= ~(betray_flags | DTREATY_UNK_800);
+                    treaty_on(faction_id, i, DTREATY_WANT_TO_TALK);
+                } else if (other->x_target < 0) {
+                    int *spoke = &other->diplo_spoke[faction_id];
+                    int turn_min = *TurnCurrentNum - 8;
+                    *spoke = (*spoke > turn_min) ? *spoke : turn_min;
+                    *treaties = (*treaties & ~betray_flags) | DTREATY_UNK_800 | DTREATY_UNK_40;
+                    player->diplo_merc[i] = 50;
+                } else {
+                    *treaties |= DTREATY_UNK_20000;
+                }
+            }
+        }
+        if ((*TurnCurrentNum & 0xF) == (int)faction_id * 2 + 1) {
+            *treaties &= ~DTREATY_UNK_8000;
+            *treaties_with &= ~DTREATY_UNK_8000;
+        }
+        uint32_t human = FactionsStatus[0];
+        if (human & (1 << i) && *SunspotDuration <= 0) {
+            if (i == (uint32_t)*FactionIDCurrent && (*treaties & (DTREATY_COMMLINK
+                | DTREATY_VENDETTA | DTREATY_ATROCITY_VICTIM)) == DTREATY_COMMLINK) {
+                BOOL called = false;
+                uint32_t alive = FactionsStatus[1];
+                for (uint32_t j = 1; j < MaxPlayerNum; j++) {
+                    if (!(alive & (1 << j)) || j == faction_id || j == i
+                        || (player->diplo_treaties[j] & (DTREATY_COMMLINK | DTREATY_VENDETTA
+                        | DTREATY_UNK_8000)) != (DTREATY_COMMLINK | DTREATY_VENDETTA
+                        | DTREATY_UNK_8000)
+                        || (other->diplo_treaties[j] & (DTREATY_COMMLINK | DTREATY_VENDETTA))
+                        != DTREATY_COMMLINK
+                        || PlayersData[j].mil_strength_1 <= player->mil_strength_1) {
+                        continue;
+                    }
+                    // a common enemy stronger than this faction: ask the human for help
+                    if (j < MaxPlayerNum && !(*treaties & DTREATY_PACT)
+                        && (int)reputation(i, faction_id) < 5
+                        && ((*TurnCurrentNum - other->diplo_spoke[faction_id] > 8
+                        && (*TurnCurrentNum & 0xF) == (int)faction_id * 2)
+                        || (*treaties & DTREATY_WANT_TO_TALK))) {
+                        DiploCommRequest[faction_id] |= 0x41;
+                        DiploCommRequestPBEM[i * 8 + faction_id] |= 0x41;
+                        called = true;
+                    }
+                    break;
+                }
+                if (called) {
+                    if (!*IsMultiplayerNet && !*IsMultiplayerPBEM) {
+                        communicate(i, faction_id, 0);
+                        treaty_on(i, faction_id, DTREATY_UNK_80000000 | DTREATY_UNK_8000000
+                            | DTREATY_COMMLINK);
+                    }
+                } else {
+                    uint32_t t = *treaties;
+                    if (!(t & DTREATY_WANT_REVENGE)
+                        && (*TurnCurrentNum - other->diplo_spoke[faction_id] > 32
+                        || (t & DTREATY_UNK_20000000 && *TurnCurrentNum == (int)faction_id + 8)
+                        || (t & DTREATY_PACT && t & DTREATY_WANT_TO_TALK))
+                        && (!random(0, 16) || *treaties & DTREATY_WANT_TO_TALK
+                        || *TurnCurrentNum == (int)faction_id + 8)) {
+                        diplomacy_call(faction_id, i);
+                    }
+                }
+            }
+            uint32_t requested = *IsMultiplayerPBEM ? DiploCommRequestPBEM[i * 8 + faction_id]
+                : DiploCommRequest[faction_id];
+            if (!requested) {
+                diplomacy_check(i, faction_id, 0);
+                if (*DiploUnk3) {
+                    uint32_t t = *treaties;
+                    if (t & DTREATY_WANT_REVENGE || player->flags_ext & 0x20
+                        || (other->diff_level > 4 && *GameRules & RULES_INTENSE_RIVALRY)) {
+                        *treaties = (t & ~betray_flags) | DTREATY_UNK_800 | DTREATY_UNK_40;
+                        player->diplo_merc[i] = 50;
+                    }
+                }
+            }
+        } else if (i < faction_id && *SunspotDuration <= 0
+            && (!((*TurnCurrentNum + i + faction_id) & 7) || *treaties & DTREATY_WANT_TO_TALK)) {
+            uint32_t t = *treaties;
+            if (t & DTREATY_UNK_80000000 && !(t & DTREATY_WANT_TO_TALK)) {
+                *treaties = t & ~DTREATY_UNK_80000000;
+                *treaties_with &= ~DTREATY_UNK_80000000;
+                for (int j = 1; j < MaxPlayerNum; j++) {
+                    if (human & (1 << j) && (player->diplo_treaties[j] & DTREATY_VENDETTA
+                        || other->diplo_treaties[j] & DTREATY_VENDETTA)) {
+                        *treaties &= ~DTREATY_UNK_4000000;
+                        *treaties_with &= ~DTREATY_UNK_4000000;
+                    }
+                }
+            } else {
+                *treaties = t & ~DTREATY_WANT_TO_TALK;
+                *treaties_with &= ~DTREATY_WANT_TO_TALK;
+                if (*treaties & DTREATY_PACT) {
+                    enemies_trade_tech(faction_id, i);
+                } else {
+                    int base_id_empath = SecretProject->empath_guild;
+                    if ((*treaties & DTREATY_TREATY && *GameState & STATE_UNK_200)
+                        || (base_id_empath >= 0
+                        && Bases[base_id_empath].faction_id_current == faction_id)
+                        || (base_id_empath >= 0 && Bases[base_id_empath].faction_id_current == i)
+                        || *treaties & DTREATY_UNK_20000000
+                        || (*treaties & DTREATY_COMMLINK && *treaties & DTREATY_UNK_10000000)) {
+                        encounter(faction_id, i, -1, -1, 0, 0);
+                    }
+                }
+                treaty_on(faction_id, i, DTREATY_UNK_80000000);
+                *treaties &= ~DTREATY_UNK_4000000;
+                *treaties_with &= ~DTREATY_UNK_4000000;
+            }
+        }
+    }
+    // friction with each human faction in contact
+    int base_id_scan = -1; // see the orbital defense part below
+    int repeat_count;
+    for (uint32_t i = 1; i < MaxPlayerNum; i++) {
+        if (!(FactionsStatus[0] & (1 << i))) {
+            continue;
+        }
+        PlayerData *other = &PlayersData[i];
+        uint32_t *treaties = &player->diplo_treaties[i];
+        if (!(*treaties & DTREATY_COMMLINK)) {
+            continue;
+        }
+        int friction;
+        if (*TurnCurrentNum - other->diplo_spoke[faction_id] < 4 && *SunspotDuration <= 0
+            && !(*treaties & DTREATY_WANT_REVENGE)) {
+            friction = 0;
+        } else {
+            friction = territory(faction_id, i, 1, &base_id_scan, &repeat_count);
+            if (friction && i == (uint32_t)*FactionIDCurrent && !(*treaties & DTREATY_VENDETTA)) {
+                if (*SunspotDuration > 0) {
+                    diplomacy_check(i, faction_id, 0);
+                    if (*DiploUnk9 || *treaties & DTREATY_WANT_REVENGE
+                        || *DiploFriction + other->integrity_blemishes * 2 + friction
+                        >= (9 - player->ai_fight) * 2) {
+                        uint32_t t = *treaties;
+                        if (t & DTREATY_TREATY) {
+                            *treaties = t | DTREATY_UNK_800;
+                        } else if (!(t & (DTREATY_SHALL_BETRAY | DTREATY_UNK_800))) {
+                            *treaties = t | ((t & DTREATY_WANT_REVENGE) ? DTREATY_UNK_800
+                                : DTREATY_SHALL_BETRAY);
+                        }
+                    }
+                } else {
+                    uint32_t t = *treaties;
+                    uint32_t *request = &DiploCommRequest[faction_id];
+                    uint32_t *request_pbem = &DiploCommRequestPBEM[i * 8 + faction_id];
+                    BOOL roll = false;
+                    int roll_max = 0;
+                    if (t & DTREATY_TREATY) {
+                        if (friction >= 5) {
+                            *request_pbem |= 4;
+                            *request |= 4;
+                        } else if (!((*TurnCurrentNum + faction_id) & 3)) {
+                            *request |= 0x20;
+                            *request_pbem |= 0x20;
+                        }
+                    } else {
+                        int agenda = player->diplo_agenda[i];
+                        if (agenda & DAGENDA_UNK_800
+                            || (agenda & DAGENDA_UNK_400 && repeat_count)) {
+                            *request |= 0x18;
+                            *request_pbem |= 0x18;
+                        } else if (t & DTREATY_WANT_REVENGE && !repeat_count) {
+                            *request |= 8;
+                            *request_pbem |= 8;
+                            roll = true;
+                            roll_max = friction + (other->integrity_blemishes + 1) * 5;
+                        } else if (!((*TurnCurrentNum + faction_id) & 3)) {
+                            *request |= 8;
+                            *request_pbem |= 8;
+                            roll = true;
+                            roll_max = ((t & DTREATY_WANT_REVENGE) ? 5 : 0) + friction
+                                + (other->integrity_blemishes + repeat_count) * 5;
+                        }
+                    }
+                    if (roll && (int)random(0, roll_max) > 10) {
+                        if (i == (uint32_t)*FactionIDCurrent) {
+                            *request |= 0x10;
+                        }
+                        *request_pbem |= 0x10;
+                    }
+                    if (*request && !*IsMultiplayerNet && !*IsMultiplayerPBEM) {
+                        communicate(i, faction_id, 0);
+                        treaty_on(i, faction_id, DTREATY_UNK_80000000 | DTREATY_UNK_8000000
+                            | DTREATY_COMMLINK);
+                    }
+                }
+            }
+        }
+        friction = ((*TurnCurrentNum & 1) + friction + 3) / 5;
+        if (*treaties & DTREATY_PACT) {
+            if (!war_count) {
+                int tech_half = player->tech_ranking / 2;
+                int tech_half_other = other->tech_ranking / 2;
+                if (tech_half_other > player->ai_tech - player->ai_power - player->ai_fight
+                    + tech_half + 5) {
+                    friction++;
+                }
+                if (tech_half > tech_half_other + 5) {
+                    friction--;
+                }
+                if ((int)other->ranking > (int)player->ranking + 1 && other->diff_level) {
+                    friction++;
+                }
+            } else {
+                friction += 1 - war_count;
+            }
+            if (!(*treaties & DTREATY_UNK_1000000)) {
+                for (int j = 1; j < MaxPlayerNum; j++) {
+                    if (player->diplo_treaties[j] & DTREATY_VENDETTA
+                        && other->diplo_treaties[j] & DTREATY_COMMLINK
+                        && !(other->diplo_treaties[j] & DTREATY_VENDETTA)) {
+                        friction++;
+                    }
+                }
+            }
+            if (*GameRules & RULES_VICTORY_COOPERATIVE && (int)player->ranking < 6
+                && *TurnCurrentNum >= 200 && friction >= 0) {
+                friction = -1;
+            }
+        } else {
+            if (*GameRules & RULES_INTENSE_RIVALRY && *TurnCurrentNum & 1) {
+                friction++;
+            }
+            int strength = player->mil_strength_1;
+            int strength_other = other->mil_strength_1;
+            int div_other = strength_other * 3;
+            div_other = (div_other < 1) ? 1 : ((div_other > 99999) ? 99999 : div_other);
+            friction += (strength * 2) / div_other;
+            int div = strength * 3;
+            div = (div < 1) ? 1 : ((div > 99999) ? 99999 : div);
+            friction += (-strength_other * 2) / div;
+            if (great_satan(i, false)) {
+                friction++;
+            }
+            if (aah_ooga(i, -1)) {
+                friction++;
+            }
+        }
+        if (*TurnCurrentNum & 1) {
+            int category = Players[faction_id].soc_ideology_category;
+            int model = Players[faction_id].soc_ideology_model;
+            if (category >= 0 && model) {
+                uint32_t pending = *(&other->soc_category_pending.politics + category);
+                if (pending == (uint32_t)model) {
+                    friction--;
+                } else if (pending) {
+                    friction++;
+                }
+            }
+        }
+        friction += player->ai_fight;
+        if (!(*TurnCurrentNum & 3)) {
+            if (*treaties & DTREATY_TREATY) {
+                friction--;
+            }
+            int rank = player->ranking;
+            if (rank >= 6 && (int)other->ranking >= 6) {
+                friction += 3;
+            } else if (rank >= 5 && (int)other->ranking >= 5) {
+                if (*TurnCurrentNum >= 100) {
+                    friction++;
+                }
+            } else {
+                int rank_diff = (int)other->ranking - rank;
+                int sign = (rank_diff > 0) ? 1 : ((rank_diff >= 0) ? 0 : -1);
+                friction += sign * 3 - (rank_diff + sign) / 2;
+            }
+            if (other->energy_reserves > player->energy_reserves
+                && !strcmp(Players[faction_id].filename, "MORGAN")) {
+                friction++;
+            }
+            if (other->tech_ranking > player->tech_ranking) {
+                friction += 1 + player->ai_power - player->ai_tech;
+            }
+        }
+        if (*treaties & DTREATY_PACT && *GameRules & RULES_VICTORY_COOPERATIVE
+            && (int)other->ranking > (int)player->ranking && *TurnCurrentNum >= 200) {
+            friction = (friction > 0) ? 0 : friction;
+        }
+        *treaties &= ~DTREATY_UNK_200;
+        other->diplo_treaties[faction_id] &= ~DTREATY_UNK_200;
+        if (!(*treaties & DTREATY_VENDETTA) || friction >= 0) {
+            cause_friction(faction_id, i, friction);
+        }
+    }
+    // orbital defense pods beyond the planet buster threat attack enemy satellites
+    int threat = 0;
+    for (uint32_t i = 1; i < MaxPlayerNum; i++) {
+        uint32_t t = player->diplo_treaties[i];
+        if (i == faction_id || t & DTREATY_PACT) {
+            continue;
+        }
+        int busters = PlayersData[i].planet_busters;
+        int busters_weighed = (t & DTREATY_TREATY && !(t & DTREATY_WANT_REVENGE))
+            ? busters / 2 : busters;
+        if (threat <= busters_weighed) {
+            threat = busters_weighed;
+        }
+    }
+    // base_id_scan is only meaningful for a type 4 attack, which sets it. Otherwise the original
+    // passes whatever its stack slot holds: the last base scan's end, territory()'s last base,
+    // or (if neither ran) an uninitialized value; action_sat_attack() ignores it.
+    int type = 0;
+    while ((int)(player->satellites_odp_total - player->sat_odp_deployed) > threat) {
+        if (type < 0) {
+            return;
+        }
+        type = -1;
+        uint32_t i;
+        for (i = 1; i < MaxPlayerNum; i++) {
+            PlayerData *other = &PlayersData[i];
+            int pods_other = other->satellites_odp_total;
+            if (!(player->diplo_treaties[i] & (DTREATY_VENDETTA | DTREATY_UNK_800))
+                || (int)player->satellites_odp_total <= pods_other) {
+                continue;
+            }
+            if (pods_other && pods_other >= player->planet_busters) {
+                type = 3;
+                break;
+            }
+            int survey_pods = 0;
+            for (base_id_scan = 0; base_id_scan < *BaseCurrentCount; base_id_scan++) {
+                if (Bases[base_id_scan].faction_id_current == i
+                    && has_fac_built(FAC_GEOSYNC_SURVEY_POD, base_id_scan)) {
+                    survey_pods++;
+                }
+            }
+            if (other->satellites_mineral) {
+                type = 1;
+            } else if (other->satellites_energy) {
+                type = 2;
+            } else if (other->satellites_nutrient) {
+                type = 0;
+            } else if (survey_pods) {
+                type = 4;
+                for (base_id_scan = 0; base_id_scan < *BaseCurrentCount; base_id_scan++) {
+                    if (Bases[base_id_scan].faction_id_current == i
+                        && has_fac_built(FAC_GEOSYNC_SURVEY_POD, base_id_scan)) {
+                        break;
+                    }
+                }
+            } else if (other->satellites_odp_total) {
+                type = 3;
+            } else {
+                continue;
+            }
+            break;
+        }
+        if (type >= 0) {
+            action_sat_attack(faction_id, i, type, base_id_scan);
+        }
+    }
 }
 
 /*
@@ -3516,6 +4439,1275 @@ void __cdecl enemy_capabilities(uint32_t faction_id) {
                 }
             }
         }
+    }
+}
+
+/*
+Purpose: The AI's strategic planning for a faction at the start of its turn. It recounts the
+         faction's bases, units and strength (in total and per region), adds attack, defend,
+         scout and landing goals for the enemy bases and sea formers it can see, upgrades or
+         disbands obsolete units and stray scout patrols, decides each region's plan (attack,
+         defend, expand, colonize), gathers units for a combined attack on an enemy region and
+         finally sends each unit towards the best goal for its plan (the unit's order becomes
+         move to and move_to_ai_type 0x31; 0x30 for an attack gathering at the target staging
+         base). Human factions only get the counts, the per-region plans and the goals of
+         automated units.
+Original Offset: 00561080
+Return Value: n/a
+Status: Complete
+*/
+void __cdecl enemy_strategy(uint32_t faction_id) {
+    PlayerData *p = &PlayersData[faction_id];
+    uint8_t faction_bit = (uint8_t)(1 << faction_id);
+    int transport_count = 0;
+    int transport_cargo = 2; // largest cargo capacity of the faction's transports, at least 2
+    int attack_count = 0; // units sent to attack, or gathering for one outside the target region
+    p->total_mil_veh = 0;
+    p->current_num_bases = 0;
+    p->mil_strength_1 = 0;
+    p->mil_strength_2 = 0;
+    p->pop_total = 0;
+    p->unk_70 = 0;
+    p->planet_busters = 0;
+    p->unk_71 = 0;
+    p->unk_72 = 0;
+    for (uint32_t region = 0; region < MaxContinentNum; region++) {
+        p->region_total_combat_vehs[region] = 0;
+        p->region_total_bases[region] = 0;
+        p->region_force_rating[region] = 0;
+        // only flag 0x8 survives, and it's cleared too every 16 turns (staggered by region)
+        p->unk_77[region] &= ((*TurnCurrentNum + faction_id + region) & 0xF) ? 8 : 0;
+    }
+    for (int i = 0; i < MaxVehProtoNum; i++) {
+        p->proto_id_active[i] = 0;
+        p->proto_id_queue[i] = 0;
+    }
+    for (int base_id = 0; base_id < *BaseCurrentCount; base_id++) {
+        Base *base = &Bases[base_id];
+        int x = base->x;
+        int y = base->y;
+        uint32_t owner = base->faction_id_current;
+        if (owner == faction_id) {
+            base->state &= ~(BSTATE_UNK_4000000 | BSTATE_UNK_8000000);
+            if (base->unk_1) {
+                base->unk_1--;
+            }
+            p->current_num_bases++;
+            p->pop_total += base->population_size;
+            int veh_id = stack_fix(veh_at(x, y));
+            if (!stack_check(veh_id, 14, faction_id, -1, -1)
+                && !stack_check(veh_id, 2, PLAN_RECONNAISANCE, faction_id, -1)) {
+                add_goal(faction_id, AI_GOAL_DEFEND, 4, x, y, -1);
+            }
+            if ((int)base->queue_size >= 0) {
+                for (int i = 0; i <= (int)base->queue_size; i++) {
+                    int item_id = base->queue_production_id[i];
+                    if (item_id >= 0) {
+                        p->proto_id_queue[item_id]++;
+                    }
+                }
+            }
+            uint32_t region = region_at(x, y);
+            p->region_total_bases[region]++;
+            if (is_coast(base->x, base->y, false)) {
+                p->unk_77[region] |= 0x80;
+            }
+            if (!((*TurnCurrentNum + base_id) & 3)) {
+                base->event &= 0xFFFFFF00;
+            }
+        } else if (base->visibility & faction_bit) {
+            uint32_t treaty = p->diplo_treaties[owner];
+            if (treaty & (DTREATY_VENDETTA | DTREATY_SHALL_BETRAY | DTREATY_UNK_800)
+                && !(treaty & DTREATY_PACT)) {
+                int priority = 1;
+                if (veh_who(x, y) < 0) { // no unit guarding the base
+                    priority = 2;
+                    add_goal(faction_id, AI_GOAL_DEFEND, 2, x, y, -1);
+                    add_goal(faction_id, AI_GOAL_SCOUT, 2, x, y, -1);
+                }
+                if (base->faction_id_former == faction_id) {
+                    priority++;
+                }
+                if (p->region_total_bases[region_at(x, y)]) {
+                    priority++;
+                }
+                uint32_t offset;
+                uint32_t mask;
+                bitmask(FAC_PERIMETER_DEFENSE, &offset, &mask);
+                if (!(base->facilities_built[offset] & mask)) {
+                    priority++;
+                }
+                if (base->queue_production_id[0] == -FAC_ASCENT_TO_TRANSCENDENCE) {
+                    priority *= 4;
+                }
+                bitmask(FAC_HEADQUARTERS, &offset, &mask);
+                if (base->facilities_built[offset] & mask) {
+                    priority++;
+                    if (p->flags & PFLAG_STRAT_ATK_ENEMY_HQ) {
+                        priority *= 2;
+                    }
+                    if (PlayersData[owner].corner_market_turn > *TurnCurrentNum) {
+                        priority *= 8;
+                    }
+                }
+                if (p->base_id_atk_target == base_id && p->diplo_treaties[owner] & DTREATY_VENDETTA) {
+                    priority *= 4;
+                } else if (is_objective(base_id)) {
+                    priority *= 4;
+                }
+                add_goal(faction_id, AI_GOAL_ATTACK, priority, x, y, -1);
+                int x_unk = base->unk_x;
+                int y_unk = base->unk_y;
+                if (y_unk >= 0 && y_unk < *MapLatitudeBounds && x_unk >= 0
+                    && x_unk < *MapLongitudeBounds) {
+                    int base_id_find = base_find(x_unk, y_unk);
+                    if (base_id_find >= 0
+                        && Bases[base_id_find].faction_id_current == base->faction_id_current
+                        && (int)terraform_cost(base->unk_x, base->unk_y, faction_id)
+                        <= p->energy_reserves / 8) {
+                        add_goal(faction_id, AI_GOAL_LANDING_SITE, 2, base->unk_x, base->unk_y, -1);
+                    }
+                }
+            }
+        }
+    }
+    if (!(*FactionsStatus & faction_bit)) {
+        for (int base_id = 0; base_id < *BaseCurrentCount; base_id++) {
+            if (Bases[base_id].faction_id_current == faction_id
+                && Bases[base_id].queue_production_id[0] == -FAC_STOCKPILE_ENERGY) {
+                base_reset(base_id, false);
+            }
+        }
+    }
+    int region_formers[MaxContinentNum]; // land terraformers per region
+    memset(region_formers, 0, sizeof(region_formers));
+    enemy_capabilities(faction_id);
+    p->unk_68 = 0;
+    p->unk_66 = 0;
+    p->unk_65 = 0;
+    p->unk_64 = 0;
+    p->unk_106 = 0;
+    p->unk_105 = 0;
+    for (int veh_id = *VehCurrentCount - 1; veh_id >= 0; veh_id--) {
+        if (veh_id >= *VehCurrentCount) {
+            continue;
+        }
+        Veh *veh = &Vehs[veh_id];
+        if (veh->faction_id != faction_id) {
+            uint32_t treaty = p->diplo_treaties[veh->faction_id];
+            if (!(treaty & DTREATY_COMMLINK) || (treaty & (DTREATY_PACT | DTREATY_TREATY)
+                && !(treaty & (DTREATY_WANT_REVENGE | DTREATY_SHALL_BETRAY | DTREATY_UNK_800)))) {
+                continue;
+            }
+            int proto_id = veh->proto_id;
+            uint8_t plan = VehPrototypes[proto_id].plan;
+            if (plan == PLAN_NAVAL_TRANSPORT) {
+                p->unk_64++;
+            }
+            if (plan == PLAN_NAVAL_SUPERIORITY) {
+                p->unk_65 += VehPrototypes[proto_id].reactor_id;
+            }
+            uint8_t chassis_id = VehPrototypes[proto_id].chassis_id;
+            if (Chassis[chassis_id].triad == TRIAD_AIR) {
+                if (plan == PLAN_OFFENSIVE && !Chassis[chassis_id].missile
+                    && weap_val(proto_id, faction_id) >= p->enemy_best_armor_value) {
+                    p->unk_66++;
+                }
+                if (Chassis[VehPrototypes[veh->proto_id].chassis_id].missile
+                    && !planet_buster(veh_id)) {
+                    p->unk_68++;
+                }
+            }
+            // sea formers outside a base: a goal to hunt them, if they can be seen (the own faction
+            // test can never pass here)
+            if (VehPrototypes[veh->proto_id].plan == PLAN_TERRAFORMING
+                && Chassis[VehPrototypes[veh->proto_id].chassis_id].triad == TRIAD_SEA
+                && altitude_at(veh->x, veh->y) < ALT_BIT_SHORE_LINE && base_who(veh->x, veh->y) < 0
+                && ((veh->faction_id == faction_id
+                    && (veh->flags & (VFLAG_LURKER | VFLAG_INVISIBLE))
+                    != (VFLAG_LURKER | VFLAG_INVISIBLE)) || veh->visibility & faction_bit)) {
+                add_goal(faction_id, AI_GOAL_UNK_1, (p->flags & PFLAG_UNK_80000) ? 4 : 2,
+                    veh->x, veh->y, -1);
+            }
+            continue;
+        }
+        int x = veh->x;
+        int y = veh->y;
+        int proto_id = veh->proto_id;
+        uint32_t region = region_at(x, y);
+        BOOL is_ocean_tile = altitude_at(x, y) < ALT_BIT_SHORE_LINE;
+        uint32_t plan = VehPrototypes[proto_id].plan;
+        p->proto_id_active[proto_id]++;
+        uint32_t triad = Chassis[VehPrototypes[proto_id].chassis_id].triad;
+        if (veh->year_end_lurking && !--veh->year_end_lurking) {
+            veh->flags &= ~(VFLAG_LURKER | VFLAG_INVISIBLE);
+        }
+        // obsolete design the Console couldn't upgrade: disband it if a better active design of the
+        // same plan and triad exists (or always, outside the combat plans), unless it's needed where
+        // it stands; every 4th turn per unit, after turn 50
+        if (!(*FactionsStatus & faction_bit)
+            && VehPrototypes[veh->proto_id].obsolete_factions & faction_bit
+            && !Console_upgrade(ConsoleVar, 0, veh_id)
+            && !((*TurnCurrentNum + veh_id) & 3) && *TurnCurrentNum > 50
+            && veh->move_to_ai_type != 0x46 && veh->move_to_ai_type != 0x31
+            && veh->move_to_ai_type != 0x32) {
+            uint8_t plan_now = VehPrototypes[veh->proto_id].plan;
+            if ((plan_now != PLAN_COMBAT || p->region_base_plan[region] > 2)
+                && plan_now < PLAN_COLONIZATION && plan_now != p->region_base_plan[region]
+                && (plan_now != PLAN_RECONNAISANCE || p->region_base_plan[region] != 8
+                    || veh->order == ORDER_HOLD)
+                && (base_who(x, y) < 0 || stack_check(veh_id, 1, faction_id, -1, -1) > 1)
+                && altitude_at(x, y) >= ALT_BIT_SHORE_LINE && p->region_base_plan[region] != 2
+                && !zoc_sea(x, y, faction_id)) {
+                BOOL replaced = false;
+                plan_now = VehPrototypes[veh->proto_id].plan;
+                if (plan_now <= PLAN_COMBAT) {
+                    for (int i = 0; i < 64; i++) {
+                        int proto_id_new = faction_id * 64 + i;
+                        VehPrototype *proto = &VehPrototypes[proto_id_new];
+                        if (proto->flags & PROTO_ACTIVE && !(proto->obsolete_factions & faction_bit)
+                            && proto->plan == VehPrototypes[veh->proto_id].plan
+                            && Chassis[proto->chassis_id].triad
+                            == Chassis[VehPrototypes[veh->proto_id].chassis_id].triad) {
+                            int value_new = weap_val(proto_id_new, faction_id);
+                            int value_old = weap_val(proto_id, faction_id);
+                            if (value_new > value_old) {
+                                replaced = true;
+                            }
+                        }
+                    }
+                } else if (plan_now == PLAN_DEFENSIVE) {
+                    for (int i = 0; i < 64; i++) {
+                        int proto_id_new = faction_id * 64 + i;
+                        VehPrototype *proto = &VehPrototypes[proto_id_new];
+                        if (proto->flags & PROTO_ACTIVE && !(proto->obsolete_factions & faction_bit)
+                            && proto->plan == VehPrototypes[veh->proto_id].plan
+                            && Chassis[proto->chassis_id].triad
+                            == Chassis[VehPrototypes[veh->proto_id].chassis_id].triad) {
+                            // vanilla passes prototype ids to arm_val(), which takes an armor id
+                            int value_old = arm_val(proto_id, faction_id);
+                            int value_new = arm_val(proto_id_new, faction_id);
+                            if (value_new > value_old) {
+                                replaced = true;
+                            }
+                        }
+                    }
+                } else {
+                    replaced = true;
+                }
+                if (replaced) {
+                    if (!(veh->flags & VFLAG_IS_OBJECTIVE)) {
+                        kill(veh_id);
+                    }
+                    continue;
+                }
+            }
+        }
+        // scout patrols are disbanded after turn 25 in expansion regions or when holding, unless
+        // they're the base's only defender (3 turns out of 4 per unit)
+        if (!(*FactionsStatus & faction_bit) && (*TurnCurrentNum + veh_id) & 3
+            && *TurnCurrentNum > 25 && proto_id == BSC_SCOUT_PATROL
+            && (p->region_base_plan[region] == 7 || veh->order == ORDER_HOLD)
+            && (base_who(x, y) < 0 || stack_check(veh_id, 14, faction_id, -1, -1) > 1)
+            && altitude_at(x, y) >= ALT_BIT_SHORE_LINE && p->region_base_plan[region] != 2
+            && !zoc_sea(x, y, faction_id) && veh->move_to_ai_type != 0x31) {
+            kill(veh_id);
+            continue;
+        }
+        veh->state &= ~(VSTATE_UNK_4 | VSTATE_MADE_AIRDROP | VSTATE_UNK_10000000
+            | VSTATE_UNK_20000000);
+        if (!(*FactionsStatus & faction_bit) && veh->order == ORDER_SENTRY_BOARD
+            && (triad != TRIAD_LAND || !is_ocean_tile)) {
+            veh->order = ORDER_NONE;
+        }
+        if (is_ocean_tile) {
+            // land unit at sea outside a base: dies without a transport, otherwise sleeps aboard
+            if (triad == TRIAD_LAND && base_who(x, y) < 0) {
+                if (!stack_check(veh_id, 2, PLAN_NAVAL_TRANSPORT, -1, -1)) {
+                    if (!(veh->flags & VFLAG_IS_OBJECTIVE)) {
+                        veh_kill(veh_id);
+                    }
+                    continue;
+                }
+                if (veh->order != ORDER_SENTRY_BOARD) {
+                    sleep(veh_id);
+                }
+            }
+        } else if (triad == TRIAD_SEA && base_who(x, y) < 0) { // sea unit on land outside a base
+            if (!(veh->flags & VFLAG_IS_OBJECTIVE)) {
+                veh_kill(veh_id);
+            }
+            continue;
+        }
+        if (plan <= PLAN_COMBAT && !(veh->state & VSTATE_UNK_40000)) {
+            int base_id = base_at(veh->x, veh->y);
+            if (base_id < 0 && veh->move_to_ai_type == 0x46) {
+                base_id = veh->home_base_id;
+            }
+            if (base_id >= 0) { // a base short of garrison keeps the unit (0x10000000)
+                int garrison = garrison_check(base_id);
+                int spare = garrison_check(base_id);
+                if (spare > 5) {
+                    spare--;
+                }
+                if (spare > 2) {
+                    spare--;
+                }
+                if (garrison > stack_check(veh_at(Bases[base_id].x, Bases[base_id].y), 11,
+                    VSTATE_UNK_10000000, VSTATE_UNK_10000000, faction_id) + spare) {
+                    veh->state |= VSTATE_UNK_10000000;
+                }
+            }
+        }
+        BOOL is_military = false;
+        if (veh->move_to_ai_type == 0x46 && plan == PLAN_DEFENSIVE) {
+            if (veh->home_base_id >= 0) {
+                Base *home = &Bases[veh->home_base_id];
+                if (home->x != veh->x || home->y != veh->y) {
+                    home->state |= BSTATE_UNK_4000000;
+                }
+            }
+            is_military = true;
+        } else if (plan == PLAN_TERRAFORMING) {
+            veh->flags &= ~0x800;
+            region_formers[region]++;
+            int16_t home_base_id = veh->home_base_id;
+            if (home_base_id >= 0) {
+                // one former per base and triad (0x20 land, 0x80000 sea): a second one moves home
+                // to the nearest base in the region without one, mineral surplus below 2 (any
+                // faction's base: vanilla doesn't check)
+                uint32_t home_flag = (triad != TRIAD_SEA) ? BSTATE_UNK_20 : BSTATE_UNK_80000;
+                if (Bases[home_base_id].state & home_flag && !(*FactionsStatus & faction_bit)) {
+                    int dist_best = 9999;
+                    int base_id_best = -1;
+                    for (int base_id = 0; base_id < *BaseCurrentCount; base_id++) {
+                        if (base_id != veh->home_base_id
+                            && region_at(Bases[base_id].x, Bases[base_id].y) == region
+                            && !(Bases[base_id].state & home_flag)
+                            && Bases[base_id].mineral_surplus < 2) {
+                            int dist = vector_dist(veh->x, veh->y, Bases[base_id].x, Bases[base_id].y);
+                            if (dist < dist_best) {
+                                dist_best = dist;
+                                base_id_best = base_id;
+                            }
+                        }
+                    }
+                    if (base_id_best >= 0) {
+                        Bases[base_id_best].state |= home_flag;
+                        veh->home_base_id = (int16_t)base_id_best;
+                    }
+                } else {
+                    Bases[home_base_id].state |= home_flag;
+                }
+            }
+        } else if (plan == PLAN_COLONIZATION) {
+            if (p->unk_77[region] & 2) {
+                p->unk_77[region] |= 0x800;
+            } else {
+                p->unk_77[region] |= 2;
+            }
+        } else if (plan == PLAN_INFO_WARFARE) {
+            p->unk_77[region] |= 0x1000;
+        } else if (plan == PLAN_RECONNAISANCE) {
+            if (base_who(x, y) < 0) {
+                p->unk_77[region] |= 0x2000;
+            }
+            is_military = true;
+        } else if (plan <= PLAN_NAVAL_TRANSPORT) {
+            is_military = true;
+        }
+        if (is_military) {
+            p->total_mil_veh++;
+        }
+        if (is_military && triad == TRIAD_LAND) {
+            if (!is_ocean_tile) {
+                p->region_total_combat_vehs[region]++;
+            }
+        } else if (triad == TRIAD_SEA) {
+            p->unk_70++;
+        } else if (triad == TRIAD_AIR) {
+            if (plan == PLAN_OFFENSIVE) {
+                p->unk_105++;
+            } else if (plan == PLAN_AIR_SUPERIORITY) {
+                p->unk_106++;
+            }
+        }
+        if (plan == PLAN_NAVAL_TRANSPORT) {
+            transport_count++;
+            if (transport_cargo <= (int)veh_cargo(veh_id)) {
+                transport_cargo = veh_cargo(veh_id);
+            }
+        }
+        if (planet_buster(veh_id)) {
+            p->planet_busters++;
+            continue;
+        }
+        int weap = weap_strat(VehPrototypes[veh->proto_id].weapon_id, faction_id);
+        int arm = arm_strat(VehPrototypes[veh->proto_id].armor_id, faction_id);
+        int morale = morale_veh(veh_id, false, 0) + 6;
+        p->mil_strength_1 += (arm + weap) * morale / 8;
+        if (weap > arm || veh->order != ORDER_HOLD) {
+            int strength = morale * weap / 8;
+            p->mil_strength_2 += strength;
+            p->region_force_rating[region] += (uint16_t)strength;
+        }
+        uint32_t state = veh->state;
+        if ((state & (VSTATE_UNK_20000 | VSTATE_UNK_40000)) == VSTATE_UNK_40000) { // gathering
+            int x_target = p->x_target;
+            int y_target = p->y_target;
+            if (y_target >= 0 && y_target < *MapLatitudeBounds && x_target >= 0
+                && x_target < *MapLongitudeBounds && region == region_at(x_target, y_target)) {
+                p->unk_71++;
+                if (plan == PLAN_INFO_WARFARE) {
+                    p->unk_72 |= 2;
+                } else if (arm > weap) {
+                    p->unk_72 |= 1;
+                }
+            } else {
+                veh->state = state | VSTATE_UNK_20000;
+                attack_count++;
+            }
+        } else if ((state & (VSTATE_UNK_20000 | VSTATE_UNK_40000))
+            == (VSTATE_UNK_20000 | VSTATE_UNK_40000)) { // attacking
+            attack_count++;
+        }
+    }
+    p->unk_70 += ((transport_cargo << 11) + transport_count) << 11;
+    int enemy_sea = 0;
+    for (uint32_t i = 1; i < MaxPlayerNum; i++) {
+        if (i != faction_id && p->diplo_treaties[i] & DTREATY_COMMLINK
+            && !(p->diplo_treaties[i] & DTREATY_PACT)) {
+            int value = PlayersData[i].unk_70 / 0x400000;
+            if (enemy_sea <= value) {
+                enemy_sea = value;
+            }
+        }
+    }
+    p->unk_64 += enemy_sea << 11;
+    if (transport_count > 1) {
+        for (int veh_id = 0; veh_id < *VehCurrentCount; veh_id++) {
+            if (Vehs[veh_id].faction_id == faction_id) {
+                int16_t proto_id = Vehs[veh_id].proto_id;
+                if (Chassis[VehPrototypes[proto_id].chassis_id].triad == TRIAD_SEA
+                    && VehPrototypes[proto_id].plan == PLAN_NAVAL_TRANSPORT
+                    && (proto_id == BSC_UNITY_FOIL || p->proto_id_active[proto_id] >= 2)) {
+                    Vehs[veh_id].state |= VSTATE_UNK_20000000;
+                    break;
+                }
+            }
+        }
+    }
+    for (int veh_id = 0; veh_id < *VehCurrentCount; veh_id++) {
+        Veh *veh = &Vehs[veh_id];
+        if (veh->faction_id == faction_id
+            && VehPrototypes[veh->proto_id].plan == PLAN_TERRAFORMING) {
+            uint32_t region = region_at(veh->x, veh->y);
+            if (region < MaxRegionLandNum && region_formers[region] >= 3
+                && p->region_total_bases[region] >= 3) {
+                veh->flags |= 0x800;
+                if (veh->home_base_id >= 0) {
+                    Bases[veh->home_base_id].state &= ~BSTATE_UNK_20;
+                }
+                region_formers[region] = 0;
+            }
+        }
+    }
+    // the attack being gathered at the staging base (x_target, y_target): launch it once enough
+    // units are there, or give it up
+    int launch = *FactionsStatus & faction_bit; // humans never gather
+    int region_target = -1;
+    BOOL end_gathering = false;
+    if (p->x_target >= 0) {
+        int base_id = base_at(p->x_target, p->y_target);
+        region_target = region_at(p->x_target, p->y_target);
+        if (base_id >= 0 && Bases[base_id].faction_id_current == faction_id) {
+            int veh_id = stack_fix(veh_at(Bases[base_id].x, Bases[base_id].y));
+            if (veh_id >= 0) {
+                int gathered = stack_check(veh_id, 11, VSTATE_UNK_20000 | VSTATE_UNK_40000,
+                    VSTATE_UNK_40000, -1);
+                int needed = range(p->region_total_bases[region_target] * 2 / 3, 3, 8);
+                if (gathered - (int)bit_count(p->unk_72) >= needed) {
+                    launch = 1;
+                }
+                if (p->region_base_plan[region_target] == 2
+                    || p->unk_77[region_target] & 0x4200) {
+                    launch = 1;
+                }
+                if (p->region_base_plan[region_target] > 2
+                    && stack_check(veh_id, 2, PLAN_NAVAL_TRANSPORT, -1, -1)) {
+                    if (gathered >= p->unk_70 / 0x400000 * 2) {
+                        launch = 1;
+                    }
+                    if (stack_check(veh_id, 2, PLAN_NAVAL_TRANSPORT, -1, -1) > 1) {
+                        int cargo_free = stack_check(veh_id, 8, -1, -1, -1);
+                        int land_units = stack_check(veh_id, 3, TRIAD_LAND, -1, -1);
+                        if (gathered >= cargo_free + land_units) { // as many as the transports hold
+                            launch = 1;
+                        }
+                    }
+                }
+            }
+            if (launch) {
+                end_gathering = true;
+            } else if (p->region_base_plan[region_target] <= 2) {
+                p->flags &= ~0x800;
+            } else if (p->region_base_plan[region_target] != 8
+                && is_coast(Bases[base_id].x, Bases[base_id].y, false)) {
+                p->flags |= 0x800;
+            } else {
+                launch = 1;
+                end_gathering = true;
+            }
+        } else {
+            launch = 1;
+            end_gathering = true;
+        }
+    } else if (launch) {
+        end_gathering = true;
+    }
+    if (end_gathering) {
+        for (int veh_id = 0; veh_id < *VehCurrentCount; veh_id++) {
+            if (Vehs[veh_id].faction_id == faction_id && Vehs[veh_id].state & VSTATE_UNK_40000) {
+                Vehs[veh_id].state |= VSTATE_UNK_20000;
+            }
+        }
+        p->y_target = -1;
+        p->x_target = -1;
+        p->unk_72 = 0;
+        p->unk_71 = 0;
+    }
+    // region plans: 0 attack, 2 defend, 7 expand, 8 hold
+    int target_value_best = 0;
+    int region_target_best = -1;
+    for (uint32_t region = 1; region < MaxContinentNum; region++) {
+        p->region_total_offensive_vehs[region] = 0;
+        if (((region & RegionBounds) == RegionBounds || !(region & RegionBounds))
+            && !p->region_total_bases[region]) {
+            p->region_base_plan[region] = 8;
+            continue;
+        }
+        uint8_t base_plan_old = p->region_base_plan[region];
+        uint32_t threat = 0;
+        int weaker_count = 0; // hostile factions in the region we aren't stronger than
+        int stronger_count = 0;
+        int factions_with_bases = 0;
+        int reachable_count = 0;
+        int adjacent_count = 0;
+        BOOL at_war = false;
+        int our_combat = p->region_total_combat_vehs[region];
+        int our_force = p->region_force_rating[region];
+        int our_bases = p->region_total_bases[region];
+        for (uint32_t i = 1; i < MaxPlayerNum; i++) {
+            int their_force = PlayersData[i].region_force_rating[region];
+            int their_combat = PlayersData[i].region_total_combat_vehs[region];
+            int their_bases = PlayersData[i].region_total_bases[region];
+            if (p->diplo_treaties[i] & DTREATY_PACT) {
+                their_combat *= 2;
+                their_bases *= 2;
+            }
+            if (their_bases) {
+                factions_with_bases++;
+                p->unk_77[region] |= (faction_id != i) ? 0x20 : 0x10;
+                if (p->diplo_treaties[i] & DTREATY_VENDETTA) {
+                    p->unk_77[region] |= 0x40;
+                }
+            } else if (!their_combat || our_force > their_force * 5) {
+                continue;
+            }
+            if (faction_id == i) {
+                continue;
+            }
+            uint32_t treaty = p->diplo_treaties[i];
+            if (treaty & DTREATY_PACT || !(treaty & DTREATY_COMMLINK)) {
+                continue;
+            }
+            // contiguous() is costly on big regions: there it's only redone every 8th/16th turn
+            // (staggered by faction), in between bases in a region not planned for attack count
+            // as unreachable, anything else as adjacent
+            BOOL adjacent = false;
+            BOOL reachable = false;
+            BOOL test_contiguous = true;
+            if (*TurnCurrentNum > 1) {
+                int tiles = Continents[region].tile_count;
+                if (tiles >= 500 || PlayersData[i].region_total_bases[region] * our_bases >= 50) {
+                    int skip = (tiles < 1000) ? ((*TurnCurrentNum + faction_id) & 7)
+                        : ((*TurnCurrentNum + faction_id * 2) & 0xF);
+                    if (skip) {
+                        test_contiguous = false;
+                        if (their_bases && p->region_base_plan[region] > 2) {
+                            reachable = false;
+                            adjacent = false;
+                        } else {
+                            reachable = true;
+                            adjacent = true;
+                        }
+                    }
+                }
+            }
+            if (test_contiguous) {
+                if (!their_bases || contiguous(faction_id, i, region, 0)) {
+                    adjacent = true;
+                    reachable = true;
+                } else {
+                    adjacent = false;
+                    reachable = contiguous(faction_id, i, region, 1) != 0;
+                }
+            }
+            if (p->diplo_treaties[i] & (DTREATY_VENDETTA | DTREATY_SHALL_BETRAY | DTREATY_UNK_800)) {
+                if (reachable) {
+                    reachable_count++;
+                }
+                if (adjacent && ++adjacent_count > 1) {
+                    p->unk_77[region] |= 0x200;
+                }
+                if ((our_force > their_combat && our_force > their_force)
+                    || our_combat > their_force || !our_bases || !reachable) {
+                    stronger_count++;
+                } else {
+                    weaker_count++;
+                }
+                if (their_force >= our_force * 3 / 2 && our_bases > their_bases && reachable) {
+                    p->unk_77[region] |= 0x4000;
+                }
+                if (*FactionsStatus & (1 << i) && (adjacent || reachable)) {
+                    for (int base_id = 0; base_id < *BaseCurrentCount; base_id++) {
+                        if (Bases[base_id].faction_id_current == i
+                            && Bases[base_id].faction_id_former == faction_id
+                            && region_at(Bases[base_id].x, Bases[base_id].y) == region) {
+                            p->unk_77[region] |= 0x400; // a human holds one of our former bases
+                            break;
+                        }
+                    }
+                }
+            } else if (our_bases && p->diplo_treaties[i] & DTREATY_WANT_REVENGE
+                && their_force > our_combat) {
+                threat |= ((our_force > their_combat && their_bases && their_force < our_force * 2)
+                    || !reachable) ? 2 : 1;
+            }
+            if (!(p->diplo_treaties[i] & (DTREATY_PACT | DTREATY_TREATY))
+                || ((wants_to_attack(faction_id, i, 0) || wants_to_attack(i, faction_id, 0))
+                    && reachable)) {
+                at_war = true;
+            }
+        }
+        uint8_t best_site = p->region_best_site[region];
+        int threshold = great_satan(FactionRankings[7], false);
+        threshold += (best_site < 4) - (int)((*GameState >> 7) & 2);
+        threshold += ((int)p->current_num_bases > 4);
+        threshold += 3 + (*TurnCurrentNum > 75) + ((int)*MapArea > 3200) + factions_with_bases;
+        BOOL expand = false;
+        if (our_bases) {
+            int spare_tiles = p->region_good_tiles[region] - p->region_good_radius_tiles[region];
+            expand = (best_site < 2 && p->region_total_bases[region]) || p->unk_77[region] & 8
+                || our_bases >= 20 || spare_tiles < 4;
+            // vanilla adds the aliens' (faction 0) good tile count, not this faction's twice
+            if (((p->ai_growth - p->ai_wealth) + threshold) * our_bases * 2
+                > PlayersData[0].region_good_tiles[region] + p->region_good_tiles[region]
+                && spare_tiles / ((our_bases + 1) / 2) + best_site < threshold * 2) {
+                expand = true;
+            }
+        }
+        if (at_war) {
+            p->unk_77[region] |= 4;
+        }
+        if (expand) {
+            p->unk_77[region] |= 1;
+        }
+        p->region_base_plan[region] = expand ? 7 : 8;
+        if (!reachable_count && p->region_total_bases[region]) {
+            p->unk_77[region] |= 0x100;
+        } else {
+            if (stronger_count) {
+                threat = 0;
+                p->region_base_plan[region] = 0;
+            } else if (threat & 2) {
+                p->region_base_plan[region] = 0;
+            }
+            if (weaker_count || threat & 1) {
+                p->region_base_plan[region] = 2;
+            }
+        }
+        if (region >= MaxRegionLandNum) {
+            p->region_base_plan[region] = 7;
+            continue;
+        }
+        if (!launch && (int)region == region_target && adjacent_count >= 2) {
+            for (int veh_id = 0; veh_id < *VehCurrentCount; veh_id++) {
+                if (Vehs[veh_id].faction_id == faction_id && Vehs[veh_id].state & VSTATE_UNK_40000) {
+                    Vehs[veh_id].state |= VSTATE_UNK_20000;
+                }
+            }
+            p->y_target = -1;
+            p->x_target = -1;
+            p->unk_72 = 0;
+            p->unk_71 = 0;
+            region_target = -1;
+        }
+        if (p->x_target < 0 && !launch && !(*FactionsStatus & faction_bit)) {
+            if (p->region_base_plan[region] < 2 && adjacent_count < 2
+                && !(p->unk_77[region] & 0x4000)) {
+                int value = p->region_total_bases[region] + 1000;
+                if (value > target_value_best) {
+                    target_value_best = value;
+                    region_target_best = region;
+                    int base_id_atk = p->base_id_atk_target;
+                    if (base_id_atk >= 0
+                        && p->diplo_treaties[Bases[base_id_atk].faction_id_current] & DTREATY_VENDETTA
+                        && region_at(Bases[base_id_atk].x, Bases[base_id_atk].y) == region) {
+                        target_value_best = 0;
+                    }
+                }
+            } else if (p->region_base_plan[region] == 7
+                && p->region_total_bases[region] > target_value_best) {
+                target_value_best = p->region_total_bases[region];
+                region_target_best = region;
+            }
+        }
+        // landing site: on the abstract map (5x5 tiles per cell), the coast tile at the end of a
+        // land walk out of the region that borders the most other cells
+        if ((!(*FactionsStatus & faction_bit) || (faction_id == (uint32_t)*FactionIDCurrent
+            && *GamePreferences & PREF_AUTO_FORMER_RAISE_LWR_TERRAIN))
+            && p->region_total_bases[region] && (p->region_base_plan[region] == 7
+                || (p->region_base_plan[region] == 8 && (int)Continents[region].tile_count < 150))) {
+            int score_best = 0;
+            int x_best = 0;
+            int y_best = 0;
+            int x_site = 0;
+            int y_site = 0;
+            for (int y_abs = 0; y_abs < (int)*MapAbstractLatBounds; y_abs++) {
+                for (int x_abs = y_abs & 1; x_abs < (int)*MapAbstractLongBounds; x_abs += 2) {
+                    if (abstract_at(x_abs, y_abs) != region) {
+                        continue;
+                    }
+                    int score = 0;
+                    int dir_best = -1;
+                    for (int dir = 0; dir < 8; dir++) {
+                        int x_abs2 = x_abs + RadiusBaseX[dir];
+                        if (!(*MapIsFlat & 1)) {
+                            if (x_abs2 < 0) {
+                                x_abs2 += *MapAbstractLongBounds;
+                            } else if (x_abs2 >= (int)*MapAbstractLongBounds) {
+                                x_abs2 -= *MapAbstractLongBounds;
+                            }
+                        }
+                        int y_abs2 = y_abs + RadiusBaseY[dir];
+                        if (x_abs2 < 0 || x_abs2 >= (int)*MapAbstractLongBounds || y_abs2 < 0
+                            || y_abs2 >= (int)*MapAbstractLatBounds) {
+                            continue;
+                        }
+                        uint32_t region_adj = abstract_at(x_abs2, y_abs2);
+                        if (region_adj == region) {
+                            score--;
+                            continue;
+                        }
+                        score += 2;
+                        BOOL is_flat = *MapIsFlat & 1;
+                        for (int i = 0; i < 8; i++) {
+                            int x_walk = x_abs * 5 + RadiusBaseX[i];
+                            if (!is_flat) {
+                                if (x_walk < 0) {
+                                    x_walk += *MapLongitudeBounds;
+                                } else if (x_walk >= *MapLongitudeBounds) {
+                                    x_walk -= *MapLongitudeBounds;
+                                }
+                            }
+                            int y_walk = y_abs * 5 + RadiusBaseY[i];
+                            if (y_walk < 0 || y_walk >= *MapLatitudeBounds || x_walk < 0
+                                || x_walk >= *MapLongitudeBounds
+                                || altitude_at(x_walk, y_walk) < ALT_BIT_SHORE_LINE) {
+                                continue;
+                            }
+                            // walk over land in direction dir up to the coast (or the map edge)
+                            int steps = 1;
+                            for (;;) {
+                                int x_next = x_walk + RadiusBaseX[dir];
+                                if (!is_flat) {
+                                    if (x_next < 0) {
+                                        x_next += *MapLongitudeBounds;
+                                    } else if (x_next >= *MapLongitudeBounds) {
+                                        x_next -= *MapLongitudeBounds;
+                                    }
+                                }
+                                int y_next = y_walk + RadiusBaseY[dir];
+                                if (y_next < 0 || y_next >= *MapLatitudeBounds || x_next < 0
+                                    || x_next >= *MapLongitudeBounds
+                                    || altitude_at(x_next, y_next) < ALT_BIT_SHORE_LINE) {
+                                    break;
+                                }
+                                x_walk = x_next;
+                                y_walk = y_next;
+                                if (++steps >= 100) {
+                                    break;
+                                }
+                            }
+                            if (steps >= 100) {
+                                continue;
+                            }
+                            if (base_who(x_walk, y_walk) < 0) {
+                                dir_best = dir;
+                                score += 4;
+                                x_site = x_walk;
+                                y_site = y_walk;
+                                if (region_adj && (int)Continents[region_adj].tile_count >= 40) {
+                                    score += 2;
+                                }
+                            }
+                            break; // first land tile only (next direction even if a base is there)
+                        }
+                    }
+                    if (score > score_best && dir_best >= 0) {
+                        score_best = score;
+                        x_best = x_site;
+                        y_best = y_site;
+                    }
+                }
+            }
+            if (score_best > 0
+                && (int)terraform_cost(x_best, y_best, faction_id) <= p->energy_reserves / 8) {
+                add_goal(faction_id, AI_GOAL_LANDING_SITE, 2, x_best, y_best, -1);
+            }
+        }
+        if (!(*FactionsStatus & faction_bit)) {
+            bases_reset(region, faction_id, p->region_base_plan[region] == base_plan_old);
+        }
+    }
+    // a new attack: on the enemy with the most bases in the chosen region (vendetta first), from the
+    // own base there nearest to the enemy
+    if (region_target_best > 0 && region_target_best < RegionBounds && !launch
+        && !(*FactionsStatus & faction_bit) && !(p->flags & PFLAG_STRAT_SEARCH_OBJECTIVES)) {
+        int value_best = -1;
+        int faction_id_target = -1;
+        for (uint32_t i = 1; i < MaxPlayerNum; i++) {
+            if (i == faction_id) {
+                continue;
+            }
+            uint32_t treaty = p->diplo_treaties[i];
+            if (!(treaty & (DTREATY_TRUCE | DTREATY_VENDETTA | DTREATY_SHALL_BETRAY
+                | DTREATY_UNK_800))) {
+                continue;
+            }
+            uint8_t their_bases = PlayersData[i].region_total_bases[region_target_best];
+            if (!(treaty & (DTREATY_VENDETTA | DTREATY_UNK_800))
+                && (attack_count > 3 || !their_bases)) {
+                continue;
+            }
+            int value = (treaty & DTREATY_VENDETTA) * 0x80 + their_bases;
+            if (value > value_best) {
+                value_best = value;
+                faction_id_target = i;
+            }
+        }
+        if (faction_id_target > 0) {
+            BOOL by_sea = (value_best == 0x800); // vendetta, no enemy base in the region
+            int dist_best = 9999;
+            int base_id_best = -1;
+            for (int base_id = 0; base_id < *BaseCurrentCount; base_id++) {
+                Base *base = &Bases[base_id];
+                if (base->faction_id_current != faction_id
+                    || altitude_at(base->x, base->y) < ALT_BIT_SHORE_LINE
+                    || region_at(base->x, base->y) != (uint32_t)region_target_best
+                    || (by_sea && !is_coast(base->x, base->y, false))) {
+                    continue;
+                }
+                int base_id_atk = p->base_id_atk_target;
+                if (base_id_atk >= 0 && p->diplo_treaties[Bases[base_id_atk].faction_id_current]
+                    & (DTREATY_VENDETTA | DTREATY_UNK_800) && region_at(Bases[base_id_atk].x,
+                        Bases[base_id_atk].y) == (uint32_t)region_target_best) {
+                    *BaseFindDist = vector_dist(base->x, base->y, Bases[base_id_atk].x,
+                        Bases[base_id_atk].y);
+                } else if (base_find(base->x, base->y, faction_id_target, region_target_best,
+                    -1, -1) < 0) {
+                    base_find(base->x, base->y, faction_id_target);
+                    *BaseFindDist *= 2;
+                }
+                if (*BaseFindDist < dist_best) {
+                    dist_best = *BaseFindDist;
+                    base_id_best = base_id;
+                }
+            }
+            if (base_id_best >= 0) {
+                p->x_target = Bases[base_id_best].x;
+                p->y_target = Bases[base_id_best].y;
+                if (by_sea) {
+                    p->flags |= 0x800;
+                } else {
+                    p->flags &= ~0x800;
+                }
+                // gather the free land combat units of the region that are nearer the staging base
+                // than the enemy's nearest base (at most 8; by sea, as many as the transports hold)
+                for (int veh_id = 0; veh_id < *VehCurrentCount; veh_id++) {
+                    Veh *veh = &Vehs[veh_id];
+                    if (veh->faction_id != faction_id
+                        || veh->state & (VSTATE_UNK_20000 | VSTATE_UNK_40000)) {
+                        continue;
+                    }
+                    int proto_id = veh->proto_id;
+                    if (VehPrototypes[proto_id].plan > PLAN_DEFENSIVE
+                        || Chassis[VehPrototypes[proto_id].chassis_id].triad != TRIAD_LAND
+                        || has_abil(proto_id, ABL_DROP_POD)
+                        || region_at(veh->x, veh->y) != (uint32_t)region_target_best
+                        || (veh->order && veh->order != ORDER_MOVE_TO)) {
+                        continue;
+                    }
+                    base_find(veh->x, veh->y, faction_id_target);
+                    if (*BaseFindDist > vector_dist(veh->x, veh->y, p->x_target, p->y_target)) {
+                        int weap = weap_strat(VehPrototypes[veh->proto_id].weapon_id, faction_id);
+                        int arm = arm_strat(VehPrototypes[veh->proto_id].armor_id, faction_id);
+                        if (weap >= arm || (!(p->unk_72 & 1) && !by_sea)) {
+                            int gathering = p->unk_71;
+                            veh->state = (veh->state & ~VSTATE_UNK_20000) | VSTATE_UNK_40000;
+                            p->unk_71 = gathering + 1;
+                            if (weap < arm) {
+                                p->unk_72 |= 1;
+                            }
+                            if (p->unk_71 >= 8
+                                || (by_sea && p->unk_71 >= p->unk_70 * 2 / 0x400000)) {
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if (*TurnCurrentNum && faction_id) {
+        // goals for the units: pass 0 the ones that had a goal last turn (0x31 becomes 0x32), then
+        // the rest; goal_counts[] counts the units sent to each goal
+        int goal_counts[MaxGoalsNum];
+        memset(goal_counts, 0, sizeof(goal_counts));
+        for (int veh_id = *VehCurrentCount - 1; veh_id >= 0; veh_id--) {
+            if (Vehs[veh_id].faction_id == faction_id && Vehs[veh_id].move_to_ai_type == 0x31) {
+                Vehs[veh_id].move_to_ai_type = 0x32;
+            }
+        }
+        for (int pass = 0; pass < 2; pass++) {
+            for (int veh_id = *VehCurrentCount - 1; veh_id >= 0; veh_id--) {
+                if (veh_id >= *VehCurrentCount) {
+                    continue;
+                }
+                Veh *veh = &Vehs[veh_id];
+                if (veh->faction_id != faction_id || (!pass && veh->move_to_ai_type != 0x32)) {
+                    continue;
+                }
+                int x = veh->x;
+                int y = veh->y;
+                uint32_t region = region_at(x, y);
+                int plan = VehPrototypes[veh->proto_id].plan;
+                if (pass && veh->move_to_ai_type == 0x31) {
+                    if (plan == PLAN_TERRAFORMING
+                        || (p->region_base_plan[region] <= 2 && plan <= PLAN_DEFENSIVE)) {
+                        continue;
+                    }
+                }
+                uint32_t state = veh->state & ~VSTATE_UNK_40000000;
+                veh->state = state;
+                if (veh->order >= ORDER_FARM && veh->order < ORDER_MOVE_TO) { // terraforming
+                    continue;
+                }
+                if (*FactionsStatus & faction_bit) { // human: automated units only
+                    if (!(state & VSTATE_UNK_200)
+                        || (VehPrototypes[veh->proto_id].plan == PLAN_TERRAFORMING
+                            && veh->order_auto_type)
+                        || (state & (VSTATE_UNK_1000000 | VSTATE_UNK_200))
+                        == (VSTATE_UNK_1000000 | VSTATE_UNK_200)
+                        || ((state & (VSTATE_UNK_2000000 | VSTATE_UNK_200))
+                            == (VSTATE_UNK_2000000 | VSTATE_UNK_200)
+                            && veh->patrol_current_point < veh->waypoint_count)) {
+                        continue;
+                    }
+                }
+                if (state & VSTATE_UNK_10000000) {
+                    p->region_total_offensive_vehs[region]++;
+                    plan = PLAN_DEFENSIVE;
+                } else if (region < MaxRegionLandNum) {
+                    // garrison quota: one unit per (2 - ai_fight) bases, more in held regions
+                    int divisor = 2 - p->ai_fight;
+                    if (p->region_base_plan[region] == 8) {
+                        divisor += 2;
+                    } else if (p->region_base_plan[region] == 2) {
+                        divisor = 1;
+                    }
+                    if (p->flags & PFLAG_STRAT_DEF_OBJECTIVES) {
+                        divisor = 1;
+                    }
+                    int quota = (p->region_total_bases[region] + divisor - 1) / divisor;
+                    if (quota && plan <= PLAN_COMBAT
+                        && (p->region_base_plan[region] > 2 || (base_who(x, y) == (int)faction_id
+                            && (p->region_base_plan[region] == 2 || p->unk_77[region] & 0x4000)
+                            && stack_check(veh_id, 11, VSTATE_UNK_10000000, VSTATE_UNK_10000000,
+                                -1) < 1))) {
+                        uint32_t state_now = veh->state;
+                        if (!(state_now & (VSTATE_UNK_20000 | VSTATE_UNK_40000))
+                            && p->region_total_offensive_vehs[region] < quota) {
+                            p->region_total_offensive_vehs[region]++;
+                            veh->state = state_now | VSTATE_UNK_10000000;
+                            plan = PLAN_DEFENSIVE;
+                        }
+                    }
+                }
+                uint8_t triad = Chassis[VehPrototypes[veh->proto_id].chassis_id].triad;
+                if (triad != TRIAD_AIR) {
+                    BOOL is_ocean_tile = altitude_at(x, y) < ALT_BIT_SHORE_LINE;
+                    BOOL is_sea_unit = (triad == TRIAD_SEA);
+                    if (is_ocean_tile != is_sea_unit) { // aboard a transport or in a base
+                        if (base_who(x, y) < 0) {
+                            continue;
+                        }
+                        BOOL is_flat = *MapIsFlat & 1;
+                        for (int i = 0; i < 8; i++) {
+                            int x_adj = x + RadiusBaseX[i];
+                            if (!is_flat) {
+                                if (x_adj < 0) {
+                                    x_adj += *MapLongitudeBounds;
+                                } else if (x_adj >= *MapLongitudeBounds) {
+                                    x_adj -= *MapLongitudeBounds;
+                                }
+                            }
+                            int y_adj = y + RadiusBaseY[i];
+                            // vanilla tests the unit's own tile again instead of the adjacent one,
+                            // so this never matches and the unit plans from where it is
+                            if (y_adj >= 0 && y_adj < *MapLatitudeBounds && x_adj >= 0
+                                && x_adj < *MapLongitudeBounds && is_ocean_tile == is_sea_unit) {
+                                x = x_adj;
+                                y = y_adj;
+                                region = region_at(x_adj, y_adj);
+                                break;
+                            }
+                        }
+                    }
+                }
+                if (plan == PLAN_COMBAT) {
+                    if (p->region_base_plan[region] == 2 || p->region_base_plan[region] == 8) {
+                        plan = PLAN_DEFENSIVE;
+                    } else {
+                        plan = PLAN_OFFENSIVE;
+                    }
+                }
+                if ((veh->state & (VSTATE_UNK_20000 | VSTATE_UNK_40000)) == VSTATE_UNK_40000
+                    && p->x_target >= 0) { // gathering: go to the staging base
+                    veh->order = ORDER_MOVE_TO;
+                    veh->move_to_ai_type = 0x30;
+                    veh->waypoint_x[0] = (int16_t)p->x_target;
+                    veh->waypoint_y[0] = (int16_t)p->y_target;
+                    if (VehPrototypes[veh->proto_id].plan == PLAN_COLONIZATION) {
+                        veh->terraforming_turns = 0;
+                    }
+                    continue;
+                }
+                if (plan == PLAN_NAVAL_TRANSPORT) { // transports wait to be full
+                    int cargo = stack_check(veh_id, 8, -1, -1, -1);
+                    if (cargo < (int)veh_cargo(veh_id)) {
+                        continue;
+                    }
+                }
+                if (veh->move_to_ai_type == 0x46 && plan == PLAN_DEFENSIVE) {
+                    continue;
+                }
+                BOOL attacking = false;
+                if ((veh->state & (VSTATE_UNK_20000 | VSTATE_UNK_40000))
+                    == (VSTATE_UNK_20000 | VSTATE_UNK_40000)) {
+                    plan = PLAN_OFFENSIVE;
+                    attacking = true;
+                }
+                if (veh->order == ORDER_HOLD && !attacking && base_who(x, y) >= 0) {
+                    int artifacts = stack_check(veh_id, 2, PLAN_ALIEN_ARTIFACT, -1, -1);
+                    if (stack_check(veh_id, 1, -1, -1, -1) - artifacts <= 1) {
+                        continue;
+                    }
+                    if (plan == PLAN_DEFENSIVE || plan == PLAN_RECONNAISANCE || plan == PLAN_COMBAT) {
+                        int base_id = base_at(x, y);
+                        int defenders = stack_check(veh_id, 16, -1, -1, -1);
+                        if (defenders < (int)garrison_check(base_id)) {
+                            continue;
+                        }
+                    }
+                }
+                if (plan == PLAN_TERRAFORMING && veh->flags & 0x800) {
+                    continue;
+                }
+                int value_best = 99999;
+                int goal_id_best = -1;
+                for (int goal_id = 0; goal_id < MaxGoalsNum; goal_id++) {
+                    Goal *goal = &p->goals[goal_id];
+                    if (goal->priority <= 0 || goal->type < 0) {
+                        continue;
+                    }
+                    if ((goal->type & 0xF) != plan && (attacking || goal->type != AI_GOAL_SCOUT
+                        || plan > PLAN_RECONNAISANCE || veh->order == ORDER_HOLD)) {
+                        continue;
+                    }
+                    if (goal->y < 0 || goal->y >= *MapLatitudeBounds || goal->x < 0
+                        || goal->x >= *MapLongitudeBounds) {
+                        goal->x = -1;
+                        goal->y = -1;
+                        continue;
+                    }
+                    Map *goal_tile = map_loc(goal->x, goal->y);
+                    if (region != goal_tile->region) {
+                        continue;
+                    }
+                    int proto_id = veh->proto_id;
+                    uint8_t triad_goal = Chassis[VehPrototypes[proto_id].chassis_id].triad;
+                    if (triad_goal == TRIAD_AIR
+                        || ((goal_tile->climate & 0xE0) < ALT_BIT_SHORE_LINE)
+                        != (triad_goal == TRIAD_SEA) || VehPrototypes[proto_id].unk_1 == 21) {
+                        continue;
+                    }
+                    if (plan == PLAN_OFFENSIVE) {
+                        if (goal_tile->bit & BIT_MONOLITH
+                            && (!want_monolith(veh_id) || attacking || goal_counts[goal_id])) {
+                            continue;
+                        }
+                    } else if (plan == PLAN_COLONIZATION) {
+                        if (base_territory(faction_id, goal->x, goal->y) >= 0) {
+                            del_site(faction_id, AI_GOAL_COLONIZE, goal->x, goal->y, 0);
+                            continue;
+                        }
+                    } else if (plan == PLAN_RECONNAISANCE) {
+                        if (has_abil(proto_id, ABL_EMPATHIC)) {
+                            continue;
+                        }
+                    }
+                    int base_id_goal = base_at(goal->x, goal->y);
+                    int score = vector_dist(x, y, goal->x, goal->y) << 8;
+                    int taken = (!attacking && (base_id_goal < 0
+                        || Bases[base_id_goal].faction_id_current != faction_id
+                        || !Bases[base_id_goal].unk_1)) ? goal_counts[goal_id] : 0;
+                    int priority = goal->priority - taken;
+                    if (priority <= 0) {
+                        continue;
+                    }
+                    if (attacking && base_who(goal->x, goal->y) < 0) {
+                        continue;
+                    }
+                    if (goal->type == AI_GOAL_SCOUT && plan != PLAN_RECONNAISANCE) {
+                        score *= 2;
+                        if (veh->state & VSTATE_UNK_10000000 || base_who(goal->x, goal->y) < 0) {
+                            continue;
+                        }
+                    }
+                    if (taken && (goal->type == AI_GOAL_SCOUT || goal->type == AI_GOAL_COLONIZE)) {
+                        continue;
+                    }
+                    if (score > 6 / (taken + 1)
+                        * Chassis[VehPrototypes[veh->proto_id].chassis_id].speed * priority - taken + 4
+                        && p->region_base_plan[region] != plan && goal->type != AI_GOAL_SCOUT
+                        && (taken || goal->type != AI_GOAL_TERRAFORM_LAND)) {
+                        continue;
+                    }
+                    if (goal->type == AI_GOAL_COLONIZE) {
+                        int site;
+                        Map *site_tile = map_loc(goal->x, goal->y);
+                        if (site_tile->bit & BIT_BASE_RADIUS) {
+                            site = 1;
+                        } else {
+                            site = site_tile->val2 >> 4;
+                            if (!site) {
+                                site = world_site(goal->x, goal->y, 0);
+                                site_set(goal->x, goal->y, site);
+                            }
+                            if (site < 1) {
+                                site = 1;
+                            } else if (site > 15) {
+                                site = 15;
+                            }
+                        }
+                        priority *= site;
+                    }
+                    if (veh->state & VSTATE_UNK_10000000) {
+                        int veh_id_goal = veh_at(goal->x, goal->y);
+                        if (veh_id_goal >= 0 && stack_check(veh_id_goal, 11, VSTATE_UNK_10000000,
+                            VSTATE_UNK_10000000, faction_id) > (score ? 0 : 1)) {
+                            continue;
+                        }
+                    }
+                    if (goal->type == AI_GOAL_TERRAFORM_LAND) {
+                        // a former of the goal's base (other formers home elsewhere count triple)
+                        int base_id_former = goal->base_id;
+                        if (base_id_former >= 0 && Bases[base_id_former].state & BSTATE_UNK_20
+                            && veh->home_base_id != base_id_former) {
+                            score *= 3;
+                        }
+                        BOOL closer = false;
+                        for (int i = 0; i < *VehCurrentCount; i++) {
+                            if (Vehs[i].faction_id == faction_id
+                                && VehPrototypes[Vehs[i].proto_id].plan == PLAN_TERRAFORMING
+                                && i != veh_id) {
+                                int score_other = vector_dist(Vehs[i].x, Vehs[i].y,
+                                    goal->x, goal->y) << 8;
+                                if (base_id_former >= 0
+                                    && Bases[base_id_former].state & BSTATE_UNK_20
+                                    && Vehs[i].home_base_id != base_id_former) {
+                                    score_other *= 3;
+                                }
+                                if (score_other < score) {
+                                    closer = true;
+                                    break;
+                                }
+                            }
+                        }
+                        if (closer || (goal_counts[goal_id] && (base_id_former < 0
+                            || veh->home_base_id != base_id_former))) {
+                            continue;
+                        }
+                    }
+                    int owner = whose_territory(faction_id, goal->x, goal->y, NULL, false);
+                    int score_adj = score;
+                    if (owner >= 0 && owner != (int)faction_id) {
+                        uint32_t treaty = p->diplo_treaties[owner];
+                        if (!(treaty & (DTREATY_VENDETTA | DTREATY_SHALL_BETRAY | DTREATY_UNK_800))) {
+                            if (treaty & DTREATY_UNK_100000) {
+                                continue;
+                            }
+                            if (!(treaty & DTREATY_PACT)) {
+                                if (treaty & DTREATY_TREATY) {
+                                    continue;
+                                }
+                                score_adj = score * 2;
+                            }
+                        }
+                    }
+                    if (goal->type == AI_GOAL_PRIORITY_COMBAT) {
+                        if (!has_abil(veh->proto_id, ABL_ARTILLERY)
+                            || Chassis[VehPrototypes[veh->proto_id].chassis_id].triad != TRIAD_LAND) {
+                            continue;
+                        }
+                        score_adj /= 2;
+                    }
+                    int value = score_adj / priority;
+                    if (value < value_best) {
+                        value_best = value;
+                        goal_id_best = goal_id;
+                    }
+                }
+                if (goal_id_best >= 0) {
+                    if (veh->move_to_ai_type < 0x33 || veh->move_to_ai_type > 0x35) {
+                        goal_counts[goal_id_best]++;
+                    }
+                    Goal *goal = &p->goals[goal_id_best];
+                    veh->order = ORDER_MOVE_TO;
+                    veh->move_to_ai_type = 0x31;
+                    veh->waypoint_x[0] = (int16_t)goal->x;
+                    veh->waypoint_y[0] = (int16_t)goal->y;
+                    if (VehPrototypes[veh->proto_id].plan == PLAN_COLONIZATION) {
+                        veh->terraforming_turns = 0;
+                    }
+                    if (goal->type == AI_GOAL_SCOUT) {
+                        veh->state |= VSTATE_UNK_40000000;
+                    }
+                    if (goal->type == AI_GOAL_DEFEND) {
+                        int base_id = base_at(goal->x, goal->y);
+                        if (base_id >= 0 && Bases[base_id].faction_id_current == faction_id) {
+                            Bases[base_id].state |= BSTATE_UNK_8000000;
+                            if (!(*FactionsStatus & faction_bit)) {
+                                base_reset(base_id, false);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        wipe_goals(faction_id);
     }
 }
 

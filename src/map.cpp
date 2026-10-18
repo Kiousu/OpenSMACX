@@ -942,6 +942,142 @@ int __cdecl elev_at(uint32_t x, uint32_t y) {
 }
 
 /*
+Purpose: What a change of a tile's altitude does during a game (see alt_set()).
+Original Offset: n/a (the body of alt_set(), which always ends by storing the altitude)
+Return Value: n/a
+Status: Complete
+*/
+static void alt_set_effects(int x, int y, uint32_t altitude) {
+    Map *tile = map_loc(x, y);
+    uint32_t altitude_old = tile->climate >> 5;
+    if (altitude != altitude_old) {
+        delete_landmark(x, y);
+    }
+    BOOL is_sea = (int)altitude < ALT_SHORE_LINE;
+    if (((int)altitude_old < ALT_SHORE_LINE) == is_sea) {
+        if (is_sea) {
+            return;
+        }
+        uint32_t rocky = tile->val3 >> 6;
+        if ((int)altitude > (int)altitude_old) {
+            if (rocky >= 2 || (int)rocky + 1 > (int)altitude - 3 || _rand() % (int)(rocky + 4)) {
+                return;
+            }
+            tile->val3 = (uint8_t)(((rocky + 1) << 6) | (tile->val3 & 0x3F));
+        } else if ((int)altitude < (int)altitude_old) {
+            if (!rocky || (int)rocky <= (int)altitude - 3 || !(_rand() % (int)(rocky + 1))) {
+                return;
+            }
+            // (rocky + 3) << 6 in a byte, as in the original: one step flatter
+            tile->val3 = (uint8_t)(((rocky + 3) << 6) | (tile->val3 & 0x3F));
+        } else {
+            return;
+        }
+        tile->bit2 |= BIT2_UNK_400000;
+        *UnkBitfield1 |= 1;
+        return;
+    }
+    // crossing the shoreline: improvements go, and every faction's view of them
+    tile->bit &= 0x7E1377A3;
+    for (int i = 0; i < 7; i++) {
+        tile->bit_visible[i] = tile->bit;
+    }
+    if (!*TurnCurrentNum || *WorldBuildUnk2) {
+        return;
+    }
+    int base_id = base_at(x, y);
+    if (base_id >= 0) {
+        if (!is_sea || has_fac_built(FAC_PRESSURE_DOME, base_id)) {
+            return;
+        }
+        Base *base = &Bases[base_id];
+        int loss = _rand() % 3 + 2;
+        int half = base->population_size / 2;
+        if (half >= loss && loss <= 10) {
+            loss = half > 10 ? 10 : half;
+        }
+        base->population_size -= (int8_t)loss;
+        set_fac(FAC_PRESSURE_DOME, base_id, true);
+        uint32_t owner = base->faction_id_current;
+        MapBaseSubmergedCount[owner]++;
+        PlayersData[owner].flags |= PFLAG_UNK_80000;
+        if (is_objective(base_id) && base->population_size < 1) {
+            base->population_size = 1;
+        }
+        if (base->population_size > 0) {
+            return;
+        }
+        if ((int)PlayersData[owner].current_num_bases <= 1 || (*IsMultiplayerNet && !*ControlTurnC)) {
+            base->population_size = 1; // a faction's last base stays
+            if (!VehBattleUnkTgl[0]) {
+                if (owner == (uint32_t)*FactionIDCurrent) {
+                    Console_focus(ConsoleVar, NULL, base->x, base->y, *FactionIDCurrent);
+                    parse_says(0, base->name_string, -1, -1);
+                    X_pop_2("BASESUBMERGED", "subbase_sm.pcx", NULL);
+                } else if (base->faction_id_current == *FactionIDCurrent
+                    || (base->visibility & (1 << *FactionIDCurrent))) {
+                    Console_focus(ConsoleVar, NULL, base->x, base->y, *FactionIDCurrent);
+                    parse_says(0, base->name_string, -1, -1);
+                    parse_says(1, Players[base->faction_id_current].adj_name_faction, -1, -1);
+                    X_pop_2("BASESUBMERGED2", "subbase_sm.pcx", NULL);
+                }
+            }
+            return;
+        }
+        if (!VehBattleUnkTgl[0]) {
+            if (owner == (uint32_t)*FactionIDCurrent) {
+                Console_focus(ConsoleVar, NULL, base->x, base->y, *FactionIDCurrent);
+                parse_says(0, base->name_string, -1, -1);
+                popp(ScriptTxtID, "BASESUBMERGED1", 0, "subbase_sm.pcx", NULL);
+            } else if (base->faction_id_current == *FactionIDCurrent
+                || (base->visibility & (1 << *FactionIDCurrent))) {
+                Console_focus(ConsoleVar, NULL, base->x, base->y, *FactionIDCurrent);
+                parse_says(0, base->name_string, -1, -1);
+                parse_says(1, Players[base->faction_id_current].adj_name_faction, -1, -1);
+                popp(ScriptTxtID, "BASESUBMERGED3", 0, "subbase_sm.pcx", NULL);
+            }
+        }
+        base_kill(base_id);
+    }
+    // the units that can't stay: land units at sea and ships on land (not aircraft or objectives)
+    for (int veh_id = stack_fix(veh_at(x, y)); veh_id >= 0;) {
+        int veh_id_next = Vehs[veh_id].next_veh_id_stack;
+        uint8_t triad = Chassis[VehPrototypes[Vehs[veh_id].proto_id].chassis_id].triad;
+        if (triad != TRIAD_AIR && !(Vehs[veh_id].flags & VFLAG_IS_OBJECTIVE)
+            && (triad == TRIAD_SEA) != is_sea) {
+            uint32_t faction_id = Vehs[veh_id].faction_id;
+            MapBaseIdClosestSubmergedVeh[faction_id] = base_find(x, y, faction_id);
+            veh_kill(veh_id);
+            if (veh_id_next > veh_id) {
+                veh_id_next--;
+            }
+        }
+        veh_id = veh_id_next;
+    }
+}
+
+/*
+Purpose: Set a tile's altitude (three and above is dry land). During a game a change also drops the
+         tile's landmark relief; a tile crossing the shoreline loses its improvements, a base on it
+         that goes under the sea without a pressure dome loses 2 to 4 people (up to half its size
+         when bigger, at most 10), gets a pressure dome and is lost at size 0 (a faction's last
+         base, or in a network game while ControlTurnC is clear, stays at size 1), and the land
+         units at sea or ships on land are lost (outside world building); a tile staying dry may
+         get rockier when it rises or flatter when it sinks, by chance.
+Original Offset: 00591290
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-18-council-batch30.log)
+*/
+void __cdecl alt_set(int x, int y, uint32_t altitude) {
+    if (*TurnCurrentNum) {
+        alt_set_effects(x, y, altitude);
+    }
+    Map *tile = map_loc(x, y);
+    tile->climate = (uint8_t)((tile->climate & 0x1F) | (altitude << 5));
+    *UnkBitfield1 |= 4;
+}
+
+/*
 Purpose: Calculate the natural altitude of the specified tile.
 Original Offset: 005918A0
 Return Value: Natural altitude on a scale from 0 (ocean trench) to 6 (mountain tops)

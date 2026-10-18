@@ -126,11 +126,14 @@ enum PlayerFlagsBitfield {
     PFLAG_UNK_40 = 0x40, // a "secret advance" is owed: tech_research() awards an extra tech and clears it
     PFLAG_MAP_REVEALED = 0x200,
     PFLAG_GENETIC_PLAGUE_INTRO = 0x400, // +1 to defense against after 1st time faction experiences
+    PFLAG_UNK_4000 = 0x4000, // base_ecology() skips one native life burst and clears it
     PFLAG_BEEN_ELECTED_GOVERNOR = 0x8000, // used to determine whether #GOVERNOR has been displayed
     PFLAG_UNK_1000 = 0x1000, // set by battle_kill() when the faction kills the human's assistant worm
     PFLAG_UNK_10000 = 0x10000, // set by territory() when another faction's units are in the territory
-    PFLAG_UNK_20000 = 0x20000,
+    PFLAG_UNK_20000 = 0x20000, // compute_score(): 200+ victory points, as PFLAG_UNK_40000
+    PFLAG_UNK_40000 = 0x40000,
     PFLAG_UNK_80000 = 0x80000, // doubles compute_odds() for air raids on terraformers at sea
+    PFLAG_UNK_100000 = 0x100000, // compute_score(): 300+ victory points
     PFLAG_STRAT_ATK_ENEMY_HQ = 0x200000,
     PFLAG_COOP_WITH_HUMAN = 0x400000,
     PFLAG_TEAM_UP_VS_HUMAN = 0x800000,
@@ -577,8 +580,13 @@ extern int *DiploUnk4;
 extern int *DiploUnk5;
 extern int *DiploUnk6;
 extern int *DiploUnk7;
+extern int *DiploBaseSwapAskID; // base_swap(): the base faction_id asks for
+extern int *DiploBaseSwapBidID; // base_swap(): the base faction_id offers
 extern int *DiploUnk8;
 extern int *DiploCounterProposalID;
+extern int *DiploUnk9;
+extern uint32_t *DiploCommRequest;
+extern uint32_t *DiploCommRequestPBEM;
 
 DLLEXPORT BOOL __cdecl is_alien_faction(uint32_t faction_id);
 DLLEXPORT BOOL __cdecl is_human(uint32_t faction_id);
@@ -641,6 +649,8 @@ DLLEXPORT void __cdecl enemies_unpact(int faction_id, int faction_id_with);
 DLLEXPORT void __cdecl pact_truce(int faction_id, int faction_id_with);
 DLLEXPORT void __cdecl pact_treaty(int faction_id, int faction_id_with);
 DLLEXPORT void __cdecl enemies_team_up(int faction_id, int faction_id_with, int faction_id_tgt);
+DLLEXPORT void __cdecl atrocity(int faction_id, int faction_id_tgt, int counted, BOOL is_alien_counted);
+DLLEXPORT void __cdecl major_atrocity(int faction_id, int faction_id_tgt);
 DLLEXPORT BOOL __cdecl break_treaty(int faction_id, int faction_id_with, uint32_t treaty);
 DLLEXPORT void __cdecl treaty_off(int faction_id, int faction_id_with, uint32_t treaty);
 DLLEXPORT void __cdecl agenda_off(int faction_id, int faction_id_with, uint32_t agenda);
@@ -676,4 +686,11 @@ DLLEXPORT BOOL __cdecl society_avail(int soc_category, int soc_model, uint32_t f
 DLLEXPORT void __cdecl social_ai(uint32_t faction_id, int growth_val, int tech_val, int wealth_val, 
                                  int power_val, SocialCategory *output);
 DLLEXPORT void __cdecl enemy_capabilities(uint32_t faction_id);
+DLLEXPORT void __cdecl enemy_strategy(uint32_t faction_id);
 DLLEXPORT void __cdecl enemy_capabilities_t(uint32_t faction_id);
+DLLEXPORT void __cdecl double_cross(int faction_id_atk, int faction_id_def, int faction_id_other);
+DLLEXPORT BOOL __cdecl contiguous(int faction_id, int faction_id_2, uint32_t region, BOOL unk);
+DLLEXPORT void __cdecl pact_of_brotherhood(int faction_id, int faction_id_with);
+DLLEXPORT void __cdecl comm_check(int faction_id, int faction_id_with);
+DLLEXPORT void __cdecl enemies_war(int faction_id, int faction_id_with);
+DLLEXPORT void __cdecl enemy_diplomacy(uint32_t faction_id);

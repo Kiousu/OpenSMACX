@@ -30,6 +30,8 @@
 #include "council.h"
 #include "general.h"
 #include "net.h"
+#include "terraforming.h"
+#include "random.h"
 
 RulesFacility *Facility = (RulesFacility *)0x009A4B68;
 RulesCitizen *Citizen = (RulesCitizen *)0x00946020;
@@ -42,6 +44,8 @@ int *BaseFindDist = (int *)0x0090EA04;
 Base **BaseCurrent = (Base **)0x0090EA30;
 uint32_t *ScnVictFacilityObj = (uint32_t *)0x009A6814;
 uint32_t *BaseUpkeepStage = (uint32_t *)0x0090EA34;
+BOOL *BaseUpkeepZoom = (BOOL *)0x0090E934; // set when the player asks to see the base (a popb() message
+                                           // or base_production()); base_upkeep() then opens it
 uint32_t *BaseCurrentConvoyFrom = (uint32_t *)0x0090E904; // [4]
 uint32_t *BaseCurrentConvoyTo = (uint32_t *)0x0090E93C; // [4]
 int *BaseCurrentGrowthRate = (int *)0x0090E918;
@@ -743,6 +747,504 @@ int __cdecl base_init(uint32_t faction_id, int x, int y) {
     base_energy();
     *UnkBitfield1 |= 2;
     return base_id;
+}
+
+/*
+Purpose: Distance between two tiles as the base functions work it out inline: the x distance
+         wraps on a round map (MapIsFlat bit 0 clear), then vector_dist().
+Original Offset: n/a (inlined in base_kill() and give_a_base())
+Return Value: Distance
+Status: Complete
+*/
+static int base_tile_dist(int x_a, int y_a, int x_b, int y_b) {
+    int dist_x = abs(x_a - x_b);
+    if (!(*MapIsFlat & 1) && dist_x > (int)*MapLongitude) {
+        dist_x = *MapLongitudeBounds - dist_x;
+    }
+    return vector_dist(dist_x, abs(y_a - y_b));
+}
+
+/*
+Purpose: Whether a unit stands on the tile (x, y), tested as the original does: the wrapped x
+         distance plus the y distance is 0 or 1 (1 can't happen on the staggered map).
+Original Offset: n/a (inlined in base_kill() and give_a_base())
+Return Value: Is the unit on the tile? true/false
+Status: Complete
+*/
+static BOOL base_tile_same(int x_a, int y_a, int x_b, int y_b) {
+    int dist_x = abs(x_a - x_b);
+    if (!(*MapIsFlat & 1) && dist_x > (int)*MapLongitude) {
+        dist_x = *MapLongitudeBounds - dist_x;
+    }
+    return !((dist_x + abs(y_a - y_b)) & ~1);
+}
+
+/*
+Purpose: Delete an object of the message list through its virtual (scalar deleting) destructor,
+         reached through the object's virtual base offset as the original does.
+Original Offset: n/a (inlined in base_kill())
+Return Value: n/a
+Status: Complete
+*/
+static void message_list_delete(void *object) {
+    typedef void __fastcall func_delete(void *This, void *edx_unused, int flags);
+    uint8_t *sub = (uint8_t *)object + (*(int **)object)[1];
+    (**(func_delete ***)sub)(sub, NULL, 1);
+}
+
+/*
+Purpose: Remove a base from the game. An energy market corner run from the faction's headquarters
+         is foiled (with a message). The base goes into the replay, its faction's base counts drop,
+         and its units are rehomed to the faction's nearest other base (killed if there is none;
+         other factions' units homed there lose their home). The base table closes the gap and
+         every base id held elsewhere moves down: unit homes, the bases' forwarding targets, the
+         message list's base entries (the base's own are deleted), the Secret Project table (-2 for
+         a project built here) and the factions' attack targets. The tiles around it lose their
+         site rating, the production radius and the faction's working marks. Units that can't stay
+         on the tile die: land units of a sea base not aboard a transport (transports first pick up
+         what they carry), ships of a land base. Then territory is worked out again.
+Original Offset: 004E5250
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-18-council-batch30.log)
+*/
+void __cdecl base_kill(uint32_t base_id) {
+    Base *base = &Bases[base_id];
+    int x = base->x;
+    int y = base->y;
+    uint32_t faction_id = base->faction_id_current;
+    PlayerData *p = &PlayersData[faction_id];
+    if (has_fac_built(FAC_HEADQUARTERS, base_id) && p->corner_market_turn > *TurnCurrentNum
+        && p->corner_market_active) {
+        p->corner_market_turn = 0;
+        p->corner_market_active = 0;
+        if (faction_id == (uint32_t)*FactionIDCurrent) {
+            popp(ScriptTxtID, "CORNERFOILED", 0, "econwin_sm.pcx", 0);
+        } else {
+            parse_says(0, Players[faction_id].adj_name_faction, -1, -1);
+            popp(ScriptTxtID, "CORNERTHEMFOILED", 0, "econwin_sm.pcx", 0);
+        }
+    }
+    if (base->population_size < 0) {
+        base->population_size = 0;
+    }
+    replay_base(2, x, y, faction_id);
+    p->current_num_bases--;
+    p->region_total_bases[map_loc(x, y)->region]--;
+    for (int veh_id = *VehCurrentCount - 1; veh_id >= 0; veh_id--) {
+        Veh *veh = &Vehs[veh_id];
+        if (veh_id >= *VehCurrentCount || veh->home_base_id != (int)base_id) {
+            continue; // kill() may have shortened the table
+        }
+        if (veh->faction_id != faction_id) {
+            veh->home_base_id = -1;
+            continue;
+        }
+        base->faction_id_current = 0xFF; // keeps the dying base out of the search
+        int dist_best = 9999;
+        int base_id_best = -1;
+        for (int i = 0; i < *BaseCurrentCount; i++) {
+            if (Bases[i].faction_id_current == faction_id) {
+                int dist = base_tile_dist(x, y, Bases[i].x, Bases[i].y);
+                if (dist <= dist_best) {
+                    base_id_best = i;
+                    dist_best = dist;
+                }
+            }
+        }
+        if (base_id_best >= 0) {
+            *BaseFindDist = dist_best;
+        }
+        base->faction_id_current = (uint8_t)faction_id;
+        if (base_id_best < 0) {
+            kill(veh_id);
+        } else {
+            veh->home_base_id = (int16_t)base_id_best;
+        }
+    }
+    bit_set(x, y, BIT_BASE_IN_TILE, false);
+    if ((int)base_id < *BaseCurrentCount - 1) {
+        memmove(base, &Bases[base_id + 1], (*BaseCurrentCount - base_id - 1) * sizeof(Base));
+    }
+    (*BaseCurrentCount)--;
+    if ((int)base_id == *BaseComputeID) {
+        *BaseComputeID = -1;
+    }
+    for (int veh_id = 0; veh_id < *VehCurrentCount; veh_id++) {
+        if (Vehs[veh_id].home_base_id > (int)base_id) {
+            Vehs[veh_id].home_base_id--;
+        }
+    }
+    for (int i = 0; i < *BaseCurrentCount; i++) {
+        int16_t *forward = &Bases[i].auto_forward_land_base_id; // land, sea and air in a row
+        for (int j = 0; j < 3; j++) {
+            if (forward[j] == (int)base_id) {
+                forward[j] = -1;
+            } else if (forward[j] > (int)base_id) {
+                forward[j]--;
+            }
+        }
+    }
+    // the message window's list: entries tagged 0x40000000 | base_id point at bases
+    MessageList *list = (MessageList *)((uint8_t *)MessageListBox + 0xBC
+        + (*(int **)MessageListBox)[2]);
+    int tag = (int)base_id | 0x40000000;
+    if (list->head) {
+        for (int i = 0; i < list->count; i++) {
+            MessageListNode *node = list->cursor;
+            if (node->id == tag) {
+                node->next->prev = node->prev;
+                list->cursor->prev->next = list->cursor->next;
+                MessageListNode *removed = list->cursor;
+                if (removed == list->head) {
+                    list->head = removed->next;
+                }
+                list->cursor = removed->next;
+                void *data = removed->data;
+                (*(func_message_list_remove **)((uint8_t *)list->vtable + 4))(list, NULL, data);
+                if (data) {
+                    message_list_delete(data);
+                }
+                removed->data = NULL;
+                if (removed) {
+                    message_list_delete(removed);
+                }
+                list->count--;
+                i--;
+            } else {
+                if (node->id > tag) {
+                    node->id--;
+                }
+                list->cursor = list->cursor->next;
+            }
+        }
+        if (!list->count) {
+            list->head = NULL;
+        }
+        list->index = list->count - 1;
+    }
+    ListBox_update_changes(MessageListBox, NULL);
+    int *projects = (int *)SecretProject;
+    for (int i = 0; i < MaxSecretProjectNum; i++) {
+        if (projects[i] == (int)base_id) {
+            projects[i] = -2;
+        } else if (projects[i] > (int)base_id) {
+            projects[i]--;
+        }
+    }
+    for (int i = 1; i < MaxPlayerNum; i++) {
+        int *target = &PlayersData[i].base_id_atk_target;
+        if (*target == (int)base_id) {
+            *target = -1;
+        } else if (*target > (int)base_id) {
+            (*target)--;
+        }
+    }
+    for (int i = 0; i < 49; i++) { // three rings
+        int x_radius = x + RadiusOffsetX[i];
+        if (!(*MapIsFlat & 1)) {
+            if (x_radius < 0) {
+                x_radius += *MapLongitudeBounds;
+            } else if (x_radius >= *MapLongitudeBounds) {
+                x_radius -= *MapLongitudeBounds;
+            }
+        }
+        int y_radius = y + RadiusOffsetY[i];
+        if (y_radius >= 0 && y_radius < *MapLatitudeBounds && x_radius >= 0
+            && x_radius < *MapLongitudeBounds) {
+            site_set(x_radius, y_radius, 0);
+            if (i < 21) {
+                bit_set(x_radius, y_radius, BIT_BASE_RADIUS, false);
+                if ((map_loc(x_radius, y_radius)->val3 & 7) == faction_id) {
+                    using_set(x_radius, y_radius, 0);
+                }
+            }
+        }
+    }
+    if ((map_loc(x, y)->climate & 0xE0) < 0x60) { // a sea base
+        for (int veh_id = 0; veh_id < *VehCurrentCount; veh_id++) {
+            if (VehPrototypes[Vehs[veh_id].proto_id].plan == PLAN_NAVAL_TRANSPORT
+                && base_tile_same(Vehs[veh_id].x, Vehs[veh_id].y, x, y)) {
+                stack_veh(veh_id, false);
+            }
+        }
+        // from *VehCurrentCount, one past the last unit, as in the original
+        for (int veh_id = *VehCurrentCount; veh_id >= 0; veh_id--) {
+            Veh *veh = &Vehs[veh_id];
+            if (Chassis[VehPrototypes[veh->proto_id].chassis_id].triad == TRIAD_LAND
+                && base_tile_same(veh->x, veh->y, x, y)
+                && (veh->order != ORDER_SENTRY_BOARD || veh->waypoint_x[0] < 0)) {
+                kill(veh_id);
+            }
+        }
+    } else {
+        for (int veh_id = *VehCurrentCount; veh_id >= 0; veh_id--) { // as above
+            Veh *veh = &Vehs[veh_id];
+            if (Chassis[VehPrototypes[veh->proto_id].chassis_id].triad == TRIAD_SEA
+                && base_tile_same(veh->x, veh->y, x, y)) {
+                kill(veh_id);
+            }
+        }
+    }
+    BaseWin_base_killed(BaseWinVar, NULL, base_id);
+    for (int i = 0; i < *BaseCurrentCount; i++) {
+        base_mark(i);
+    }
+    reset_territory();
+    *UnkBitfield1 |= 2;
+}
+
+/*
+Purpose: Hand a base over to faction_id. The new owner sees the tiles around it. The old owner's
+         units near the base: defensive and reconnaissance units in it, ships in it or in a land
+         port, and units the old owner has no other base for change sides with the base (homed
+         there, orders dropped unless on hold); the others go to the old owner's nearest base
+         (that base becomes their home if this one was). The production is reset to stockpiling
+         energy, the old owner's queue counts drop, the base goes into the replay and some state
+         bits are cleared; taken by force (DiploCounterProposalID 3) a base that was not the new
+         owner's gets 50 turns of assimilation and keeps its former owner. Units still homed there
+         for the old owner die, then the base is worked out again.
+Original Offset: 0054CF40
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-18-council-batch30.log)
+*/
+void __cdecl give_a_base(uint32_t base_id, uint32_t faction_id) {
+    Base *base = &Bases[base_id];
+    int x = base->x;
+    int y = base->y;
+    uint32_t faction_id_old = base->faction_id_current;
+    for (int i = 0; i < 21; i++) {
+        int x_radius = x + RadiusOffsetX[i];
+        if (!(*MapIsFlat & 1)) {
+            if (x_radius < 0) {
+                x_radius += *MapLongitudeBounds;
+            } else if (x_radius >= *MapLongitudeBounds) {
+                x_radius -= *MapLongitudeBounds;
+            }
+        }
+        int y_radius = y + RadiusOffsetY[i];
+        if (y_radius >= 0 && y_radius < *MapLatitudeBounds && x_radius >= 0
+            && x_radius < *MapLongitudeBounds) {
+            map_loc(x_radius, y_radius)->visibility |= (uint8_t)(1 << faction_id);
+            synch_bit(x_radius, y_radius, faction_id);
+        }
+    }
+    for (int veh_id = *VehCurrentCount - 1; veh_id >= 0; veh_id--) {
+        Veh *veh = &Vehs[veh_id];
+        if (veh->faction_id != faction_id_old) {
+            continue;
+        }
+        int dist = base_tile_dist(veh->x, veh->y, x, y);
+        BOOL land = (map_loc(veh->x, veh->y)->climate & 0xE0) >= 0x60;
+        if (dist > (int)land) {
+            continue; // in the base or next to it (land units)
+        }
+        uint8_t plan = VehPrototypes[veh->proto_id].plan;
+        BOOL change_sides = (plan == PLAN_DEFENSIVE || plan == PLAN_RECONNAISANCE) && !dist;
+        if (!change_sides && Chassis[VehPrototypes[veh->proto_id].chassis_id].triad == TRIAD_SEA) {
+            change_sides = !dist || land;
+        }
+        if (!change_sides) {
+            base->faction_id_current = (uint8_t)faction_id; // keeps this base out of the search
+            int base_id_near = base_find(x, y, faction_id_old);
+            base->faction_id_current = (uint8_t)faction_id_old;
+            if (base_id_near < 0
+                || base_tile_same(Bases[base_id_near].x, Bases[base_id_near].y, x, y)) {
+                change_sides = true;
+            } else {
+                stack_put(stack_veh(veh_id, true), Bases[base_id_near].x, Bases[base_id_near].y);
+                veh->order = ORDER_NONE;
+                if (veh->home_base_id == (int)base_id) {
+                    veh->home_base_id = (int16_t)base_id_near;
+                }
+            }
+        }
+        if (change_sides) {
+            PlayersData[faction_id_old].proto_id_active[veh->proto_id]--;
+            veh->faction_id = (uint8_t)faction_id;
+            PlayersData[faction_id].proto_id_active[veh->proto_id]++;
+            veh->home_base_id = (int16_t)base_id;
+            veh->moves_expended = 0;
+            if (veh->order != ORDER_HOLD) {
+                veh->order = ORDER_NONE;
+            }
+            owner_set(veh->x, veh->y, faction_id);
+        }
+    }
+    base->faction_id_current = (uint8_t)faction_id;
+    base->minerals_accumulated_2 = 0;
+    base->minerals_accumulated = 0;
+    if ((int)base->queue_size >= 0) {
+        for (int i = 0; i <= (int)base->queue_size; i++) {
+            if (base->queue_production_id[i] >= 0) {
+                PlayersData[faction_id_old].proto_id_queue[base->queue_production_id[i]]--;
+            }
+        }
+    }
+    base->queue_size = 0;
+    base->production_id_last = -FAC_STOCKPILE_ENERGY;
+    base->queue_production_id[0] = -FAC_STOCKPILE_ENERGY;
+    replay_base(1, x, y, faction_id);
+    // clears drone riots, golden age, combat loss, data stolen, artifact linked, 0x1000, 0x200000
+    base->state &= 0xFFDEF7B1;
+    base->nerve_staple_turns_left = 0;
+    if (*DiploCounterProposalID == 3) {
+        if (base->faction_id_former == faction_id) {
+            base->assimilation_turns_left = 0;
+        } else {
+            base->faction_id_former = (uint8_t)faction_id_old;
+            base->assimilation_turns_left = 50;
+        }
+    } else {
+        if (base->faction_id_former == faction_id) {
+            base->assimilation_turns_left = 0;
+        }
+        base->faction_id_former = (uint8_t)faction_id;
+    }
+    spot_base(base_id, faction_id_old);
+    reset_territory();
+    for (int veh_id = *VehCurrentCount - 1; veh_id >= 0; veh_id--) {
+        if (veh_id < *VehCurrentCount && Vehs[veh_id].faction_id == faction_id_old
+            && Vehs[veh_id].home_base_id == (int)base_id) {
+            kill(veh_id);
+        }
+    }
+    owner_set(x, y, faction_id);
+    draw_tile_fixup(x, y, 1, 2);
+    set_base(base_id);
+    base_compute(true);
+}
+
+/*
+Purpose: Answer a base trade proposed to faction_id_with by faction_id in diplomacy: faction_id asks
+         for faction_id_with's base DiploBaseSwapAskID and may offer its own DiploBaseSwapBidID.
+         Each is valued by value_of_base() (the asked base at half if it once was faction_id's or if
+         faction_id_with surrendered into a pact, the offered base doubled if it once was
+         faction_id_with's). faction_id_with refuses an offered headquarters or only base (NOHQ),
+         its own headquarters or only base (NOMYHQ) and anything while it wants revenge, unless the
+         base is taken by force (NEVERBASESWAP). A swap of two bases goes ahead when the offer's
+         value plus a random 0..99 beats the asked base's plus another; for a base alone, faction_id
+         may pay energy (proposals 2 and 5: PAYBASESWAP) or, for proposals 2 and 4, the technologies
+         faction_id_with lacks (TECHBASESWAP) if their worth over the game so far covers the price
+         and the tech gap between them is small. The bases change hands under the diplomatic lock.
+Original Offset: 0054D410
+Return Value: 0 when the trade is made, 1 otherwise
+Status: Complete (verified vs original: docs/regression-runs/2026-10-18-council-batch30.log)
+*/
+int __cdecl base_swap(uint32_t faction_id, uint32_t faction_id_with) {
+    *DiploSecondFaction = faction_id_with;
+    int value_ask = value_of_base(*DiploBaseSwapAskID, faction_id_with, faction_id, *DiploUnk5,
+        *DiploUnk4 || *DiploUnk3);
+    int value_bid = value_of_base(*DiploBaseSwapBidID, faction_id_with, faction_id, 0, false);
+    if (*DiploBaseSwapAskID >= 0) {
+        parse_says(0, Bases[*DiploBaseSwapAskID].name_string, -1, -1);
+        if (Bases[*DiploBaseSwapAskID].faction_id_former == faction_id) {
+            value_ask /= 2;
+        }
+        uint32_t treaties = PlayersData[faction_id_with].diplo_treaties[faction_id];
+        if ((treaties & DTREATY_PACT) && (treaties & DTREATY_HAVE_SURRENDERED)) {
+            value_ask /= 2;
+        }
+    }
+    if (*DiploBaseSwapBidID >= 0) {
+        parse_says(1, Bases[*DiploBaseSwapBidID].name_string, -1, -1);
+        if (Bases[*DiploBaseSwapBidID].faction_id_former == faction_id_with) {
+            value_bid *= 2;
+        }
+        if (value_bid < 0 || PlayersData[faction_id].current_num_bases == 1) {
+            X_pops_11("NOHQ", 0x100000, FactionPortraits[faction_id_with], pop_wait);
+            return 1;
+        }
+    }
+    if (*DiploBaseSwapAskID >= 0 && (value_ask < 0
+        || PlayersData[faction_id_with].current_num_bases == 1
+        || has_fac_built(FAC_HEADQUARTERS, *DiploBaseSwapAskID))) {
+        X_pops_11("NOMYHQ", 0x100000, FactionPortraits[faction_id_with], pop_wait);
+        return 1;
+    }
+    if ((PlayersData[faction_id_with].diplo_treaties[faction_id] & DTREATY_WANT_REVENGE)
+        && *DiploCounterProposalID != 3) {
+        X_pops_11("NEVERBASESWAP", 0x100000, FactionPortraits[faction_id_with], pop_wait);
+        return 1;
+    }
+    if (*DiploBaseSwapBidID >= 0) {
+        if (*DiploBaseSwapAskID < 0) {
+            return 1;
+        }
+        int bid = (int)random(0, 100) + value_bid;
+        int ask = (int)random(0, 100) + value_ask;
+        if (ask <= bid) {
+            X_pops_11("NOBASESWAP3", 0x100000, FactionPortraits[faction_id_with], pop_wait);
+            return 1;
+        }
+        diplo_lock(0);
+        net_cede_base(*DiploBaseSwapAskID, faction_id, true);
+        net_cede_base(*DiploBaseSwapBidID, faction_id_with, true);
+        diplo_unlock();
+        X_pops_11("YESBASESWAP", 0x100000, FactionPortraits[faction_id_with], pop_wait);
+        return 0;
+    }
+    if (*DiploBaseSwapAskID < 0) {
+        return 1;
+    }
+    PlayerData *p = &PlayersData[faction_id];
+    PlayerData *p_with = &PlayersData[faction_id_with];
+    // as in the original, a faction_id_with ranked 0 divides by zero
+    int price = ((int)p->ranking + (int)p_with->ranking) * value_ask / ((int)p_with->ranking * 2);
+    if (FactionRankings[7] == faction_id) {
+        price *= 2;
+    }
+    int proposal = *DiploCounterProposalID;
+    if (proposal == 5 || proposal == 2) {
+        if (p->energy_reserves >= price) {
+            parse_num(0, price);
+            if (!X_pops_11("PAYBASESWAP", 0x100000, FactionPortraits[faction_id_with], pop_wait)) {
+                return 1;
+            }
+            diplo_lock(0);
+            net_energy(faction_id, -price, faction_id_with, price, false);
+            net_cede_base(*DiploBaseSwapAskID, faction_id, true);
+            diplo_unlock();
+            X_pops_11("BASEOK", 0x100000, FactionPortraits[faction_id_with], pop_wait);
+            return 0;
+        }
+        if (proposal == 5) {
+            parse_num(0, price);
+            X_pops_11("NOBASESWAP", 0x100000, FactionPortraits[faction_id_with], pop_wait);
+            return 1;
+        }
+    }
+    if (proposal != 4 && proposal != 2) {
+        parse_num(0, price);
+        X_pops_11("NOBASESWAP", 0x100000, FactionPortraits[faction_id_with], pop_wait);
+        return 1;
+    }
+    int tech_value = 0;
+    for (int tech_id = 0; tech_id < MaxTechnologyNum; tech_id++) {
+        if (!has_tech(tech_id, faction_id_with) && has_tech(tech_id, faction_id)) {
+            tech_value += tech_val(tech_id, faction_id_with, true);
+        }
+    }
+    if (p_with->tech_ranking / 2 > p->tech_ranking / 2 + 2
+        || (*TurnCurrentNum + 7) / 8 * tech_value < price) {
+        X_pops_11("NOBASESWAP2", 0x100000, FactionPortraits[faction_id_with], pop_wait);
+        return 1;
+    }
+    *PluralityDefault = false;
+    *GenderDefault = Players[faction_id_with].is_leader_female;
+    parse_says(2, Players[faction_id_with].name_leader, -1, -1);
+    if (!X_pops_11("TECHBASESWAP", 0x100000, FactionPortraits[faction_id_with], pop_wait)) {
+        return 1;
+    }
+    diplo_lock(0);
+    for (int tech_id = 0; tech_id < MaxTechnologyNum; tech_id++) {
+        if (!has_tech(tech_id, faction_id_with) && has_tech(tech_id, faction_id)) {
+            net_tech(faction_id_with, tech_id, faction_id, false);
+        }
+    }
+    net_cede_base(*DiploBaseSwapAskID, faction_id, true);
+    diplo_unlock();
+    X_pops_11("BASEOK", 0x100000, FactionPortraits[faction_id_with], pop_wait);
+    return 0;
 }
 
 /*
@@ -3788,6 +4290,320 @@ void __cdecl base_research() {
 }
 
 /*
+Purpose: Drone riots at the current base (from base_drones()). When a riot breaks out the tile is
+         redrawn and the riot announced (a governor managing the citizens has its own message);
+         an AI base resets its production. While a riot goes on, unless a roll against police
+         (+2 with a Brood Pit, out of police + 7) holds it, a headquarters, a faction's only base
+         or a recently taken one is spared and a small base only rioting badly one time in three,
+         the rioters destroy a random facility the faction doesn't get for free; with none found
+         and police of -3 or worse, a human faction's base defects: to its former owner if it was
+         captured, else to the faction with the nearest base (distance doubled under a pact, half
+         again under a treaty, halved under a truce), unless a faction with the REVOLT bonus takes
+         it, taking the tiles around it, the old owner's units next to it and its free facilities
+         along.
+Original Offset: 004F4FB0
+Return Value: n/a
+Status: Complete. Deliberately differs from the original (Kiousu's choice, 2026-10-18) in the
+        defection, which now does what the code intends:
+        - The REVOLT chances (one per faction) start at -1, "no bonus". The original never sets
+          them (its per-faction -1 lands in another local), so it reads seven stack slots it never
+          wrote: on its only path those hold base_psych()'s leftovers, which make REVOLT dead
+          unless the REVOLT faction is faction 3, and with -1 there it would divide by zero in
+          every game without a REVOLT faction.
+        - A REVOLT faction takes the base with the chance the rule gives: 100 * (1 - the product
+          of (1 - chance / 100)) percent, rounded, compared with the clock's last two digits (the
+          original's <= against the product itself gave the Free Drones' 75 about 25%). Which
+          REVOLT faction is picked is as in the original, by their chances.
+        - The nearest faction is weighed by the treaty with each base's own owner; the original
+          used the treaty with the closest faction found so far (the word before the treaties at
+          first).
+*/
+void __cdecl drone_riot() {
+    int revolt[MaxPlayerNum];
+    for (int f = 0; f < MaxPlayerNum; f++) {
+        revolt[f] = -1;
+    }
+    Base *base = *BaseCurrent;
+    uint32_t faction_id = base->faction_id_current;
+    BOOL first = !(base->state & BSTATE_DRONE_RIOTS_ACTIVE);
+    base->state |= BSTATE_DRONE_RIOTS_ACTIVE;
+    if (first) {
+        draw_tile((*BaseCurrent)->x, (*BaseCurrent)->y, 2);
+    }
+    base = *BaseCurrent;
+    BOOL alien = (Players[faction_id].rule_flags & RFLAG_ALIEN) != 0;
+    // the original tests the governor again when it picks DRONERIOTS (and would then pass 0 for
+    // the flags); that can't be true there
+    if (first && (base->governor & GOV_MANAGES_CITIZENS_SPECS) && (base->governor & GOV_ACTIVE)) {
+        popb("DRONERIOTS2", 0, 17, alien ? "ALdrone_sm.pcx" : "drone_sm.pcx", 0);
+    } else {
+        popb("DRONERIOTS", 8, 17, alien ? "ALdrone_sm.pcx" : "drone_sm.pcx", 0);
+    }
+    if (!((*BaseCurrent)->state & BSTATE_DRONE_RIOTS_ACTIVE)) {
+        return;
+    }
+    if (first) {
+        if (!is_human(faction_id)) {
+            base_reset(*BaseIDCurrentSelected, false);
+        }
+        return;
+    }
+    // a riot going on: police (+2 with a Brood Pit) can keep it from doing damage
+    PlayerData *player = &PlayersData[faction_id];
+    int odds = player->soc_effect_pending.police
+        + has_fac_built(FAC_BROOD_PIT, *BaseIDCurrentSelected) * 2 + 7;
+    if (odds > 1 && _rand() % odds) {
+        return;
+    }
+    if (has_fac_built(FAC_HEADQUARTERS, *BaseIDCurrentSelected) || (int)player->current_num_bases <= 1
+        || (*BaseCurrent)->assimilation_turns_left >= 45) {
+        return;
+    }
+    if ((*BaseCurrent)->population_size < 4 && _rand() % 3) {
+        return;
+    }
+    // the rioters destroy a random facility (not one the faction gets for free)
+    base = *BaseCurrent;
+    int tries_max = base->population_size - player->diff_level - (int)player->ranking + 20;
+    int tries = 0;
+    do {
+        int facility_id = _rand() % 70;
+        BOOL allowed = true;
+        for (int i = 0; i < Players[faction_id].faction_bonus_count; i++) {
+            int bonus_id = Players[faction_id].faction_bonus_id[i];
+            if ((bonus_id == RULE_FACILITY || (bonus_id == RULE_FREEFAC
+                && has_tech(Facility[Players[faction_id].faction_bonus_val1[i]].preq_tech, faction_id)))
+                && facility_id == Players[faction_id].faction_bonus_val1[i]) {
+                allowed = false;
+                break;
+            }
+        }
+        if (facility_id > 1 && facility_id < 65
+            && has_fac_built(facility_id, *BaseIDCurrentSelected) && allowed) {
+            if (tries > tries_max) {
+                break;
+            }
+            uint32_t offset, mask;
+            bitmask(facility_id, &offset, &mask);
+            Bases[*BaseIDCurrentSelected].facilities_built[offset] &= ~mask;
+            parse_say(1, (int)Facility[facility_id].name, -1, -1);
+            popb("DRONERIOT", 8, -1, alien ? "ALdrone_sm.pcx" : "drone_sm.pcx", 0);
+            return;
+        }
+    } while (++tries <= tries_max);
+    // nothing destroyed: under police of -3 or worse a human faction's base may defect
+    if (player->soc_effect_pending.police + has_fac_built(FAC_BROOD_PIT, *BaseIDCurrentSelected) * 2
+        > -3 || alien || !is_human(faction_id)) {
+        return;
+    }
+    base = *BaseCurrent;
+    int faction_id_to;
+    if (base->faction_id_former != faction_id) {
+        faction_id_to = base->faction_id_former;
+    } else {
+        // the closest other faction's base; pacts double the distance, treaties add half, truces
+        // halve it
+        faction_id_to = -1;
+        int dist_best = 9999;
+        for (int i = 0; i < *BaseCurrentCount; i++) {
+            if (Bases[i].faction_id_current == faction_id) {
+                continue;
+            }
+            base = *BaseCurrent;
+            int dist = vector_dist(x_dist(Bases[i].x, base->x), Bases[i].y - base->y);
+            uint32_t treaty = player->diplo_treaties[Bases[i].faction_id_current];
+            if (treaty & DTREATY_PACT) {
+                dist *= 2;
+            }
+            if (treaty & DTREATY_TREATY) {
+                dist = dist * 3 / 2;
+            }
+            if (treaty & DTREATY_TRUCE) {
+                dist /= 2;
+            }
+            if (dist < dist_best) {
+                dist_best = dist;
+                faction_id_to = Bases[i].faction_id_current;
+            }
+        }
+    }
+    // factions with the REVOLT bonus can take the base instead
+    int revolt_total = 0;
+    double none_takes = 1.0;
+    for (int f = 1; f < MaxPlayerNum; f++) {
+        for (int i = 0; i < Players[f].faction_bonus_count; i++) {
+            if (Players[f].faction_bonus_id[i] == RULE_REVOLT) {
+                int chance = Players[f].faction_bonus_val1[i];
+                chance = chance < 0 ? 0 : (chance > 100 ? 100 : chance);
+                revolt[f] = chance;
+                revolt_total += chance;
+                none_takes *= 1.0 - chance / 100.0;
+                break;
+            }
+        }
+    }
+    int take = (int)(100.0 * (1.0 - none_takes) + 0.5); // rounded (never negative)
+    DWORD time = timeGetTime();
+    if ((int)(time % 100) < take) {
+        int roll = (int)((time / 100) % revolt_total);
+        for (int f = 1; f < MaxPlayerNum; f++) {
+            if (revolt[f] != -1) {
+                faction_id_to = f;
+                if (roll < revolt[f]) {
+                    break;
+                }
+                roll -= revolt[f];
+            }
+        }
+    }
+    if (faction_id_to <= 0 || (!is_human(faction_id) && !is_human(faction_id_to))
+        || (Players[faction_id_to].rule_flags & RFLAG_ALIEN)) {
+        return;
+    }
+    // the base changes hands
+    base = *BaseCurrent;
+    int x = base->x;
+    int y = base->y;
+    base->faction_id_current = (uint8_t)faction_id_to;
+    for (int f = 1; f < MaxPlayerNum; f++) {
+        if (PlayersData[f].base_id_atk_target == *BaseIDCurrentSelected) {
+            PlayersData[f].base_id_atk_target = -1;
+        }
+    }
+    base = *BaseCurrent;
+    base->assimilation_turns_left = (base->faction_id_former != (uint32_t)faction_id_to) ? 50 : 0;
+    PlayersData[faction_id_to].last_turn_new_base = *TurnCurrentNum;
+    (*BaseCurrent)->minerals_accumulated_2 = 0;
+    (*BaseCurrent)->minerals_accumulated = 0;
+    base = *BaseCurrent;
+    for (int i = 0; i <= (int)base->queue_size; i++) {
+        int item = base->queue_production_id[i];
+        if (item >= 0) {
+            player->proto_id_queue[item]--;
+        }
+    }
+    base->queue_size = 0;
+    (*BaseCurrent)->production_id_last = -FAC_STOCKPILE_ENERGY;
+    (*BaseCurrent)->queue_production_id[0] = -FAC_STOCKPILE_ENERGY;
+    player->current_num_bases--;
+    PlayersData[faction_id_to].current_num_bases++;
+    replay_base(1, x, y, faction_id_to);
+    // the new governor settings come from the old owner's biggest other base (HQ counts double)
+    int pop_best = 0;
+    int base_id_best = -1;
+    for (int i = 0; i < *BaseCurrentCount; i++) {
+        if (*BaseIDCurrentSelected == i || Bases[i].faction_id_current != faction_id) {
+            continue;
+        }
+        int pop = Bases[i].population_size;
+        if (has_fac_built(FAC_HEADQUARTERS, i)) {
+            pop *= 2;
+        }
+        if (pop > pop_best) {
+            pop_best = pop;
+            base_id_best = i;
+        }
+    }
+    if (base_id_best >= 0) {
+        (*BaseCurrent)->governor = Bases[base_id_best].governor;
+    }
+    (*BaseCurrent)->state &= ~(BSTATE_DRONE_RIOTS_ACTIVE | BSTATE_GOLDEN_AGE_ACTIVE
+        | BSTATE_COMBAT_LOSS_LAST_TURN | BSTATE_RESEARCH_DATA_STOLEN | BSTATE_ARTIFACT_ALREADY_LINKED
+        | BSTATE_UNK_10000 | BSTATE_UNK_200000);
+    // the tiles around the base go along, and the old owner's units on the inner nine
+    for (int i = 0; i < 21; i++) {
+        int x_radius = x + RadiusOffsetX[i];
+        if (!*MapIsFlat) {
+            if (x_radius < 0) {
+                x_radius += *MapLongitudeBounds;
+            } else if (x_radius >= *MapLongitudeBounds) {
+                x_radius -= *MapLongitudeBounds;
+            }
+        }
+        int y_radius = y + RadiusOffsetY[i];
+        if (y_radius < 0 || y_radius >= *MapLatitudeBounds || x_radius < 0
+            || x_radius >= *MapLongitudeBounds) {
+            continue;
+        }
+        using_set(x_radius, y_radius, faction_id_to);
+        map_loc(x_radius, y_radius)->visibility |= (uint8_t)(1 << faction_id_to);
+        for (int veh_id = *VehCurrentCount - 1; veh_id >= 0; veh_id--) {
+            Veh *veh = &Vehs[veh_id];
+            if (veh->x != x_radius || veh->y != y_radius) {
+                continue;
+            }
+            if (veh->faction_id == faction_id_to) {
+                veh->state &= ~VSTATE_UNK_40000;
+            } else if (veh->faction_id == faction_id && i < 9) {
+                veh->faction_id = (uint8_t)faction_id_to;
+                player->proto_id_active[veh->proto_id]--;
+                if (veh->proto_id > 64) { // 64, the first faction prototype slot, stays as it is
+                    VehPrototype *proto = &VehPrototypes[veh->proto_id];
+                    int proto_id = propose_proto(faction_id_to, proto->chassis_id, proto->weapon_id,
+                        proto->armor_id, proto->ability_flags, proto->reactor_id, -2, proto->veh_name);
+                    if (proto_id >= 0) {
+                        veh->proto_id = (int16_t)proto_id;
+                    }
+                }
+                veh->home_base_id = (int16_t)*BaseIDCurrentSelected;
+                PlayersData[faction_id_to].proto_id_active[veh->proto_id]++;
+                owner_set(x_radius, y_radius, faction_id_to);
+                if (Chassis[VehPrototypes[veh->proto_id].chassis_id].range) {
+                    veh->terraforming_turns = 0; // an aircraft's turns aloft
+                }
+                if (veh->order != ORDER_HOLD) {
+                    veh->order = ORDER_NONE;
+                }
+                veh->state &= ~(VSTATE_UNK_200 | VSTATE_EXPLORE | VSTATE_UNK_1000000 | VSTATE_UNK_2000000);
+            }
+        }
+    }
+    spot_base(*BaseIDCurrentSelected, faction_id);
+    reset_territory();
+    for (int veh_id = *VehCurrentCount - 1; veh_id >= 0; veh_id--) {
+        if (veh_id < *VehCurrentCount && Vehs[veh_id].faction_id == faction_id
+            && Vehs[veh_id].home_base_id == *BaseIDCurrentSelected) {
+            kill(veh_id);
+        }
+    }
+    // free facilities of both factions; for the new owner's too the tech checked is the old owner's
+    auto free_facilities = [&](uint32_t faction_id_bonus) {
+        for (int i = 0; i < Players[faction_id_bonus].faction_bonus_count; i++) {
+            int bonus_id = Players[faction_id_bonus].faction_bonus_id[i];
+            int facility_id = Players[faction_id_bonus].faction_bonus_val1[i];
+            if (bonus_id == RULE_FACILITY
+                || (bonus_id == RULE_FREEFAC && has_tech(Facility[facility_id].preq_tech, faction_id))) {
+                facility_id = facility_id < 1 ? 1 : (facility_id > 69 ? 69 : facility_id);
+                uint32_t offset, mask;
+                bitmask(facility_id, &offset, &mask);
+                Bases[*BaseIDCurrentSelected].facilities_built[offset] |= (uint8_t)mask;
+            }
+        }
+    };
+    free_facilities(faction_id);
+    free_facilities(faction_id_to);
+    owner_set(x, y, faction_id_to);
+    *BaseComputeID = *BaseIDCurrentSelected;
+    base_support();
+    base_yield();
+    base_nutrient();
+    base_minerals();
+    base_energy();
+    int current = *FactionIDCurrent;
+    if ((int)faction_id == current || faction_id_to == current
+        || Bases[*BaseIDCurrentSelected].faction_id_current == (uint32_t)current
+        || (Bases[*BaseIDCurrentSelected].visibility & (1 << current))) {
+        MapWin_set_center(*MapWinList, 0, x, y, 1);
+        draw_map(1);
+        parse_says(0, (*BaseCurrent)->name_string, -1, -1);
+        parse_says(2, Players[faction_id_to].adj_name_faction, -1, -1);
+        if (!(*GameState & STATE_UNK_1) || (*GameState & STATE_UNK_8)) {
+            popp(ScriptTxtID, "DRONEREVOLT", 0, "baseobl_sm.pcx", 0);
+        }
+    }
+}
+
+/*
 Purpose: Choose the best specialist type available to the current base, weighing psych triple
          and, once the base is big enough for specialists, economy and labs too. Obsolescence is
          not checked here, unlike in base_yield().
@@ -4050,6 +4866,590 @@ void __cdecl base_maint() {
             }
         }
     }
+}
+
+// The four diagonal steps (0x66EF28, 0x66EF3C; RiverStepX/Y in map.cpp).
+static const int DiagonalStepX[] = { 1, 1, -1, -1 };
+static const int DiagonalStepY[] = { -1, 1, 1, -1 };
+
+/*
+Purpose: Ecological damage at the current base. The damage, scaled by the faction's PLANET
+         rating, is tallied for the AI; then one roll in 100 per point of damage (half that during
+         perihelion) makes fungus bloom, unless native life is off or the game is over. The tile
+         that blooms is picked among the base's 48 nearest tiles without fungus or another base,
+         scored by the fungus diagonally next to them, the improvements fungus would destroy and
+         closeness (sea tiles count half; the outer ring only for the base closest to it, and
+         only until a nearer tile scores); a sea bloom can spread to the tiles around it once the
+         faction has seen a few. The faction's bloom count then sets off what follows: AI factions
+         below the hardest levels often get the count back, past 6 blooms (without the Voice of
+         Planet) native life appears around the tile: a fungal tower (SMACX), mind worms, spore
+         launchers, isles of the deep and locusts, the more the higher the count, and for human
+         factions or on the two hardest levels the blooms add up towards global warming (sea
+         level rise). Past 9 blooms a volcano may erupt once in the game on a random sea tile far
+         from any base or unit, changing the climate.
+Original Offset: 004F67F0
+Return Value: n/a
+Status: Complete
+*/
+void __cdecl base_ecology() {
+    Base *base = *BaseCurrent;
+    uint32_t faction_id = base->faction_id_current;
+    PlayerData *player = &PlayersData[faction_id];
+    int planet = 4 - player->soc_effect_pending.planet;
+    planet = planet < 1 ? 1 : (planet > 99 ? 99 : planet);
+    player->unk_49 += (base->eco_damage * 4) / planet;
+    int roll = _rand() % 100;
+    if (roll >= (*BaseCurrent)->eco_damage / (((*GameState & STATE_PERIHELION_ACTIVE) != 0) + 1)
+        || (*GameRules & RULES_SCN_NO_NATIVE_LIFE)
+        || ((*GameState & STATE_UNK_1) && !(*GameState & STATE_UNK_8))) {
+        return;
+    }
+    // pick the tile
+    int roll_best = 0;
+    int i_best = -1;
+    for (int i = 1; i <= 48; i++) {
+        base = *BaseCurrent;
+        int x = base->x + RadiusOffsetX[i];
+        if (!*MapIsFlat) {
+            if (x < 0) {
+                x += *MapLongitudeBounds;
+            } else if (x >= *MapLongitudeBounds) {
+                x -= *MapLongitudeBounds;
+            }
+        }
+        int y = base->y + RadiusOffsetY[i];
+        if (y < 0 || y >= *MapLatitudeBounds || x < 0 || x >= *MapLongitudeBounds) {
+            continue;
+        }
+        Map *tile = map_loc(x, y);
+        if ((tile->bit & BIT_FUNGUS) && (tile->climate & 0xE0) >= ALT_BIT_OCEAN_SHELF) {
+            continue;
+        }
+        if ((tile->bit & BIT_BASE_IN_TILE) && (tile->val2 & 0xF) < 8) {
+            continue;
+        }
+        int score = 0;
+        if (i > 24) {
+            if (roll_best) {
+                continue;
+            }
+            int dist_best = 9999;
+            int base_id_near = -1;
+            for (int base_id = 0; base_id < *BaseCurrentCount; base_id++) {
+                int dist = vector_dist(x_dist(x, Bases[base_id].x), abs(y - Bases[base_id].y));
+                if (dist <= dist_best) {
+                    dist_best = dist;
+                    base_id_near = base_id;
+                }
+            }
+            if (base_id_near >= 0) {
+                *BaseFindDist = dist_best;
+            }
+            if (base_id_near != *BaseIDCurrentSelected) {
+                continue;
+            }
+            score = 1;
+        }
+        BOOL is_flat = *MapIsFlat & 1;
+        for (int d = 0; d < 4; d++) {
+            int x_diag = x + DiagonalStepX[d];
+            if (!is_flat) {
+                if (x_diag < 0) {
+                    x_diag += *MapLongitudeBounds;
+                } else if (x_diag >= *MapLongitudeBounds) {
+                    x_diag -= *MapLongitudeBounds;
+                }
+            }
+            int y_diag = y + DiagonalStepY[d];
+            if (y_diag < 0 || y_diag >= *MapLatitudeBounds || x_diag < 0
+                || x_diag >= *MapLongitudeBounds) {
+                continue;
+            }
+            Map *diag = map_loc(x_diag, y_diag);
+            if ((diag->bit & BIT_FUNGUS) && (diag->climate & 0xE0) >= ALT_BIT_OCEAN_SHELF) {
+                score += 2;
+            }
+        }
+        if (!score) {
+            continue;
+        }
+        if (score > 1) {
+            score += bit_count(map_loc(x, y)->bit & *TerrainBitsFungusClears);
+            if (i <= 8) {
+                score++;
+            }
+        }
+        if ((map_loc(x, y)->climate & 0xE0) < ALT_BIT_SHORE_LINE) {
+            score = (score + 1) / 2;
+        }
+        score *= 10;
+        int roll_tile = (score > 1) ? _rand() % score : 0;
+        if (roll_tile > roll_best) {
+            roll_best = roll_tile;
+            i_best = i;
+        }
+    }
+    if (i_best <= 0) {
+        return;
+    }
+    // the bloom
+    base = *BaseCurrent;
+    BOOL seen = false;
+    int fungus_type = -1;
+    int blooms = ++player->planet_ecology;
+    int x = base->x + RadiusOffsetX[i_best];
+    if (!*MapIsFlat) {
+        if (x < 0) {
+            x += *MapLongitudeBounds;
+        } else if (x >= *MapLongitudeBounds) {
+            x -= *MapLongitudeBounds;
+        }
+    }
+    int y = base->y + RadiusOffsetY[i_best];
+    int tiles = 1;
+    if ((map_loc(x, y)->climate & 0xE0) < ALT_BIT_SHORE_LINE && blooms >= 4) {
+        int odds = 10 - blooms / 8 - player->diff_level;
+        if (odds <= 1 || !(_rand() % odds)) {
+            tiles = 9; // the sea tiles around it too
+        }
+    }
+    for (int j = 0; j < tiles; j++) {
+        int x_tile = x + RadiusOffsetX[j];
+        if (!*MapIsFlat) {
+            if (x_tile < 0) {
+                x_tile += *MapLongitudeBounds;
+            } else if (x_tile >= *MapLongitudeBounds) {
+                x_tile -= *MapLongitudeBounds;
+            }
+        }
+        int y_tile = y + RadiusOffsetY[j];
+        if (y_tile < 0 || y_tile >= *MapLatitudeBounds || x_tile < 0 || x_tile >= *MapLongitudeBounds) {
+            continue;
+        }
+        if (j && (map_loc(x_tile, y_tile)->climate & 0xE0) >= ALT_BIT_SHORE_LINE) {
+            continue;
+        }
+        Map *tile = map_loc(x_tile, y_tile);
+        uint32_t bits = tile->bit;
+        if ((bits & BIT_FUNGUS) && (tile->climate & 0xE0) >= ALT_BIT_OCEAN_SHELF) {
+            continue;
+        }
+        if ((tile->bit & BIT_BASE_IN_TILE) && (tile->val2 & 0xF) < 8) {
+            continue;
+        }
+        if ((tile->bit2 & (BIT2_UNK_80000000 | BIT2_VOLCANO)) == BIT2_VOLCANO) {
+            continue;
+        }
+        if (fungus_type < 0) {
+            // the improvement the message names; the original counts this with the tile loop's
+            // counter, so the loop ends after the first tile that gets this far
+            for (j = 0; j < 19; j++) {
+                if (bits & Terraforming[j].bit & *TerrainBitsFungusClears) {
+                    fungus_type = j;
+                }
+            }
+        }
+        bit_set(x_tile, y_tile, BIT_FUNGUS, true);
+        bit_set(x_tile, y_tile, *TerrainBitsFungusClears, false);
+        if ((map_loc(x_tile, y_tile)->climate & 0xE0) < ALT_BIT_OCEAN_SHELF) {
+            world_alt_set(x_tile, y_tile, 2, false);
+        }
+        int current = *FactionIDCurrent;
+        if ((PlayersData[current].flags & PFLAG_MAP_REVEALED)
+            || (map_loc(x_tile, y_tile)->visibility & (1 << current))
+            || (*GameState & STATE_OMNISCIENT_VIEW)) {
+            seen = true;
+            if (faction_id == (uint32_t)current) {
+                Console_focus(ConsoleVar, 0, x_tile, y_tile, faction_id);
+                if (player->planet_ecology < 2) {
+                    interlude(3, 0, 1, 0);
+                }
+                boom(x_tile, y_tile, 0x80);
+            }
+            synch_bit(x_tile, y_tile, *FactionIDCurrent);
+            draw_tile(x_tile, y_tile, 2);
+        }
+    }
+    if (seen) {
+        if (!(GetAsyncKeyState(VK_SHIFT) & 0xFF00) && !*IsMultiplayerNet) {
+            clock_wait(20);
+        }
+        int current = *FactionIDCurrent;
+        BOOL show = faction_id == (uint32_t)current;
+        if (!show) {
+            // or a unit of the player at the controls is on the tile
+            Map *tile = map_loc(x, y);
+            int owner = ((tile->bit & BIT_VEH_IN_TILE) && (tile->val2 & 0xF) < 8) ? (tile->val2 & 0xF) : -1;
+            show = owner == current;
+        }
+        if (show) {
+            MapWin_set_center(*MapWinList, 0, x, y, 1);
+            Console_focus(ConsoleVar, 0, x, y, faction_id);
+            parse_says(0, (*BaseCurrent)->name_string, -1, -1);
+            if (fungus_type < 0 || faction_id != (uint32_t)*FactionIDCurrent) {
+                POP2("FUNGUSGROWS", "fung_sm.pcx", -1);
+            } else {
+                BOOL is_sea = (map_loc(x, y)->climate & 0xE0) < ALT_BIT_SHORE_LINE;
+                parse_say(1, (int)(is_sea ? Terraforming[fungus_type].name_sea
+                    : Terraforming[fungus_type].name), -1, -1);
+                POP2("FUNGUSGROWS2", "fung_sm.pcx", *BaseIDCurrentSelected);
+            }
+        }
+        if (faction_id == (uint32_t)*FactionIDCurrent && player->planet_ecology >= 2) {
+            interlude(5, (*BaseCurrent)->name_string, 1, 0);
+        }
+    }
+    // native life
+    if (!is_human(faction_id) && !(_rand() % 2) && *DiffLevelCurrent > 0
+        && _rand() % (*DiffLevelCurrent + 1)) {
+        player->planet_ecology--;
+        return;
+    }
+    if (player->flags & PFLAG_UNK_4000) {
+        player->flags &= ~PFLAG_UNK_4000;
+        return;
+    }
+    if (player->planet_ecology < 7 || SecretProject->voice_of_planet != -1) {
+        return;
+    }
+    if (faction_id == (uint32_t)*FactionIDCurrent) {
+        interlude(8, 0, 1, 0);
+    }
+    if (!(_rand() % 4) && *ExpansionEnabled && (map_loc(x, y)->climate & 0xE0) >= ALT_BIT_SHORE_LINE) {
+        veh_init(BSC_FUNGAL_TOWER, 0, x, y);
+    }
+    int others = 0; // natives other than mind worms
+    int spawned = 0;
+    for (int j = 0; j < (player->planet_ecology < 9 ? player->planet_ecology : 9); j++) {
+        int x_tile = x + RadiusOffsetX[j];
+        if (!*MapIsFlat) {
+            if (x_tile < 0) {
+                x_tile += *MapLongitudeBounds;
+            } else if (x_tile >= *MapLongitudeBounds) {
+                x_tile -= *MapLongitudeBounds;
+            }
+        }
+        int y_tile = y + RadiusOffsetY[j];
+        if (y_tile < 0 || y_tile >= *MapLatitudeBounds || x_tile < 0 || x_tile >= *MapLongitudeBounds) {
+            continue;
+        }
+        Map *tile = map_loc(x_tile, y_tile);
+        if (!(tile->bit & BIT_FUNGUS) || (tile->climate & 0xE0) < ALT_BIT_OCEAN_SHELF
+            || *BaseCurrentCount <= 0) {
+            continue;
+        }
+        int dist_best = 9999;
+        int base_id_near = -1;
+        for (int base_id = 0; base_id < *BaseCurrentCount; base_id++) {
+            int dist = vector_dist(x_dist(x_tile, Bases[base_id].x), y_tile - Bases[base_id].y);
+            if (dist <= dist_best) {
+                dist_best = dist;
+                base_id_near = base_id;
+            }
+        }
+        if (base_id_near < 0) {
+            continue;
+        }
+        *BaseFindDist = dist_best;
+        if (Bases[base_id_near].faction_id_current != faction_id) {
+            continue;
+        }
+        tile = map_loc(x_tile, y_tile);
+        int owner = tile->val2 & 0xF;
+        if ((tile->bit & BIT_VEH_IN_TILE) && owner < 8 && owner > 0) {
+            continue;
+        }
+        if ((tile->bit & BIT_BASE_IN_TILE) && owner < 8 && owner > 0) {
+            continue;
+        }
+        int proto_id;
+        if (tile->region >= 64) {
+            proto_id = (others % 3) ? BSC_ISLE_OF_THE_DEEP : BSC_LOCUSTS_OF_CHIRON;
+        } else {
+            proto_id = player->region_total_bases[tile->region] ? BSC_MIND_WORMS : BSC_LOCUSTS_OF_CHIRON;
+        }
+        if (proto_id != BSC_MIND_WORMS) {
+            others++;
+            if (others >= (int)(player->current_num_bases * 2) / 3 || others >= player->planet_ecology / 3) {
+                continue;
+            }
+        }
+        spawned++;
+        if (proto_id == BSC_MIND_WORMS && !(_rand() % 5) && *ExpansionEnabled) {
+            proto_id = BSC_SPORE_LAUNCHER;
+        }
+        int veh_id = veh_init(proto_id, 0, x_tile, y_tile);
+        if (veh_id >= 0) {
+            Vehs[veh_id].order_auto_type = (uint8_t)faction_id; // the faction that called them up
+        }
+        draw_tile(x_tile, y_tile, 2);
+    }
+    Map *tile = map_loc(x, y);
+    int owner = tile->val2 & 0xF;
+    if (!((tile->bit & (BIT_BASE_IN_TILE | BIT_VEH_IN_TILE)) && owner < 8 && owner > 0)) {
+        // and on the tile itself, up to the base's size
+        int proto_id = player->region_total_bases[tile->region]
+            ? (tile->region >= 64) + BSC_MIND_WORMS : BSC_LOCUSTS_OF_CHIRON;
+        if (spawned < player->planet_ecology / 3) {
+            int count = spawned;
+            do {
+                if (count >= (*BaseCurrent)->population_size) {
+                    break;
+                }
+                if (proto_id == BSC_MIND_WORMS && !(_rand() % 5) && *ExpansionEnabled) {
+                    proto_id = BSC_SPORE_LAUNCHER;
+                }
+                veh_init(proto_id, 0, x, y);
+                count++;
+                if (proto_id == BSC_SPORE_LAUNCHER) {
+                    proto_id = BSC_MIND_WORMS;
+                }
+            } while (count < player->planet_ecology / 3);
+        }
+    }
+    // global warming
+    if (is_human(faction_id) || *DiffLevelCurrent >= DLVL_THINKER) {
+        (*GlobalWarmingCount)++;
+        int sea_level = *MapSeaLevel < 0 ? 0 : (*MapSeaLevel > 100 ? 100 : *MapSeaLevel);
+        int rises = (int)WorldBuilder->sea_level_rises;
+        int rises_clamped = rises < 1 ? 1 : (rises > 99 ? 99 : rises);
+        if ((int)(Rules->freq_global_warming_num * *GlobalWarmingCount)
+            / (int)Rules->freq_global_warming_denom >= sea_level * 3 / rises_clamped + 6) {
+            *GlobalWarmingCount = 0;
+            int step = player->planet_ecology / 6 - 1;
+            step = step < 1 ? 1 : (step > 3 ? 3 : step);
+            *MapSeaLevelCouncil += step;
+            *ClimateFutureChange += rises * step / 3;
+            *ClimateValueA = abs(*ClimateFutureChange);
+            *ClimateValueB = 20;
+            *ClimateValueC = 0;
+            parse_num(0, 20);
+            parse_num(1, abs(*ClimateFutureChange) * 1000 / 15);
+            if (faction_id == (uint32_t)*FactionIDCurrent) {
+                popp(ScriptTxtID, "TRIGGERWARMING", 0, "searis_sm.pcx", 0);
+                return;
+            }
+            *GenderDefault = Players[faction_id].noun_gender;
+            *PluralityDefault = Players[faction_id].is_noun_plural;
+            parse_says(0, Players[faction_id].noun_faction, -1, -1);
+            popp(ScriptTxtID, "TRIGGERWARMING2", 0, "searis_sm.pcx", 0);
+            return;
+        }
+    }
+    // a volcano
+    if (player->planet_ecology < 10 || (*GameState & STATE_VOLCANO_ERUPTED)) {
+        return;
+    }
+    int x_rand = (*MapLongitudeBounds - 1 > 0) ? _rand() % *MapLongitudeBounds : 0;
+    int y_volcano = (*MapLatitudeBounds - 1 > 0) ? _rand() % *MapLatitudeBounds : 0;
+    int x_volcano = (y_volcano & 1) - (x_rand & 1) + x_rand;
+    if (y_volcano < 0 || y_volcano >= *MapLatitudeBounds || x_volcano < 0
+        || x_volcano >= *MapLongitudeBounds) {
+        return;
+    }
+    tile = map_loc(x_volcano, y_volcano);
+    if ((tile->climate & 0xE0) >= ALT_BIT_SHORE_LINE) {
+        return;
+    }
+    BOOL is_flat = *MapIsFlat & 1;
+    int i;
+    for (i = 0; i < 49; i++) {
+        int x_near = x_volcano + RadiusOffsetX[i];
+        if (!is_flat) {
+            if (x_near < 0) {
+                x_near += *MapLongitudeBounds;
+            } else if (x_near >= *MapLongitudeBounds) {
+                x_near -= *MapLongitudeBounds;
+            }
+        }
+        int y_near = y_volcano + RadiusOffsetY[i];
+        if (y_near < 0 || y_near >= *MapLatitudeBounds || x_near < 0 || x_near >= *MapLongitudeBounds) {
+            continue;
+        }
+        Map *tile_near = map_loc(x_near, y_near);
+        if ((tile_near->bit & (BIT_BASE_IN_TILE | BIT_VEH_IN_TILE)) && (tile_near->val2 & 0xF) < 8) {
+            break;
+        }
+    }
+    if (i != 49) {
+        return;
+    }
+    int current = *FactionIDCurrent;
+    if ((PlayersData[current].flags & PFLAG_MAP_REVEALED) || (tile->visibility & (1 << current))) {
+        Console_focus(ConsoleVar, 0, x_volcano, y_volcano, current);
+    }
+    *GameState |= STATE_VOLCANO_ERUPTED;
+    world_volcano(x_volcano, y_volcano, true);
+    world_climate();
+    draw_map(1);
+    clock_wait(1000);
+    *PluralityDefault = false;
+    *GenderDefault = Players[*FactionIDCurrent].is_leader_female;
+    parse_says(0, Players[*FactionIDCurrent].title_leader, -1, -1);
+    *PluralityDefault = false;
+    *GenderDefault = Players[*FactionIDCurrent].is_leader_female;
+    parse_says(1, Players[*FactionIDCurrent].name_leader, -1, -1);
+    current = *FactionIDCurrent;
+    if ((PlayersData[current].flags & PFLAG_MAP_REVEALED)
+        || (map_loc(x_volcano, y_volcano)->visibility & (1 << current))) {
+        popp(ScriptTxtID, "VOLCANO", 0, "volc_sm.pcx", 0);
+    }
+}
+
+/*
+Purpose: The current turn's upkeep for one base: work out its figures, produce and hurry, note
+         the minerals and item it started the turn with, grow or starve (a base that starves to
+         death ends here), check unit support, then add its worked tiles to the faction's AI
+         economy weight (x4 in a region it plans to ship colonists to while not keen on war, x2
+         anywhere but a region it defends), settle drones and doctors (a base that defects in a
+         riot ends here), pay energy shortfalls and research, ecological damage, the base's
+         energy into the reserves, commerce income (none under sanctions) and for alien factions
+         the energy their facilities and Secret Projects bring, maintenance and terraforming
+         requests. A base to be renamed (1 in 3) gets its final name, announced to the player at
+         the controls if they see it. The base window is redrawn if it shows the base, opened if
+         the player asked to see the base, assimilation, nerve staple and flags count down.
+Original Offset: 004F79C0
+Return Value: 1 if the base starved to death or defected, otherwise 0
+Status: Complete
+*/
+int __cdecl base_upkeep(uint32_t base_id) {
+    *BaseIDCurrentSelected = base_id;
+    Base *base_saved = &Bases[base_id];
+    *BaseCurrent = base_saved;
+    uint32_t faction_id = base_saved->faction_id_current;
+    *BaseUpkeepZoom = false;
+    *BaseComputeID = base_id;
+    Bases[base_id].state &= ~(BSTATE_PSI_GATE_USED | BSTATE_FACILITY_SCRAPPED);
+    base_support();
+    base_yield();
+    base_nutrient();
+    base_minerals();
+    base_energy();
+    base_production();
+    base_hurry();
+    (*BaseCurrent)->minerals_accumulated_2 = (*BaseCurrent)->minerals_accumulated;
+    (*BaseCurrent)->production_id_last = (*BaseCurrent)->queue_production_id[0];
+    if (base_growth()) {
+        return 1;
+    }
+    if (*TurnCurrentNum > 1) {
+        base_check_support();
+    }
+    *BaseUpkeepStage = 1;
+    *BaseComputeID = *BaseIDCurrentSelected;
+    base_support();
+    base_yield();
+    base_nutrient();
+    base_minerals();
+    base_energy();
+    Base *base = *BaseCurrent;
+    PlayerData *player = &PlayersData[faction_id];
+    uint8_t plan = player->region_base_plan[map_loc(base->x, base->y)->region];
+    int weight = (plan == PLAN_NAVAL_TRANSPORT && player->ai_fight <= 0) ? 4 : (plan != PLAN_DEFENSIVE) + 1;
+    player->unk_47 += bit_count(base->resource_sqr_radius) * weight;
+    *BaseUpkeepStage = 2;
+    if (*TurnCurrentNum > 1) {
+        base_drones();
+        base_doctors();
+        if ((*BaseCurrent)->faction_id_current != faction_id) {
+            return 1;
+        }
+        base_energy_costs();
+        if (*TurnCurrentNum > 5 || *IsMultiplayerNet || !(*GamePreferences & PREF_BSC_TUTORIAL_MSGS)) {
+            base_research();
+        }
+    }
+    *BaseIDCurrentSelected = base_id;
+    *BaseCurrent = base_saved;
+    if (*BaseComputeID != (int)base_id) {
+        *BaseComputeID = base_id;
+        base_support();
+        base_yield();
+        base_nutrient();
+        base_minerals();
+        base_energy();
+    }
+    base_ecology();
+    player->energy_reserves += (*BaseCurrent)->economy_total;
+    for (uint32_t f = 1; f < MaxPlayerNum; f++) {
+        if (f != faction_id && !(Players[faction_id].rule_flags & RFLAG_ALIEN)
+            && !(Players[f].rule_flags & RFLAG_ALIEN)) {
+            player->turn_commerce_income += (!player->sanction_turns && !PlayersData[f].sanction_turns)
+                ? BaseCommerceImport[f] : 0;
+        }
+    }
+    if (Players[faction_id].rule_flags & RFLAG_ALIEN) {
+        int count = 0;
+        for (int i = 0; i < 70; i++) {
+            if ((*BaseCurrent)->facilities_built[i / 8] & (1 << (i % 8))) {
+                count++;
+            }
+        }
+        for (int i = 0; i < MaxSecretProjectNum; i++) {
+            if (base_project(i) == (int)base_id) {
+                count += 5;
+            }
+        }
+        player->turn_commerce_income += player->sanction_turns ? 0 : count / 2;
+    }
+    if (*TurnCurrentNum > 1) {
+        base_maint();
+    }
+    base_terraform(0);
+    if (((*BaseCurrent)->state & BSTATE_UNK_10000) && !(_rand() % 3) && !(*GameState & STATE_UNK_1)) {
+        // the base gets its final name
+        int current = *FactionIDCurrent;
+        Base *selected = &Bases[*BaseIDCurrentSelected];
+        if ((selected->faction_id_current == (uint32_t)current || (selected->visibility & (1 << current)))
+            && !Console_focus(ConsoleVar, 0, (*BaseCurrent)->x, (*BaseCurrent)->y, current)) {
+            draw_tiles((*BaseCurrent)->x, (*BaseCurrent)->y, 2);
+        }
+        parse_says(1, (*BaseCurrent)->name_string, -1, -1);
+        *GenderDefault = Players[faction_id].noun_gender;
+        *PluralityDefault = Players[faction_id].is_noun_plural;
+        parse_says(0, Players[faction_id].noun_faction, -1, -1);
+        base = *BaseCurrent;
+        name_base(faction_id, base->name_string, true,
+            (map_loc(base->x, base->y)->climate & 0xE0) < ALT_BIT_SHORE_LINE);
+        parse_says(2, (*BaseCurrent)->name_string, -1, -1);
+        current = *FactionIDCurrent;
+        selected = &Bases[*BaseIDCurrentSelected];
+        if (selected->faction_id_current == (uint32_t)current || (selected->visibility & (1 << current))) {
+            draw_map(1);
+            popp(ScriptTxtID, "RENAMEBASE", 0, (Players[faction_id].rule_flags & RFLAG_ALIEN)
+                ? "al_col_sm.pcx" : "colfoun_sm.pcx", 0);
+        }
+        (*BaseCurrent)->state &= ~BSTATE_UNK_10000;
+        (*BaseCurrent)->state |= BSTATE_UNK_80;
+    }
+    *BaseComputeID = -1;
+    if (*BaseIDCurrentSelected == *BaseWinBaseID) {
+        BaseWin_on_redraw(BaseWinVar, 0);
+    }
+    if (*BaseUpkeepZoom && (!(*GameState & STATE_UNK_1) || (*GameState & STATE_UNK_8))) {
+        log_say("UPKEEP zoom-to-base", base_id, 0, 0);
+        BaseWin_zoom(BaseWinVar, 0, base_id, 1);
+        log_say("FINISHED zoom-to-base", base_id, 0, 0);
+    }
+    *BaseUpkeepStage = 0;
+    base = *BaseCurrent;
+    if (base->assimilation_turns_left) {
+        base->assimilation_turns_left--;
+        if (base->faction_id_former == base->faction_id_current && base->assimilation_turns_left) {
+            base->assimilation_turns_left--; // twice as fast for a base back with its former owner
+        }
+        if (!base->assimilation_turns_left) {
+            base->faction_id_former = base->faction_id_current;
+        }
+    }
+    if (base->nerve_staple_turns_left) {
+        base->nerve_staple_turns_left--;
+    }
+    base->state &= ~(BSTATE_UNK_200000 | BSTATE_COMBAT_LOSS_LAST_TURN);
+    if (!((*BaseIDCurrentSelected + *TurnCurrentNum) & 7)) {
+        base->state &= ~BSTATE_UNK_100000;
+    }
+    return 0;
 }
 
 /*
