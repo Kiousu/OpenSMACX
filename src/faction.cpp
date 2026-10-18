@@ -26,7 +26,9 @@
 #include "council.h"
 #include "game.h"
 #include "map.h"
+#include "net.h"
 #include "probe.h"
+#include "random.h"
 #include "technology.h"
 #include "veh.h"
 
@@ -69,6 +71,17 @@ int *DiploTechGetProject2 = (int *)0x0093FA84;
 int *DiploTechProjectID = (int *)0x0093F7F4; // project index the other faction is building (or -2 - index)
 uint32_t *DiploFrictionFactionIDWith = (uint32_t *)0x0093FABC;
 uint32_t *DiploFrictionFactionID = (uint32_t *)0x0093FAC0;
+int *DiploUnk1 = (int *)0x0093F7D0; // dont_withdrawal() counts treaty partners only while positive
+// Set by diplomacy_check() (Thinker: diplo_value_93FA70/93FA98/93FA3C); read by the answers to a
+// demand to withdraw and to a tech sale.
+int *DiploUnk2 = (int *)0x0093FA70;
+int *DiploUnk3 = (int *)0x0093FAA0;
+int *DiploUnk4 = (int *)0x0093FA68;
+int *DiploUnk5 = (int *)0x0093FA98;
+int *DiploUnk6 = (int *)0x0093FA78;
+int *DiploUnk7 = (int *)0x0093FA3C; // doubles the price buy_tech() asks
+int *DiploUnk8 = (int *)0x0093FA5C; // faction named in buy_tech()'s COMMLINK offer
+int *DiploCounterProposalID = (int *)0x0093FAB0; // Thinker: diplo_counter_proposal_id
 
 /*
 Purpose: Determine if the specified faction is a Progenitor alien faction (Caretakers / Usurpers).
@@ -737,6 +750,699 @@ void __cdecl scan_prototypes(uint32_t faction_id, uint32_t faction_id_other) {
 }
 
 /*
+Purpose: Copy a faction leader's title and name and the faction's noun into three consecutive
+         parse slots, each with its gender and plurality, as the diplomacy notices do.
+Original Offset: n/a (inlined in the original)
+Return Value: n/a
+Status: Complete
+*/
+static void parse_leader(uint32_t slot, int faction_id) {
+    parse_says(slot, get_title(faction_id), -1, -1);
+    parse_says(slot + 1, get_name(faction_id), -1, -1);
+    parse_says(slot + 2, get_noun(faction_id), -1, -1);
+}
+
+/*
+Purpose: Conclude a treaty between the faction and the faction it is talking with: treaty flags
+         on both sides, the other side's patience reset, both reputations raised. Then show the
+         MAKETREATY dialog (one of three, picked at random), the COMMERCE tutorial message and,
+         if units of the other faction are inside this faction's territory, TIMETOLEAVE.
+Original Offset: 0053CE10
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-17-council-batch28.log)
+*/
+void __cdecl make_treaty(int faction_id, int faction_id_with) {
+    *DiploSecondFaction = faction_id_with;
+    net_treaty_on(faction_id_with, faction_id,
+        DTREATY_TREATY | DTREATY_UNK_200 | DTREATY_UNK_1000000, true);
+    PlayersData[faction_id_with].diplo_patience[faction_id] = 0;
+    PlayersData[faction_id].diplo_spoke[faction_id_with] = *TurnCurrentNum;
+    diplomacy_check(faction_id, faction_id_with, 0);
+    PlayersData[faction_id].global_reputation++;
+    PlayersData[faction_id_with].global_reputation++;
+    diplomacy_caption(faction_id, faction_id_with);
+    parse_leader(0, faction_id);
+    parse_leader(3, faction_id_with);
+    parse_says(6, get_noun_phrase(faction_id, 9), -1, -1);
+    parse_says(7, get_noun_phrase(faction_id_with, 9), -1, -1);
+    stringTemp->str[0] = 0;
+    strcat_s(stringTemp->str, sizeof(char1032), "MAKETREATY");
+    char num[80];
+    _itoa_s((int)random(0, 2), num, 10);
+    strcat_s(stringTemp->str, sizeof(char1032), num);
+    X_pops_11(stringTemp->str, 0x100000, FactionPortraits[faction_id_with], pop_wait);
+    if ((*DiffLevelCurrent <= DLVL_SPECIALIST || tut_check2(0x800)) && !*IsMultiplayerNet) {
+        parse_says(0, get_noun(faction_id_with), -1, -1);
+        X_pop_2(TutorTxtID, "COMMERCE", NULL);
+    }
+    if (territory(faction_id_with, faction_id, 2, NULL, NULL)) {
+        parse_says(0, get_noun(faction_id_with), -1, -1);
+        parse_says(1, Players[faction_id_with].adj_name_faction, -1, -1);
+        NetMsg_pop(NetMsgVar, 0, "TIMETOLEAVE", 5000, 0, NULL);
+    }
+}
+
+/*
+Purpose: Agree a truce between the faction and the faction it is talking with: truce flags on
+         both sides and both reputations raised; with show set, the MAKETRUCE dialog follows.
+         In a network game the truce is sent without waiting for it to come back.
+Original Offset: 0053D160
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-17-council-batch28.log)
+*/
+void __cdecl pledge_truce(int faction_id, int faction_id_with, BOOL show) {
+    *DiploSecondFaction = faction_id_with;
+    net_treaty_on(faction_id_with, faction_id, DTREATY_TRUCE | DTREATY_UNK_200, false);
+    PlayersData[faction_id].diplo_spoke[faction_id_with] = *TurnCurrentNum;
+    diplomacy_check(faction_id, faction_id_with, 0);
+    PlayersData[faction_id].global_reputation++;
+    PlayersData[faction_id_with].global_reputation++;
+    if (show) {
+        diplomacy_caption(faction_id, faction_id_with);
+        parse_leader(0, faction_id);
+        parse_leader(3, faction_id_with);
+        X_pops_11("MAKETRUCE", 0x100000, FactionPortraits[faction_id_with], pop_wait);
+    }
+}
+
+/*
+Purpose: Ask the faction being talked to (faction_id_with) to withdraw its units from the
+         faction's territory, unless contact fails or it is a human player in a network game.
+         The answer is only reported here while sunspots block the commlink.
+Original Offset: 0053E4C0
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-17-council-batch28.log)
+*/
+void __cdecl demands_withdrawal(int faction_id, int faction_id_with) {
+    *DiploSecondFaction = faction_id_with;
+    if (commlink_attempter(faction_id, faction_id_with)
+        || (*IsMultiplayerNet && is_human(faction_id_with))) {
+        return;
+    }
+    int answer = demand_withdrawal(faction_id, faction_id_with);
+    if (*SunspotDuration > 0) {
+        parse_says(0, get_noun(faction_id_with), -1, -1);
+        switch (answer) {
+        case 0:
+            NetMsg_pop(NetMsgVar, 0, "WITHSUNYES", 5000, 0, NULL);
+            break;
+        case 1:
+            NetMsg_pop(NetMsgVar, 0, "WITHSUNNO", 5000, 0, NULL);
+            break;
+        case 2:
+            NetMsg_pop(NetMsgVar, 0, "WITHSUNWAR", 5000, 0, NULL);
+            break;
+        default:
+            break;
+        }
+    }
+}
+
+/*
+Purpose: Renounce the pact with the faction being talked to. Under the diplomatic lock: count the
+         blemish on the faction's integrity, drop the pact, tell a computer player through the
+         BROKEPACT dialog (unless sunspots block the commlink) and end the pact's arrangements.
+Original Offset: 0053E5C0
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-17-council-batch28.log)
+*/
+void __cdecl renounce_pact(int faction_id, int faction_id_with) {
+    *DiploSecondFaction = faction_id_with;
+    // the original inlines the lock with a timeout (the dialog asking whether to keep waiting)
+    if (commlink_attempter(faction_id, faction_id_with) || diplo_lock(100)) {
+        return;
+    }
+    PlayersData[faction_id].integrity_blemishes++;
+    net_treaty_off(faction_id_with, faction_id, DTREATY_PACT, true);
+    if (*SunspotDuration <= 0 && !is_human(faction_id_with)) {
+        diplomacy_check(faction_id, faction_id_with, 0);
+        diplomacy_caption(faction_id, faction_id_with);
+        parse_says(0, get_pact(faction_id), -1, -1);
+        parse_says(1, get_title(faction_id), -1, -1);
+        parse_says(2, get_name(faction_id), -1, -1);
+        X_pops_11("BROKEPACT", 0x100000, FactionPortraits[faction_id_with], pop_wait);
+    }
+    net_pact_ends(faction_id, faction_id_with, true);
+    diplo_unlock();
+}
+
+/*
+Purpose: Bring the pact partners of an attacked faction into the war. Every other living faction
+         in a pact with faction_id that has neither a pact nor a vendetta with faction_id_atk
+         takes a vendetta against the attacker when either side is a human player (the human
+         attacker's last contact with it set to this turn), and the player at the controls is
+         told: AIDSTHEM for the attacker, AIDSUS for the faction attacked. The parse slots hold the
+         partner's noun, the attacked faction's noun, the partner's leader and the attacker's
+         leader and noun.
+Original Offset: 0050BA50
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-18-council-batch29.log)
+*/
+void __cdecl intervention(int faction_id, int faction_id_atk) {
+    for (int i = 1; i < MaxPlayerNum; i++) {
+        if (i == faction_id || i == faction_id_atk || !is_alive(i)
+            || !(PlayersData[i].diplo_treaties[faction_id] & DTREATY_PACT)
+            || (PlayersData[i].diplo_treaties[faction_id_atk] & (DTREATY_PACT | DTREATY_VENDETTA))) {
+            continue;
+        }
+        parse_says(0, get_noun(i), -1, -1);
+        parse_says(1, get_noun(faction_id), -1, -1);
+        parse_says(2, get_title(i), -1, -1);
+        parse_says(3, get_name(i), -1, -1);
+        parse_says(4, get_title(faction_id_atk), -1, -1);
+        parse_says(5, get_name(faction_id_atk), -1, -1);
+        parse_says(6, get_noun(faction_id_atk), -1, -1);
+        if (is_human(faction_id_atk) || is_human(faction_id)) {
+            if (is_human(faction_id_atk)) {
+                PlayersData[faction_id_atk].diplo_spoke[i] = *TurnCurrentNum;
+            }
+            treaty_on(i, faction_id_atk, DTREATY_VENDETTA | DTREATY_COMMLINK | DTREATY_UNK_80000000);
+            set_treaty(i, faction_id_atk, DTREATY_UNK_40, true);
+        }
+        if (faction_id_atk == *FactionIDCurrent) {
+            X_pop("AIDSTHEM", NULL);
+        } else if (faction_id == *FactionIDCurrent) {
+            X_pop("AIDSUS", NULL);
+        }
+    }
+}
+
+/*
+Purpose: Offer the faction being talked to a swap of prototypes (the design picked by
+         scan_prototypes()), if it is willing to speak. Its designs are marked as offered (0x10).
+         With a pact the offer text is built (PROTOPACT) but the original shows nothing and stops
+         there, leaving the picked designs set. Otherwise PROTORIVAL is shown and, if accepted,
+         each faction gets every design of the other it wants (as tech 97 + design), and both
+         sides' designs are marked as traded (0x20).
+Original Offset: 0053A230
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-18-council-batch29.log)
+*/
+void __cdecl mention_prototypes(int faction_id, int faction_id_with) {
+    *DiploSecondFaction = faction_id_with;
+    if (*DiploProtoIDTradeable < 0 || !wants_to_speak(faction_id, faction_id_with)) {
+        return;
+    }
+    for (int i = 0; i < MaxVehProtoFactionNum; i++) {
+        VehPrototypes[faction_id_with * MaxVehProtoFactionNum + i].flags |= PROTO_UNK_10;
+    }
+    int proto_id = *DiploProtoIDTradeable;
+    parse_says(0, VehPrototypes[proto_id].veh_name, -1, -1);
+    stringTemp->str[0] = 0;
+    say_stats_2(stringTemp->str, proto_id);
+    parse_says(1, stringTemp->str, -1, -1);
+    VehPrototypes[proto_id].flags |= PROTO_UNK_10;
+    stringTemp->str[0] = 0;
+    strcat_s(stringTemp->str, sizeof(char1032), "PROTO");
+    if (PlayersData[faction_id].diplo_treaties[faction_id_with] & DTREATY_PACT) {
+        VehPrototypes[proto_id].flags |= PROTO_UNK_20;
+        strcat_s(stringTemp->str, sizeof(char1032), "PACT");
+        return; // as in the original: no dialog, the picked designs are kept
+    }
+    strcat_s(stringTemp->str, sizeof(char1032), "RIVAL");
+    if (X_pops_11(stringTemp->str, 0x100000, FactionPortraits[faction_id_with], pop_wait)) {
+        for (int i = 0; i < MaxVehProtoFactionNum; i++) {
+            int proto_id_own = faction_id * MaxVehProtoFactionNum + i;
+            int proto_id_with = faction_id_with * MaxVehProtoFactionNum + i;
+            if (wants_prototype(proto_id_own, faction_id_with)) {
+                net_tech(faction_id_with, proto_id_own + 97, faction_id, true);
+            }
+            VehPrototypes[proto_id_own].flags |= PROTO_UNK_20;
+            if (wants_prototype(proto_id_with, faction_id)) {
+                net_tech(faction_id, proto_id_with + 97, faction_id_with, true);
+            }
+            VehPrototypes[proto_id_with].flags |= PROTO_UNK_20;
+        }
+    }
+    *DiploProtoIDBest = -1;
+    *DiploProtoIDTradeable = -1;
+}
+
+/*
+Purpose: Move the faction's units out of the territory of the faction it no longer has a pact
+         with: each unit whose nearest base is that faction's, or that stands in its territory,
+         goes to the closest of its own faction's bases (sea units only to bases that pass the
+         coast checks below), with its orders cleared. Kept from the original: the coast check
+         for sea units passes the base's x coordinate as a base index and its y coordinate as the
+         radius flag of is_coast().
+Original Offset: 0053C370
+Return Value: Number of units moved
+Status: Complete (verified vs original: docs/regression-runs/2026-10-18-council-batch29.log)
+*/
+int __cdecl pact_withdraw(int faction_id, int faction_id_with) {
+    int moved = 0;
+    for (int veh_id = 0; veh_id < *VehCurrentCount; veh_id++) {
+        Veh *veh = &Vehs[veh_id];
+        if (veh->faction_id != faction_id) {
+            continue;
+        }
+        int base_id = base_find(veh->x, veh->y);
+        if (base_id < 0 || (Bases[base_id].faction_id_current != faction_id_with
+            && whose_territory(faction_id, veh->x, veh->y, NULL, false) != faction_id_with)) {
+            continue;
+        }
+        int base_id_best = -1;
+        int dist_best = 9999;
+        for (int i = 0; i < *BaseCurrentCount; i++) {
+            Base *base = &Bases[i];
+            if (base->faction_id_current != faction_id) {
+                continue;
+            }
+            if (Chassis[VehPrototypes[veh->proto_id].chassis_id].triad == TRIAD_SEA) {
+                Base *base_x = &Bases[base->x];
+                if (!is_coast(base_x->x, base_x->y, base->y)) {
+                    continue;
+                }
+                if (is_ocean(veh->x, veh->y)
+                    && !base_on_sea(i, map_loc(veh->x, veh->y)->region)) {
+                    continue;
+                }
+            }
+            int dist_x = abs(base->x - veh->x);
+            if (!(*MapIsFlat & 1) && dist_x > (int)*MapLongitude) {
+                dist_x = *MapLongitudeBounds - dist_x;
+            }
+            int dist = vector_dist(dist_x, base->y - veh->y);
+            if (dist < dist_best) {
+                dist_best = dist;
+                base_id_best = i;
+            }
+        }
+        if (base_id_best < 0) {
+            continue;
+        }
+        veh_drop(veh_lift(veh_id), Bases[base_id_best].x, Bases[base_id_best].y);
+        veh->order = ORDER_NONE;
+        veh->state &= 0xFCFFBDFF; // clears 0x200, 0x4000, 0x1000000 and 0x2000000
+        if (Chassis[VehPrototypes[veh->proto_id].chassis_id].triad == TRIAD_AIR) {
+            veh->terraforming_turns = 0;
+        }
+        moved++;
+        if (*MapWinUnitNotViewMode && veh_id == *MapWinVehIDSelected) {
+            Console_set_move(ConsoleVar, NULL, 1);
+        }
+    }
+    return moved;
+}
+
+/*
+Purpose: Offer to buy from the faction being talked to the technology it has to give (type 5:
+         the prototype picked by scan_prototypes(), as tech 97 + design; type 13: the commlink
+         offer naming DiploUnk8's faction). The price is the tech's value to the seller scaled by
+         the turn, doubled for a great satan and with DiploUnk7, raised by half with markup,
+         divided by the number of other factions that have it (1 to 999), lowered for a pact
+         partner ahead in rank and tech, rounded up to 25 and at least 100 (but for type 13).
+         When the faction can't pay, unk1 or type 5 still makes the offer (BUY...HIGH). An
+         accepted offer pays the energy, hands over the tech and refreshes the display.
+Original Offset: 005401A0
+Return Value: Was an offer made? true/false
+Status: Complete (verified vs original: docs/regression-runs/2026-10-18-council-batch29.log)
+*/
+int __cdecl buy_tech(int faction_id, int faction_id_with, int unk1, BOOL markup, int type) {
+    *DiploSecondFaction = faction_id_with;
+    if (type == 5) {
+        if (*DiploProtoIDBest < 0) {
+            scan_prototypes(faction_id, faction_id_with);
+            if (*DiploProtoIDBest < 0) {
+                return false;
+            }
+        }
+        *DiploTechGetID1 = *DiploProtoIDBest + 97;
+    } else if (type != 13) {
+        if (*DiploTechGetID1 < 0) {
+            return false;
+        }
+        if (!strcmp(Players[faction_id_with].filename, "UNIV") && *DiploTechGiveID1 >= 0) {
+            return false;
+        }
+    }
+    if (unk1 == 1) {
+        return false;
+    }
+    int cost = tech_val(*DiploTechGetID1, faction_id_with, true) * ((*TurnCurrentNum + 7) / 8);
+    if (great_satan(faction_id, false)) {
+        cost *= 2;
+    }
+    if (*DiploUnk7) {
+        cost *= 2;
+    }
+    if (markup) {
+        cost = cost * 3 / 2;
+    }
+    int owners = (int)bit_count(GameTechAchieved[*DiploTechGetID1]) - 1;
+    cost /= (owners < 1) ? 1 : ((owners > 999) ? 999 : owners);
+    PlayerData *p = &PlayersData[faction_id];
+    PlayerData *p_with = &PlayersData[faction_id_with];
+    if ((p->diplo_treaties[faction_id_with] & DTREATY_PACT) && (int)p_with->ranking > (int)p->ranking) {
+        if (p_with->tech_ranking > p->tech_ranking + 8) {
+            cost /= 4;
+        } else if (p_with->tech_ranking > p->tech_ranking) {
+            cost /= 2;
+        }
+    }
+    cost = (cost + 25) / 25 * 25;
+    if (type != 13 && cost < 100) {
+        cost = 100;
+    }
+    if (p->energy_reserves < cost && unk1 != 5 && type != 5) {
+        return false;
+    }
+    stringTemp->str[0] = 0;
+    say_tech(stringTemp->str, *DiploTechGetID1, true);
+    parse_says(0, stringTemp->str, -1, -1);
+    parse_num(0, cost);
+    stringTemp->str[0] = 0;
+    strcat_s(stringTemp->str, sizeof(char1032), "BUY");
+    if (type == 5) {
+        strcat_s(stringTemp->str, sizeof(char1032), "PROTO");
+    } else if (type == 13) {
+        strcat_s(stringTemp->str, sizeof(char1032), "COMMLINK");
+        parse_says(0, Players[*DiploUnk8].adj_name_faction, -1, -1);
+    } else {
+        strcat_s(stringTemp->str, sizeof(char1032), "TECH");
+    }
+    char number[80];
+    if (p->energy_reserves < cost) {
+        strcat_s(stringTemp->str, sizeof(char1032), "HIGH");
+        _itoa_s((type == 5 || type == 13) ? 0 : (int)random(0, 2), number, 10);
+        strcat_s(stringTemp->str, sizeof(char1032), number);
+        X_pops_11(stringTemp->str, 0x100000, FactionPortraits[faction_id_with], pop_wait);
+        return true;
+    }
+    _itoa_s((type == 5 || type == 13) ? 0 : (int)random(0, 2), number, 10);
+    strcat_s(stringTemp->str, sizeof(char1032), number);
+    if (X_pops_11(stringTemp->str, 0x100000, FactionPortraits[faction_id_with], pop_wait) == 1) {
+        net_energy(faction_id, -cost, faction_id_with, cost, false);
+        net_tech(faction_id, *DiploTechGetID1, faction_id_with, true);
+        if (type == 5) {
+            *DiploProtoIDBest = -1;
+        }
+        *InfoWinUnk = 0;
+        Console_update_data(ConsoleVar, NULL, 0);
+        diplomacy_caption(faction_id, faction_id_with);
+    }
+    return true;
+}
+
+/*
+Purpose: The faction being talked to (faction_id_with) answers a demand to withdraw its units from
+         the faction's territory. Without a pact or the flag 0x200, an angry enough mood (the
+         diplomacy_check() values and the friction against 5 or 15) makes it declare a vendetta
+         (NEVER, answer 2). A treaty partner with a reason to stay (dont_withdrawal()) breaks the
+         treaty instead (RUNNINGDOG, answer 2). Otherwise, unless it is a treaty partner, its
+         friction rises and it may refuse (NOWAYJOSE, answer 1); if the faction's own units stand
+         in its territory it asks for them to leave as well (TURNABOUT) and withdraws its own
+         units when that is agreed. Then its units withdraw and it reports how (WITHDRAWPACT,
+         WITHDRAW, WITHDRAWTRUCE, or NOWITHDRAW when nothing moved). Dialogs are skipped while
+         sunspots block the commlink.
+Original Offset: 00549270
+Return Value: 0 withdrew, 1 refused, 2 vendetta or broken treaty
+Status: Complete (verified vs original: docs/regression-runs/2026-10-18-council-batch29.log)
+*/
+int __cdecl demand_withdrawal(int faction_id, int faction_id_with) {
+    BOOL turnabout = false;
+    *DiploSecondFaction = faction_id_with;
+    diplomacy_caption(faction_id, faction_id_with);
+    uint32_t treaties_with = PlayersData[faction_id_with].diplo_treaties[faction_id];
+    if (!(treaties_with & DTREATY_UNK_200) && !(treaties_with & DTREATY_PACT)
+        && (*DiploUnk2 || *DiploUnk3 || (*DiploFriction > (*DiploUnk4 ? 5 : 15) && !*DiploUnk5))) {
+        net_treaty_on(faction_id_with, faction_id, DTREATY_VENDETTA, true);
+        PlayersData[faction_id].diplo_spoke[faction_id_with] = *TurnCurrentNum;
+        if (*SunspotDuration <= 0) {
+            diplomacy_caption(faction_id, faction_id_with);
+            parse_says(0, get_title(faction_id), -1, -1);
+            parse_says(1, get_name(faction_id), -1, -1);
+            stringTemp->str[0] = 0;
+            strcat_s(stringTemp->str, sizeof(char1032), "NEVER");
+            X_pops_11(stringTemp->str, 0x100000, FactionPortraits[faction_id_with], pop_wait);
+        }
+        return 2;
+    }
+    uint32_t *treaties = &PlayersData[faction_id].diplo_treaties[faction_id_with];
+    if (!(*treaties & DTREATY_PACT)) {
+        int faction_id_reason = dont_withdrawal(faction_id, faction_id_with);
+        if (faction_id_reason && (*treaties & DTREATY_TREATY)) {
+            net_double_cross(faction_id_with, faction_id, -1, true);
+            if (*SunspotDuration > 0) {
+                return 2;
+            }
+            parse_says(0, get_title(faction_id), -1, -1);
+            parse_says(1, get_name(faction_id), -1, -1);
+            parse_says(2, get_title(faction_id_reason), -1, -1);
+            parse_says(3, get_name(faction_id_reason), -1, -1);
+            X_pops_11("RUNNINGDOG", 0x100000, FactionPortraits[faction_id_with], pop_wait);
+            *DiploUnk2 = 0;
+            PlayersData[faction_id].diplo_spoke[faction_id_with] = *TurnCurrentNum;
+            return 2;
+        }
+    }
+    if (!(*treaties & DTREATY_TREATY)) {
+        int *friction = (int *)&PlayersData[faction_id_with].diplo_friction[faction_id];
+        int value = *friction + 1;
+        *friction = (value < 0) ? 0 : ((value > 20) ? 20 : value);
+        if ((int)*DiploFrictionFactionID == faction_id_with
+            && (int)*DiploFrictionFactionIDWith == faction_id) {
+            (*DiploFriction)++;
+        }
+        if ((PlayersData[faction_id_with].diplo_treaties[faction_id] & DTREATY_WANT_REVENGE)
+            || *DiploUnk2 || *DiploUnk3 || *DiploUnk6 > *DiploUnk5 + 3 || (*DiploUnk4 && !*DiploUnk5)) {
+            if (*SunspotDuration <= 0) {
+                parse_says(0, get_title(faction_id), -1, -1);
+                parse_says(1, get_name(faction_id), -1, -1);
+                X_pops_11("NOWAYJOSE", 0x100000, FactionPortraits[faction_id_with], pop_wait);
+            }
+            return 1;
+        }
+        if (territory(faction_id_with, faction_id, 0, NULL, NULL)) {
+            if (*SunspotDuration > 0) {
+                return 1;
+            }
+            turnabout = true;
+            parse_says(0, get_title(faction_id), -1, -1);
+            if (X_pops_11("TURNABOUT", 0x100000, FactionPortraits[faction_id_with], pop_wait)) {
+                net_withdrawal(faction_id_with, faction_id, false);
+            }
+        }
+    }
+    BOOL withdrew = net_withdrawal(faction_id, faction_id_with, true);
+    if (turnabout || *SunspotDuration > 0) {
+        return 0;
+    }
+    parse_says(0, get_name(faction_id), -1, -1);
+    parse_says(1, Players[faction_id].adj_leader, -1, -1);
+    if (!withdrew) {
+        X_pops_11("NOWITHDRAW", 0x100000, FactionPortraits[faction_id_with], pop_wait);
+    } else if (*treaties & DTREATY_PACT) {
+        parse_says(2, get_pact(faction_id), -1, -1);
+        X_pops_11("WITHDRAWPACT", 0x100000, FactionPortraits[faction_id_with], pop_wait);
+    } else if (*treaties & DTREATY_TREATY) {
+        X_pops_11("WITHDRAW", 0x100000, FactionPortraits[faction_id_with], pop_wait);
+    } else {
+        X_pops_11("WITHDRAWTRUCE", 0x100000, FactionPortraits[faction_id_with], pop_wait);
+    }
+    return 0;
+}
+
+/*
+Purpose: The faction being talked to (faction_id_with) answers a request for energy. A pact partner
+         well ahead in rank, reserves and tech may make a gift (ENERGYFREEBIE); as in the
+         original the gift is raised to all of its reserves (the larger of the two is kept).
+         With counter proposal 2 or 4 and a tech to sell, it offers energy for the tech
+         (ENERGYTECH: answer 2 sells the second tech if there is one, 2 without one and 3 open
+         help), at a price set by the tech's value, the turn and the number of factions owning
+         DiploTechGetID1 (the tech to get, as in the original), at most half its reserves; the
+         Believers never buy, the Hive never takes the second tech and only the University takes
+         it for more than the first. Counter proposals 1 and 6, or 2 without a tech, ask for a
+         loan (ENERGYLOAN) sized by commerce and paid back with interest. Otherwise it refuses
+         (REJENERGY).
+Original Offset: 00540630
+Return Value: Was energy paid for a tech or lent? true/false (the gift returns false)
+Status: Complete (verified vs original: docs/regression-runs/2026-10-18-council-batch29.log)
+*/
+int __cdecl energy_trade(int faction_id, int faction_id_with) {
+    *DiploSecondFaction = faction_id_with;
+    tech_analysis(faction_id, faction_id_with);
+    int proposal = *DiploCounterProposalID;
+    BOOL sell_tech = (proposal == 4 || proposal == 2);
+    PlayerData *p = &PlayersData[faction_id];
+    PlayerData *p_with = &PlayersData[faction_id_with];
+    LPCSTR filename_with = Players[faction_id_with].filename;
+    char number[80];
+    if ((p_with->diplo_treaties[faction_id] & DTREATY_PACT) && proposal != 6
+        && (int)p_with->ranking > (int)p->ranking + 1
+        && p_with->energy_reserves > p->energy_reserves * 2
+        && p_with->tech_ranking > p->tech_ranking
+        && p_with->energy_reserves > *TurnCurrentNum * 4
+        && p_with->diplo_patience[faction_id] < 2
+        && (*DiploTechGiveID1 < 0 || *DiploCounterProposalID == 1)) {
+        int gift = p_with->energy_reserves / 8;
+        gift = (gift < 1) ? 1 : ((gift > 500) ? 500 : gift);
+        gift = (gift + 24) / 25 * 25;
+        if (gift < p_with->energy_reserves) {
+            gift = p_with->energy_reserves;
+        }
+        net_energy(faction_id_with, -gift, faction_id, gift, true);
+        stringTemp->str[0] = 0;
+        p_with->diplo_patience[faction_id] += 2;
+        strcat_s(stringTemp->str, sizeof(char1032), "ENERGYFREEBIE");
+        _itoa_s((int)random(0, 2), number, 10);
+        strcat_s(stringTemp->str, sizeof(char1032), number);
+        X_pops_11(stringTemp->str, 0x100000, FactionPortraits[faction_id_with], pop_wait);
+        return false;
+    }
+    BOOL loan_asked = (proposal == 6 || proposal == 1 || (proposal == 2 && *DiploTechGiveID1 < 0));
+    if (!loan_asked && sell_tech) {
+        parse_says(0, get_title(faction_id), -1, -1);
+        parse_says(1, get_name(faction_id), -1, -1);
+        if (*DiploTechGiveID1 < 0 || !strcmp(filename_with, "BELIEVE")) {
+            X_pops_11("REJSELLNONE", 0x100000, FactionPortraits[faction_id_with], pop_wait);
+            return false;
+        }
+        int scale = (*TurnCurrentNum + 7) / 8 * 32;
+        if (great_satan(faction_id, false)) {
+            scale = scale * 3 / 4;
+        }
+        int owners = (int)bit_count(GameTechAchieved[*DiploTechGetID1]) - 1;
+        int factor = scale / ((owners < 1) ? 1 : ((owners > 99) ? 99 : owners));
+        int price = tech_val(*DiploTechGiveID1, faction_id_with, true) * factor / 32;
+        int price_second = (*DiploTechGiveID2 < 0) ? 0
+            : tech_val(*DiploTechGiveID2, faction_id_with, true) * factor / 32;
+        int half = p_with->energy_reserves / 2;
+        if (price < 0 || half < 0) {
+            price = 0;
+        } else if (price > half) {
+            price = half;
+        }
+        price = price / 25 * 25;
+        if (price < 25) {
+            price = 25;
+        }
+        if (price_second < 25) {
+            price_second = 25;
+        }
+        if (!price) { // never, the price is at least 25
+            X_pops_11("REJSELLAFFORD", 0x100000, FactionPortraits[faction_id_with], pop_wait);
+            return false;
+        }
+        for (;;) {
+            stringTemp->str[0] = 0;
+            say_tech(stringTemp->str, *DiploTechGiveID1, true);
+            parse_says(0, stringTemp->str, -1, -1);
+            if (*DiploTechGiveID2 >= 0) {
+                stringTemp->str[0] = 0;
+                say_tech(stringTemp->str, *DiploTechGiveID2, true);
+                parse_says(1, stringTemp->str, -1, -1);
+            }
+            parse_num(0, price);
+            stringTemp->str[0] = 0;
+            strcat_s(stringTemp->str, sizeof(char1032), "ENERGYTECH");
+            if (*DiploTechGiveID2 >= 0) {
+                strcat_s(stringTemp->str, sizeof(char1032), "2");
+            } else {
+                _itoa_s((int)random(0, 2), number, 10);
+                strcat_s(stringTemp->str, sizeof(char1032), number);
+            }
+            int answer = X_pops_11(stringTemp->str, 0x100000, FactionPortraits[faction_id_with],
+                pop_wait);
+            if (!answer) {
+                return false;
+            }
+            if (answer == 2 && *DiploTechGiveID2 >= 0) {
+                if (!strcmp(filename_with, "HIVE")
+                    || (price < price_second && strcmp(filename_with, "UNIV"))) {
+                    X_pops_11("REJSELLSECOND", 0x100000, FactionPortraits[faction_id_with], pop_wait);
+                    return false;
+                }
+                X_pops_11("SELLSECOND", 0x100000, FactionPortraits[faction_id_with], pop_wait);
+                net_tech(faction_id_with, *DiploTechGiveID2, faction_id, false);
+                break;
+            }
+            if (answer == 2 || answer == 3) {
+                help_topic(14, *DiploTechGiveID1);
+                continue;
+            }
+            net_tech(faction_id_with, *DiploTechGiveID1, faction_id, false);
+            *DiploTechGiveID1 = *DiploTechGiveID2;
+            break;
+        }
+        *DiploTechGiveID2 = -1;
+        net_energy(faction_id_with, -price, faction_id, price, true);
+        *InfoWinUnk = 0;
+        Console_update_data(ConsoleVar, NULL, 0);
+        return true;
+    }
+    int loan = 0;
+    int payment = 0;
+    if (loan_asked) {
+        int energy_with = p_with->energy_reserves;
+        if (p_with->tech_commerce_bonus < p->tech_commerce_bonus) {
+            loan = energy_with / 4;
+        } else if (p_with->tech_commerce_bonus == p->tech_commerce_bonus) {
+            loan = energy_with / 3;
+        } else {
+            loan = energy_with / 2;
+        }
+        if (energy_with < p->energy_reserves && strcmp(filename_with, "MORGAN")) {
+            loan = 0;
+        }
+        if (p->loan_balance[faction_id_with] || p_with->loan_balance[faction_id]) {
+            loan = 0;
+        }
+        uint32_t treaties_with = p_with->diplo_treaties[faction_id];
+        if (treaties_with & (DTREATY_VENDETTA | DTREATY_WANT_REVENGE)) {
+            loan = 0;
+        }
+        if (!(treaties_with & DTREATY_TREATY) || loan < 10) {
+            loan = 0;
+        }
+        int interest = (*DiploUnk6 + (p_with->tech_commerce_bonus - p->tech_commerce_bonus) * 2 + 10) * 5;
+        if (p->diplo_treaties[faction_id_with] & DTREATY_PACT) {
+            interest -= 10;
+            if ((int)p_with->ranking > (int)p->ranking) {
+                interest -= 10;
+            }
+        }
+        if (interest < 0) {
+            interest = 0;
+        }
+        payment = (10 - *DiploUnk6) * 10;
+        if (payment < 20) {
+            payment = 20;
+        }
+        if (loan) {
+            int total = (interest + 100) * loan / 100;
+            if (payment < 10 || total < 10) {
+                payment = 10;
+            } else if (payment > total) {
+                payment = total;
+            }
+            int turns = (total + payment - 1) / payment;
+            parse_num(0, loan);
+            parse_num(1, turns);
+            parse_num(2, payment);
+            parse_says(0, get_title(faction_id), -1, -1);
+            parse_says(1, get_name(faction_id), -1, -1);
+            stringTemp->str[0] = 0;
+            strcat_s(stringTemp->str, sizeof(char1032), "ENERGYLOAN");
+            _itoa_s((turns != 1) + 1, number, 10);
+            strcat_s(stringTemp->str, sizeof(char1032), number);
+            if (!X_pops_11(stringTemp->str, 0x100000, FactionPortraits[faction_id_with], pop_wait)) {
+                return false;
+            }
+            net_loan(faction_id, faction_id_with, turns * payment, turns);
+            net_energy(faction_id_with, -loan, faction_id, loan, true);
+            return true;
+        }
+    }
+    stringTemp->str[0] = 0;
+    strcat_s(stringTemp->str, sizeof(char1032), "REJENERGY");
+    _itoa_s((int)random(0, 2), number, 10);
+    strcat_s(stringTemp->str, sizeof(char1032), number);
+    X_pops_11(stringTemp->str, 0x100000, FactionPortraits[faction_id_with], pop_wait);
+    return false;
+}
+
+/*
 Purpose: Work out what technologies two factions could trade: the four most valuable techs this
          faction could give the other (by the other's valuation) and the two most valuable it
          could get (by its own valuation, halved when the tech unlocks a secret project the
@@ -890,6 +1596,53 @@ void __cdecl trade_maps(int faction_id, int faction_id_with) {
         GraphicWin_redraw(WorldWinVar, NULL);
         draw_map(1);
     }
+}
+
+/*
+Purpose: Look for a reason faction_id_with gives for not withdrawing: one of its units (info
+         warfare units aside) on land in its own territory, as faction_id knows the territory,
+         is moving to a base of a third faction that faction_id_with has a vendetta with and
+         that is faction_id's pact partner (or treaty partner while DiploUnk1 is positive).
+         Only checked when DTREATY_UNK_800000 is set; faction_id needs at least one base.
+Original Offset: 00548DD0
+Return Value: The third faction, or 0
+Status: Complete (verified vs original: docs/regression-runs/2026-10-17-council-batch28.log)
+*/
+int __cdecl dont_withdrawal(int faction_id, int faction_id_with) {
+    *DiploSecondFaction = faction_id_with;
+    if (!(PlayersData[faction_id].diplo_treaties[faction_id_with] & DTREATY_UNK_800000)) {
+        return 0;
+    }
+    for (int veh_id = 0; veh_id < *VehCurrentCount; veh_id++) {
+        Veh *veh = &Vehs[veh_id];
+        if (veh->faction_id != faction_id_with
+            || VehPrototypes[veh->proto_id].plan == PLAN_INFO_WARFARE) {
+            continue;
+        }
+        int x = veh->x;
+        int y = veh->y;
+        // the original also takes abs() of the unit's distance to that base on both axes and
+        // drops the results
+        if (is_ocean(x, y) || base_find(x, y, (uint32_t)faction_id) < 0
+            || whose_territory(faction_id, x, y, NULL, false) != faction_id_with
+            || veh->order != ORDER_MOVE_TO) {
+            continue;
+        }
+        int base_id = base_at(veh->waypoint_x[0], veh->waypoint_y[0]);
+        if (base_id < 0) {
+            continue;
+        }
+        int faction_id_tgt = Bases[base_id].faction_id_current;
+        if (faction_id_tgt == faction_id || faction_id_tgt == faction_id_with || !faction_id_tgt
+            || !(PlayersData[faction_id_with].diplo_treaties[faction_id_tgt] & DTREATY_VENDETTA)) {
+            continue;
+        }
+        uint32_t treaties = PlayersData[faction_id].diplo_treaties[faction_id_tgt];
+        if (treaties & DTREATY_PACT || (treaties & DTREATY_TREATY && *DiploUnk1 > 0)) {
+            return faction_id_tgt;
+        }
+    }
+    return 0;
 }
 
 /*
@@ -1372,6 +2125,132 @@ __declspec(naked) BOOL __cdecl wants_to_attack(uint32_t UNUSED(faction_id),
 }
 
 /*
+Purpose: Notice (PACTATTACKS) that a pact partner of the player attacks another faction.
+Original Offset: 0055C730
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-17-council-batch28.log)
+*/
+void __cdecl pact_attacks(int faction_id, int faction_id_tgt) {
+    parse_leader(0, faction_id);
+    parse_says(3, get_he_she(faction_id, 0), -1, -1);
+    parse_says(4, get_noun(faction_id_tgt), -1, -1);
+    NetMsg_pop(NetMsgVar, 0, "PACTATTACKS", 5000, 0, NULL);
+}
+
+/*
+Purpose: Notice (PACTUNPACT) that a pact partner of the player ends its pact with another
+         faction.
+Original Offset: 0055CCA0
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-17-council-batch28.log)
+*/
+void __cdecl pact_unpact(int faction_id, int faction_id_with) {
+    parse_leader(0, faction_id);
+    parse_says(3, get_he_she(faction_id, 0), -1, -1);
+    parse_says(4, get_his_her(faction_id, 0), -1, -1);
+    parse_says(5, get_pact_hood(faction_id, faction_id_with), -1, -1);
+    parse_leader(6, faction_id_with);
+    NetMsg_pop(NetMsgVar, 0, "PACTUNPACT", 5000, 0, NULL);
+}
+
+/*
+Purpose: End the pact between two factions. A pact partner of the player tells about it through
+         pact_unpact(); a faction the player is spying on (or omniscient view) shows
+         ENEMYPACTENDS. Then the pact flags are cleared on both sides.
+Original Offset: 0055CE20
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-17-council-batch28.log)
+*/
+void __cdecl enemies_unpact(int faction_id, int faction_id_with) {
+    if (!(PlayersData[faction_id].diplo_treaties[faction_id_with] & DTREATY_PACT)) {
+        return;
+    }
+    int faction_id_current = *FactionIDCurrent;
+    if (PlayersData[faction_id].diplo_treaties[faction_id_current] & DTREATY_PACT) {
+        pact_unpact(faction_id, faction_id_with);
+    } else if (PlayersData[faction_id_with].diplo_treaties[faction_id_current] & DTREATY_PACT) {
+        pact_unpact(faction_id_with, faction_id);
+    }
+    if (spying(faction_id) || spying(faction_id_with) || *GameState & STATE_OMNISCIENT_VIEW) {
+        parse_says(0, get_noun(faction_id), -1, -1);
+        parse_says(1, get_noun(faction_id_with), -1, -1);
+        parse_says(2, get_pact_hood(faction_id, faction_id_with), -1, -1);
+        NetMsg_pop(NetMsgVar, 0, "ENEMYPACTENDS", 5000, 0, NULL);
+    }
+    const uint32_t pact_flags = DTREATY_PACT | DTREATY_UNK_100000 | DTREATY_UNK_1000000;
+    PlayersData[faction_id].diplo_treaties[faction_id_with] &= ~pact_flags;
+    PlayersData[faction_id_with].diplo_treaties[faction_id] &= ~pact_flags;
+}
+
+/*
+Purpose: Notice (PACTTRUCE) that a pact partner of the player agrees a truce with another
+         faction.
+Original Offset: 0055D040
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-17-council-batch28.log)
+*/
+void __cdecl pact_truce(int faction_id, int faction_id_with) {
+    parse_leader(0, faction_id);
+    parse_says(3, get_he_she(faction_id, 0), -1, -1);
+    parse_leader(4, faction_id_with);
+    NetMsg_pop(NetMsgVar, 0, "PACTTRUCE", 5000, 0, NULL);
+}
+
+/*
+Purpose: Notice (PACTTREATY) that a pact partner of the player signs a treaty with another
+         faction.
+Original Offset: 0055D190
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-17-council-batch28.log)
+*/
+void __cdecl pact_treaty(int faction_id, int faction_id_with) {
+    parse_leader(0, faction_id);
+    parse_says(3, get_he_she(faction_id, 0), -1, -1);
+    parse_says(4, get_noun(faction_id_with), -1, -1);
+    NetMsg_pop(NetMsgVar, 0, "PACTTREATY", 5000, 0, NULL);
+}
+
+/*
+Purpose: The faction is asked by its ally (faction_id_with) to join a war against a human
+         faction (faction_id_tgt). If the ally is at war with the target, the faction declares
+         war too (the target is told with TEAM if at the controls) unless the target is no
+         threat and the faction holds no grudge, in which case it only wants to talk. Otherwise
+         it wants to talk if neither holds a grudge and the target is no threat, or it marks the
+         target for betrayal.
+Original Offset: 0055D2A0
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-17-council-batch28.log)
+*/
+void __cdecl enemies_team_up(int faction_id, int faction_id_with, int faction_id_tgt) {
+    if (PlayersData[faction_id].diplo_treaties[faction_id_tgt] & DTREATY_VENDETTA
+        || !is_human(faction_id_tgt)) {
+        return;
+    }
+    if (PlayersData[faction_id_with].diplo_treaties[faction_id_tgt] & DTREATY_VENDETTA) {
+        if (!great_satan(faction_id_tgt, false)
+            && !(PlayersData[faction_id].diplo_treaties[faction_id_tgt] & DTREATY_WANT_REVENGE)) {
+            treaty_on(faction_id, faction_id_tgt, DTREATY_WANT_TO_TALK);
+            return;
+        }
+        if (faction_id_tgt == *FactionIDCurrent) {
+            parse_says(0, get_noun(faction_id), -1, -1);
+            NetMsg_pop(NetMsgVar, 0, "TEAM", 5000, 0, NULL);
+        }
+        PlayersData[faction_id_tgt].diplo_spoke[faction_id_with] = *TurnCurrentNum;
+        PlayersData[faction_id_tgt].diplo_spoke[faction_id] = *TurnCurrentNum;
+        treaty_on(faction_id, faction_id_tgt, DTREATY_VENDETTA);
+        return;
+    }
+    if (!great_satan(faction_id_tgt, false)
+        && !(PlayersData[faction_id].diplo_treaties[faction_id_tgt] & DTREATY_WANT_REVENGE)
+        && !(PlayersData[faction_id_with].diplo_treaties[faction_id_tgt] & DTREATY_WANT_REVENGE)) {
+        treaty_on(faction_id, faction_id_tgt, DTREATY_WANT_TO_TALK);
+        return;
+    }
+    PlayersData[faction_id].diplo_treaties[faction_id_tgt] |= DTREATY_SHALL_BETRAY;
+}
+
+/*
 Purpose: Let two pact factions swap technologies: each side rolls for the tech it lacks and the other
          has (weighted by tech_val(), skipping techs whose source is a pact partner or a treaty
          partner the holder is not annoyed enough with) and both get their pick. If only one
@@ -1532,6 +2411,39 @@ int __cdecl territory(uint32_t faction_id, uint32_t faction_id_tgt, uint8_t flag
         PlayersData[faction_id].flags |= PFLAG_UNK_10000;
     }
     return result;
+}
+
+/*
+Purpose: Check an action against the agreements with another faction it would break (any of the
+         treaty flags given in force, factions not at war). A pact can't be broken this way
+         (BREAKINGPACT); breaking a treaty, a truce (not one marked DTREATY_UNK_10000) or
+         starting a vendetta (unless the flags include DTREATY_UNK_10000) is put to the player.
+Original Offset: 0055F770
+Return Value: Should the action be called off? true (pact, or the player declined) / false
+Status: Complete (verified vs original: docs/regression-runs/2026-10-17-council-batch28.log)
+*/
+BOOL __cdecl break_treaty(int faction_id, int faction_id_with, uint32_t treaty) {
+    uint32_t treaties = PlayersData[faction_id].diplo_treaties[faction_id_with];
+    if (treaties & DTREATY_VENDETTA || !(treaty & treaties)) {
+        return false;
+    }
+    parse_leader(0, faction_id_with);
+    parse_says(3, get_pact_hood(faction_id, faction_id_with), -1, -1);
+    parse_says(4, Players[faction_id_with].adj_name_faction, -1, -1);
+    if (treaties & DTREATY_PACT) {
+        NetMsg_pop(NetMsgVar, 0, "BREAKINGPACT", -5000, 0, "break_sm.pcx");
+        return true;
+    }
+    if (treaties & DTREATY_TREATY) {
+        return !popp(ScriptTxtID, "BREAKINGTREATY", 0, "break_sm.pcx", NULL);
+    }
+    if (treaties & DTREATY_TRUCE && !(treaties & DTREATY_UNK_10000)) {
+        return !popp(ScriptTxtID, "BREAKINGTRUCE", 0, "break_sm.pcx", NULL);
+    }
+    if (!(treaty & DTREATY_UNK_10000)) {
+        return !popp(ScriptTxtID, "BEGINVENDETTA", 0, "break_sm.pcx", NULL);
+    }
+    return false;
 }
 
 /*
@@ -2605,6 +3517,152 @@ void __cdecl enemy_capabilities(uint32_t faction_id) {
             }
         }
     }
+}
+
+/*
+Purpose: The AI's weighting of an attack on veh_id_def's stack: the odds times what the attacker's
+         faction takes from the defender's side (the stack's cost outside a base, the defender's
+         cost in one) over the attacker's cost, then raised for good or important targets (a
+         non-combat defender, an objective unit, a base or the faction's goal tile, the attacker's
+         own kind of terrain, a stack with few fighting units, supporting land units next to a
+         base, air raids on terraformers or at sea, air drop units ready to follow) and lowered
+         for air superiority units against armed surface units and for bombers.
+Original Offset: 00565F20
+Return Value: Weighted odds
+Status: Complete (verified vs original: docs/regression-runs/2026-10-17-council-batch28.log)
+*/
+int __cdecl compute_odds(int odds, uint32_t faction_id, int veh_id_atk, int veh_id_def, int base_id) {
+    int x = Vehs[veh_id_def].x;
+    int y = Vehs[veh_id_def].y;
+    VehPrototype *proto_atk = &VehPrototypes[Vehs[veh_id_atk].proto_id];
+    uint8_t triad = Chassis[proto_atk->chassis_id].triad;
+    uint8_t plan = proto_atk->plan;
+    if (base_id < -1) {
+        base_id = base_at(x, y);
+    }
+    PlayerData *p = &PlayersData[faction_id];
+    uint8_t region_plan = p->region_base_plan[map_loc(x, y)->region];
+    if (base_id < 0) {
+        int cost = VehPrototypes[Vehs[veh_id_def].proto_id].cost;
+        odds *= (stack_check(veh_id_def, 7, -1, -1, -1) - cost) / 5 + cost; // the stack's cost
+        if (stack_check(veh_id_def, 2, PLAN_ALIEN_ARTIFACT, -1, -1)) {
+            odds = odds * 3 / 2;
+        }
+    } else {
+        odds *= VehPrototypes[Vehs[veh_id_def].proto_id].cost;
+    }
+    odds /= proto_atk->cost;
+    if (VehPrototypes[Vehs[veh_id_def].proto_id].plan >= PLAN_NAVAL_TRANSPORT) {
+        odds *= 2; // non-combat defender
+    }
+    if (plan <= PLAN_COMBAT && region_plan == PLAN_OFFENSIVE && triad == TRIAD_LAND) {
+        odds = odds * 3 / 2;
+    }
+    if (base_id >= 0 || at_goal(faction_id, 0, x, y)) {
+        if ((triad == TRIAD_SEA) == is_ocean(x, y) && triad != TRIAD_AIR) {
+            odds *= 2;
+        } else if (base_id >= 0) {
+            int noncombat = stack_check(veh_id_def, 19, -1, -1, -1);
+            if (stack_check(veh_id_def, 1, -1, -1, -1) - noncombat <= 1) {
+                odds *= 2;
+            }
+        }
+    }
+    if (Vehs[veh_id_def].flags & VFLAG_IS_OBJECTIVE) {
+        odds *= 4;
+    }
+    if (triad == TRIAD_AIR) {
+        if (Chassis[proto_atk->chassis_id].missile && is_ocean(x, y) && base_id < 0) {
+            odds *= 2;
+        }
+        if (stack_check(veh_id_def, 2, PLAN_TERRAFORMING, -1, -1)) {
+            if (!Chassis[proto_atk->chassis_id].missile) {
+                odds *= 2;
+            }
+            if (is_ocean(x, y) && (p->flags & PFLAG_UNK_80000)) {
+                odds *= 2;
+            }
+            if (Vehs[veh_id_def].order == ORDER_TERRAFORM_UP) {
+                odds *= 2;
+            }
+            if (Vehs[veh_id_def].order == ORDER_TERRAFORM_DOWN) {
+                odds *= 2;
+            }
+        }
+        if (base_id >= 0) {
+            for (int i = 0; i < 8; i++) {
+                int x_radius = x + RadiusBaseX[i];
+                if (!(*MapIsFlat & 1)) {
+                    if (x_radius < 0) {
+                        x_radius += *MapLongitudeBounds;
+                    } else if (x_radius >= *MapLongitudeBounds) {
+                        x_radius -= *MapLongitudeBounds;
+                    }
+                }
+                int y_radius = y + RadiusBaseY[i];
+                if (y_radius >= 0 && y_radius < *MapLatitudeBounds && x_radius >= 0
+                    && x_radius < *MapLongitudeBounds) {
+                    int veh_id = veh_at(x_radius, y_radius); // -1 reads Vehs[-1], as in the original
+                    if (Vehs[veh_id].faction_id == faction_id && stack_check(veh_id, 3, TRIAD_LAND, -1, -1)) {
+                        odds *= 2;
+                        break;
+                    }
+                }
+            }
+            int noncombat = stack_check(veh_id_def, 19, -1, -1, -1);
+            if (stack_check(veh_id_def, 1, -1, -1, -1) - noncombat
+                <= p->proto_id_active[Vehs[veh_id_atk].proto_id] / 10 + 1) {
+                for (int i = 0; i < MaxVehProtoFactionNum; i++) {
+                    int proto_id = faction_id * MaxVehProtoFactionNum + i;
+                    if ((VehPrototypes[proto_id].flags & PROTO_ACTIVE)
+                        && (VehPrototypes[proto_id].flags & PROTO_TYPED_COMPLETE)
+                        && p->proto_id_active[proto_id] && has_abil(proto_id, ABL_DROP_POD)) {
+                        odds *= 2;
+                        if (Chassis[proto_atk->chassis_id].missile) {
+                            odds *= 2;
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+    } else if (base_id >= 0) {
+        int land_units = 0;
+        for (int i = 0; i < 8; i++) {
+            int x_radius = x + RadiusBaseX[i];
+            if (!(*MapIsFlat & 1)) {
+                if (x_radius < 0) {
+                    x_radius += *MapLongitudeBounds;
+                } else if (x_radius >= *MapLongitudeBounds) {
+                    x_radius -= *MapLongitudeBounds;
+                }
+            }
+            int y_radius = y + RadiusBaseY[i];
+            if (y_radius >= 0 && y_radius < *MapLatitudeBounds && x_radius >= 0
+                && x_radius < *MapLongitudeBounds) {
+                int veh_id = veh_at(x_radius, y_radius); // -1 reads Vehs[-1], as in the original
+                if (Vehs[veh_id].faction_id == faction_id) {
+                    land_units += stack_check(veh_id, 3, TRIAD_LAND, -1, -1);
+                }
+            }
+        }
+        int defenders = stack_check(veh_id_def, 16, -1, -1, -1);
+        if (defenders) {
+            while (land_units > defenders && odds < 1000000) {
+                odds *= 2;
+                land_units -= defenders;
+            }
+        }
+    }
+    if (plan == PLAN_AIR_SUPERIORITY) {
+        VehPrototype *proto_def = &VehPrototypes[Vehs[veh_id_def].proto_id];
+        if (Chassis[proto_def->chassis_id].triad != TRIAD_AIR && Weapon[proto_def->weapon_id].offense_rating) {
+            return odds / 2;
+        }
+    } else if (triad == TRIAD_AIR && plan == PLAN_OFFENSIVE && !Chassis[proto_atk->chassis_id].missile) {
+        return (region_plan == PLAN_DEFENSIVE) ? odds * 2 / 3 : odds / 3;
+    }
+    return odds;
 }
 
 void __cdecl enemy_capabilities_t(uint32_t faction_id) {

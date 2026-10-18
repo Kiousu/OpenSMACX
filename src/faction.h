@@ -130,6 +130,7 @@ enum PlayerFlagsBitfield {
     PFLAG_UNK_1000 = 0x1000, // set by battle_kill() when the faction kills the human's assistant worm
     PFLAG_UNK_10000 = 0x10000, // set by territory() when another faction's units are in the territory
     PFLAG_UNK_20000 = 0x20000,
+    PFLAG_UNK_80000 = 0x80000, // doubles compute_odds() for air raids on terraformers at sea
     PFLAG_STRAT_ATK_ENEMY_HQ = 0x200000,
     PFLAG_COOP_WITH_HUMAN = 0x400000,
     PFLAG_TEAM_UP_VS_HUMAN = 0x800000,
@@ -569,6 +570,15 @@ extern int *DiploTechGetProject2;
 extern int *DiploTechProjectID;
 extern uint32_t *DiploFrictionFactionIDWith;
 extern uint32_t *DiploFrictionFactionID;
+extern int *DiploUnk1;
+extern int *DiploUnk2;
+extern int *DiploUnk3;
+extern int *DiploUnk4;
+extern int *DiploUnk5;
+extern int *DiploUnk6;
+extern int *DiploUnk7;
+extern int *DiploUnk8;
+extern int *DiploCounterProposalID;
 
 DLLEXPORT BOOL __cdecl is_alien_faction(uint32_t faction_id);
 DLLEXPORT BOOL __cdecl is_human(uint32_t faction_id);
@@ -614,6 +624,24 @@ DLLEXPORT int __cdecl get_patience(uint32_t faction_id_with, uint32_t faction_id
 DLLEXPORT uint32_t __cdecl energy_value(uint32_t loan_principal);
 DLLEXPORT void __cdecl trade_maps(int faction_id, int faction_id_with);
 DLLEXPORT int __cdecl do_withdrawal(int faction_id_owner, int faction_id);
+DLLEXPORT void __cdecl make_treaty(int faction_id, int faction_id_with);
+DLLEXPORT void __cdecl pledge_truce(int faction_id, int faction_id_with, BOOL show);
+DLLEXPORT void __cdecl demands_withdrawal(int faction_id, int faction_id_with);
+DLLEXPORT void __cdecl renounce_pact(int faction_id, int faction_id_with);
+DLLEXPORT int __cdecl dont_withdrawal(int faction_id, int faction_id_with);
+DLLEXPORT void __cdecl intervention(int faction_id, int faction_id_atk);
+DLLEXPORT void __cdecl mention_prototypes(int faction_id, int faction_id_with);
+DLLEXPORT int __cdecl pact_withdraw(int faction_id, int faction_id_with);
+DLLEXPORT int __cdecl buy_tech(int faction_id, int faction_id_with, int unk1, BOOL markup, int type);
+DLLEXPORT int __cdecl demand_withdrawal(int faction_id, int faction_id_with);
+DLLEXPORT int __cdecl energy_trade(int faction_id, int faction_id_with);
+DLLEXPORT void __cdecl pact_attacks(int faction_id, int faction_id_tgt);
+DLLEXPORT void __cdecl pact_unpact(int faction_id, int faction_id_with);
+DLLEXPORT void __cdecl enemies_unpact(int faction_id, int faction_id_with);
+DLLEXPORT void __cdecl pact_truce(int faction_id, int faction_id_with);
+DLLEXPORT void __cdecl pact_treaty(int faction_id, int faction_id_with);
+DLLEXPORT void __cdecl enemies_team_up(int faction_id, int faction_id_with, int faction_id_tgt);
+DLLEXPORT BOOL __cdecl break_treaty(int faction_id, int faction_id_with, uint32_t treaty);
 DLLEXPORT void __cdecl treaty_off(int faction_id, int faction_id_with, uint32_t treaty);
 DLLEXPORT void __cdecl agenda_off(int faction_id, int faction_id_with, uint32_t agenda);
 DLLEXPORT void __cdecl treaty_on(int faction_id, int faction_id_with, uint32_t treaty);
@@ -631,6 +659,8 @@ DLLEXPORT void __cdecl add_goal(uint32_t faction_id, int type, int priority, int
                                 int base_id);
 DLLEXPORT void __cdecl add_site(uint32_t faction_id, int type, int priority, int x, int y);
 DLLEXPORT BOOL __cdecl at_goal(uint32_t faction_id, int type, int x, int y);
+DLLEXPORT int __cdecl compute_odds(int odds, uint32_t faction_id, int veh_id_atk, int veh_id_def,
+    int base_id);
 DLLEXPORT BOOL __cdecl at_site(uint32_t faction_id, int type, int x, int y);
 DLLEXPORT void __cdecl wipe_goals(uint32_t faction_id);
 DLLEXPORT void __cdecl init_goals(uint32_t faction_id);

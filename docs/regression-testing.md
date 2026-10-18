@@ -1229,3 +1229,331 @@ Test saves: every save copied from the live game stores the path it was saved un
 test folder landed in the live folder. The stored path of the 326 such saves in
 `G:\SMACX-opensmacx-test\saves` now points to that folder (same name, same file size); the
 originals are in `G:\SMACX-opensmacx-test\saves_backup_20261017`.
+
+## Batch 28, 2026-10-17 (Council.SAV and the 13 sweep saves, 701-705-redirect exes)
+
+Done in parallel: two agents worked in their own git worktrees (one on
+the diplomacy notices in faction.cpp, one on the prototype design AI in veh.cpp) while the main
+session did the third part; the main session merged both worktrees into the branch and ran every
+game test, since only one game can use the test folder at a time. 705 redirects with all three
+parts.
+
+### Landmarks, map view caches, base founding, combat helpers (main session)
+
+`fixup_landmarks` and `delete_landmark` (map.cpp) keep the five landmark corner height tables the
+map view adds to crater, volcano, canyon, mesa and ridge tiles (`LandmarkAlt*`, 113 entries each,
+picked through `LandmarkAltIndex[code][5]`; the draw code reads them at 0x46FF27).
+`fixup_landmarks` (was a temp.cpp pointer, called after a map is read or built) copies the
+defaults back and zeroes the entries of crater and volcano tiles whose code is negative (deleted).
+`delete_landmark` (called by `alt_set`) zeroes the tile's entries, stores the code as -1 - code,
+sets `UnkBitfield1` bit 4 and makes every map view in use drop its cached heights around the tile
+(`MapWin_clear_alt`, exe). Kept from the original: it clears bit 0x80 (`BIT2_FRESH`) before
+looking at the code, and ridges zero the mesa table (the view reads ridges from their own table).
+`terrain_fixup` and `mapwin_terrain_fixup` (map.cpp; the latter was a temp.cpp pointer, called by
+`map_init`) give each map view a fresh 12-byte-per-tile drawing cache (Thinker: paTilePos): bytes
+0..8 set to 0xFF, byte 9 the bits 0xD0 of the first tile's climate byte for every entry (as in the
+original), bytes 10..11 left as allocated. The buffer comes from the exe's allocator and the old
+one goes back to the exe's `free`, as before. `mon_winning_unify` / `mon_winning_trans` (game.cpp)
+fill monument records 13 and 14 (`MONUMENT_WINNING_UNIFY/TRANS`) like the other recorders.
+`energy_limit` (game.cpp, was a temp.cpp pointer) returns 10 and ignores the faction.
+
+`base_init` (base.cpp) founds a base: tile bits, owner and visibility, the base and region
+counters, a replay record (`replay_base`, exe), then the base itself (size 3 with the Planetary
+Transit System, else 1; the first production and starting minerals, from the turn 0 rules or the
+retool exemption rule). A faction's first base gets its headquarters plus, in a network game, a
+size of 3 or 4 by traits and some facilities, or in a single player game a size and facilities by
+the turn (75/100/150); a sea base gets a pressure dome; faction bonuses and the techs that give a
+facility in every base add theirs. Kept from the original: only the first 9 bytes of
+`facilities_built` are cleared (the last 3 keep what an earlier base in the slot left). The base
+figures are then worked out and it becomes the current base. `battle_fight` (veh.cpp) works out
+the target tile of an attack from a direction (radius tables for artillery, x wraps, y does not)
+and returns what `battle_fight_2` (exe) returns (the caller at 0x597262 tests it).
+`compute_odds` (faction.cpp) is the AI's weighting of an attack: the odds times the defender
+side's cost (the stack's outside a base) over the attacker's cost, raised for non-combat or
+objective defenders, a base or the faction's goal tile, the attacker's own terrain, thin stacks,
+supporting land units next to a base, air raids on terraformers or at sea and air drop units ready
+to follow, lowered for air superiority units against armed surface units and for bombers. Kept
+from the original: a neighbour tile without a unit reads `Vehs[-1]` (veh_at returns -1).
+
+`name_base` (base.cpp, redirected upstream) did not match the exe: a test against the exe's own
+code found 304 of 308 calls different. Upstream had added a shuffle to the sea base names (the
+exe takes them in order), advanced the land-name counter before a name was found (the exe only
+when one was taken, so not when a list can't be opened or runs out), closed the text file between
+the two lists, and used `strncpy_s`, which does not zero-pad the 24-byte name as `strncpy` does
+(the bytes after the name go into the save). It is now transcribed from the asm: 0 mismatches.
+
+Trigger group `b28main`. `mon_winning`: every faction but the player at the controls, as loaded,
+record clear, record held, alien flag flipped, winner -1 and 3; compared: the monument table.
+`energy_limit`: factions -1..8. `fixup_landmarks`: as loaded and with every other / every relief
+landmark tile marked deleted, the tables pre-filled with junk; compared: the five tables.
+`delete_landmark`: every relief landmark tile and a sample of the others, as loaded and with the
+landmark already deleted; compared: the tile, the five tables, `UnkBitfield1`, each view's
+`unk_1` and the whole drawing cache of each view in use. `terrain_fixup`: six values of the first
+tile's climate byte, with and without an old cache, plus a null window; compared: bytes 0..9 of
+every entry. `mapwin_terrain_fixup`: the original with `terrain_fixup` also put back to the exe's
+code; compared: which of the 11 views were rebuilt and bytes 0..9 of their caches. `base_init`:
+factions 1..7 on six tiles each without a base (land and sea, own, others' and unclaimed), as
+loaded, at turn 0, as the faction's first base (as loaded, in a network game, at turn 80, at turn
+0) and with a full base table; compared: the return value, the snapshot, the new base slot (its
+last 3 facility bytes pre-set), the replay record, the base globals block, the current-base
+globals, `UnkBitfield1` and the position in the random stream. `name_base`: factions 1..7, eleven
+name counters, land and sea, final or not; compared: the 32-byte buffer, both counters and the
+parse gender/plural globals. `battle_fight` (`battle_fight_2` stubbed with a recorder): units near
+the map edges and every 7th other, 9 directions and 25 artillery offsets, round and flat map;
+compared: the arguments handed on and the return value. `compute_odds`: per faction up to four
+attackers of each triad against every 17th enemy unit, base id -2/-1/the base on the tile, the
+flag 0x80000 both ways, four odds values; compared: the return value.
+
+### Diplomacy notices (worktree agent)
+
+`make_treaty`, `pledge_truce`, `demands_withdrawal`, `renounce_pact`, `dont_withdrawal`,
+`pact_attacks`, `pact_unpact`, `enemies_unpact`, `pact_truce`, `pact_treaty`, `enemies_team_up` and
+`break_treaty` (faction.cpp): the treaty changes and the notices that go with them (parse slots and
+`NetMsg_pop`, `popp` or `X_pop*` for the player at the controls). None builds a Popup object on the
+stack. In the original the network branches of `make_treaty`, `pledge_truce` and `renounce_pact`
+are exactly `net_treaty_on`, `net_treaty_off` and `net_pact_ends`, the lock loop in
+`renounce_pact` is `diplo_lock(100)` and the inline check in `enemies_unpact` is `spying()`; the
+DLL calls those. `dont_withdrawal` drops a CRT `abs()` call whose result the exe throws away; the
+unit must stand in faction_id_with's territory. `break_treaty` returns true for "call the action
+off". New exe pointers: `commlink_attempter`, `demand_withdrawal`, `diplomacy_check`,
+`diplomacy_caption`, `tut_check2`, `X_pops_11`, `X_pop_2`, `FactionPortraits`; `DiploUnk1`
+(0x93F7D0, only ever read); 0x9A6524 is the Empath Guild's base.
+
+Trigger group `diplonote` (tests `pact_notices` for the four pact_* functions, `enemies_unpact`,
+`enemies_team_up`, `break_treaty`, `make_treaty`, `pledge_truce`, `demands_withdrawal`,
+`renounce_pact`, `dont_withdrawal`). Every ordered pair of factions 1..7 (triples for
+`enemies_team_up`), plus variants the saves don't reach on their own: forced pacts, omniscient
+view, a human target, vendetta and grudge bits, each treaty state against each mask with the
+answers 0 and 1, the tutorial answer and difficulty, failed contact, demand answers 0..3 with and
+without sunspots, units sent to a third faction's base. `NetMsg_pop`, `popp`, `X_pops_11`,
+`X_pop_2`, `tut_check2`, `commlink_attempter`, `demand_withdrawal` and `pact_ends` are stubbed with
+recorders. Compared: the return value, the full call sequence with labels, pictures and
+arguments, parse slots 0..9 with gender and plurality and the parse defaults, `stringTemp`, the
+pronoun buffer, `MultiWinFlag`, the diplomacy globals block 0x93F678..0x93FAE0, the random seed and
+the snapshot. Not reachable in a single player test: the network branches. `diplomacy_caption`
+runs unstubbed (it only redraws a visible diplomacy window).
+
+### Prototype design AI (worktree agent)
+
+`prune_protos` (0x57F4B0) and `consider_designs` (0x581260) in veh.cpp; the temp.cpp pointers are
+now `prune_protos_OG` / `consider_designs_OG` and their callers (`propose_proto`, `social_ai`) call
+the DLL. Kept from the original: in the human branch of `prune_protos` the range check uses the
+kept design's chassis; its popup text reads the raw ability flags; the computer branch's first
+loop covers only the 64 basic designs. In `consider_designs` the attacker block's armor limit
+reads a stack slot that holds the armor loop's leftover counter (14 unless a combat design got a
+new part earlier in the call), reproduced as `factor = MaxArmorNum`; the cost budget is
+`ai_power + ai_growth + margin` (0/1 flags) as in the exe; one discarded `proto_cost` call is left
+out. 0x9A6638/0x9A663C are the pass counts for repealing and reinstating the UN Charter. Neither
+uses random numbers or the clock. As in the exe, a combat design with a 0-offense weapon would
+divide by zero.
+
+Trigger group `protodesign` (tests `prune_protos`, `consider_designs`). `prune_protos`: factions
+0..7, kept designs as the AI and human branches use them, computer player as loaded and with the
+obsolete marks and flags 8/0x200 cleared (synch on and off), human with the auto-prune preference,
+human in a network game (lock refused on some runs), human with neither, the player at the
+controls answering 0, 1 and 2; `popp`, `X_pop`, `NetDaemon::synch`, `lock_base` and `unlock_base`
+recorded. `consider_designs`: factions 1..7 as loaded, as a design workshop suggestion, with the
+obsolete marks cleared, human/computer swapped, and with the UN Charter repealed and intense
+rivalry switched. Compared: `VehPrototypes`, the snapshot, the bunglist, the DesignSuggest block,
+`ProtoIDNewDesign`, the selection globals, popup text and the recorded calls.
+
+### Results
+
+| test | Council.SAV | 13 sweep saves | mismatches |
+|---|---|---|---|
+| mon_winning | 112 | 1,456 | 0 |
+| energy_limit | 10 | 130 | 0 |
+| fixup_landmarks | 3 | 39 | 0 |
+| delete_landmark | 879 | 13,367 | 0 |
+| terrain_fixup | 13 | 169 | 0 |
+| mapwin_terrain_fixup | 11 | 143 | 0 |
+| base_init | 253 | 3,289 | 0 |
+| name_base | 308 | 4,004 | 0 (304 on Council before the rewrite) |
+| battle_fight | 17,136 | 64,668 | 0 |
+| compute_odds | 93,296 | 304,408 | 0 |
+| pact_attacks / pact_unpact / pact_truce / pact_treaty | 42 each | 546 each | 0 |
+| enemies_unpact | 210 | 2,730 | 0 |
+| enemies_team_up | 1,050 | 13,650 | 0 |
+| break_treaty | 3,528 | 45,864 | 0 |
+| make_treaty | 126 | 1,638 | 0 |
+| pledge_truce | 84 | 1,092 | 0 |
+| demands_withdrawal | 378 | 4,914 | 0 |
+| renounce_pact | 168 | 2,184 | 0 |
+| dont_withdrawal | 210 | 2,730 | 0 |
+| prune_protos | 3,632 | 22,396 | 0 |
+| consider_designs | 35 | 455 | 0 |
+
+Loading Council.SAV with the 688-redirect exe ran the new `fixup_landmarks` and
+`mapwin_terrain_fixup` through `map_read`/`map_init`; the map drew normally, landmark relief
+included. Logs: `regression-runs/2026-10-17-council-batch28.log` (latest run of each test, with
+the exe each ran on, and the name_base details before the rewrite) and
+`regression-runs/2026-10-17-sweep-batch28.log`. With all three parts merged (705 redirects) every
+test was run again on Council.SAV and the 13 sweep saves, the first runs of `protodesign`: all 0
+mismatches (the counts above), through the input-free runs described below. By the original on
+Council.SAV, `prune_protos` set 32,316 obsolete marks and changed 3,304 base queues over its runs;
+its question to the player (`X_pop`) was not reached in any run (0 questions on every save), so
+that path is checked by reading only.
+
+## Windowed mode and input-free runs, 2026-10-18 (Kiousu's request)
+
+So that tests can run while Kiousu uses the machine, the DLL has an optional windowed mode and the
+harness can run without any mouse or keyboard input.
+
+Windowed mode (window.cpp, all builds) is off unless the game's ini has `Windowed=1` under
+`[OpenSMACX]`; without it the game runs exactly as before. It works like Thinker's: `prefs_get()`
+answers 0 for the `DirectDraw` key (the game then draws through GDI), the exe's
+`GetSystemMetrics` import reports the window size (1024x768 unless `WindowWidth`/`WindowHeight`
+say otherwise, divisible by 8) as the screen size, its `CreateWindowExA` import gives the main
+window a caption and a client area of that size at `WindowX`/`WindowY` instead of a popup
+covering the screen, and its `SetCursorPos` import is dropped while the game is not the foreground
+window, so a game in the background never moves the mouse. The vanilla `DirectDraw=0` setting
+alone gives a borderless window at the desktop resolution (2560x1440 here), which looks like full
+screen and moves every button. The test folder's ini has `Windowed=1`.
+
+Input-free runs (regress.cpp, harness builds only): when `opensmacx_regress.txt` is already there
+at start-up and holds a line `load <save file>`, the harness loads that save in place of the main
+menu (`load_daemon` and the faction art, as Thinker's command line load does), runs the tests
+named on the other lines from a timer once the game is under way (`GameHalted` 0x68F21C clear,
+3 ticks), and with a line `exit` ends the process (no prefs or saves written). Without a `load`
+line the trigger works as before (map click, `veh_at()`). `tools/mp/autorun.ps1 -Saves ... -Tests
+... [-Minimized]` runs a list of saves this way, one launch per save: Council.SAV with every
+batch 28 test takes 10 s, the 13 sweep saves 90 s (the click-driven sweep took about 4.5 minutes),
+and a minimized game never takes the focus. A trigger line `notests` only loads the save:
+`tools/mp/autoboot.ps1` uses it for the boot test, posting the clicks and keys to the game window
+(PostMessage: TURN COMPLETE, the Operations Director's "end the turn", then Enter on each popup)
+and reading the turn counter from the game's memory, so the real mouse and keyboard are never
+used. Boot test with the 705-redirect exe (harness DLL, as the load needs it): Council.SAV turn
+289 -> 290 in 41 s, alive.
+
+Message-driven UI scripts (2026-10-18). `tools/mp/msg.ps1` (dot-sourced) posts clicks, drags and
+keys to the game window (`Click`, `Drag`, `Keys` with SendKeys-style strings such as `^s` or
+`{END}{BACKSPACE 40}name`), takes screenshots of the game window's own content (`PrintWindow`, so
+covered windows are fine and the rest of the screen is never captured), reads game memory
+(`Turn`, `KeyWindow`, `PopupOpen`, `BaseScreenOpen`) and starts the game with the save already
+loaded (`Start-Game`, with `-Background`: started minimized, then shown again behind the other
+windows without activation; a minimized game ignores clicks and spins a CPU core). Posted clicks
+and plain keys work as they are; Ctrl/Shift/Alt shortcuts did not, because the game asks Windows
+for the modifier state. The harness DLL therefore (input-free runs only) installs a message hook
+on the game's thread that notes the key, mouse button and cursor state of the messages the game
+takes off its queue, and points the exe's `GetKeyState`, `GetAsyncKeyState` and `GetCursorPos`
+imports at versions that add that state; the driver marks its key messages with lParam bit 25 and
+posts the character messages itself, and the exe's `TranslateMessage` import skips marked
+messages (it would add a second character from the real keyboard). Checked: Ctrl+S opens the save
+dialog, typed names (with Shift characters) arrive exactly. Not yet checked in the game: drags.
+
+Scripts: `autoboot.ps1 -Turns N [-Background]` (boot and multi-turn test) acts only on what the
+game shows: a visible base screen (BaseWin 0x6A7628, the exe's `Win::is_visible`) gets its OK, a
+dialog with the keyboard focus (the exe's `Win_get_key_window` logic, anything but the map window
+0x939444) gets Enter, otherwise TURN COMPLETE once per turn and the Operations Director's "end the
+turn" only if a dialog came up. A first version sent blind clicks and Enter and kept opening and
+closing a base screen (on the map, Enter opens the selected base); Thinker's `PopupDialogState`
+(0x6A721C) stays 0 for that kind of dialog, so it is not used. Council.SAV 289 -> 291 in 81 s in
+the background. `autosave.ps1` (Ctrl+S under a new name, file checked in the test saves and the
+live folder checked untouched, Ctrl+L back): Council.SAV saved and reloaded, alive.
+`regress_sweep.ps1` and the old click scripts are superseded.
+
+## Batch 29, 2026-10-18 (Council.SAV and the 13 sweep saves, 718-redirect exe)
+
+Three worktree agents in parallel (base production, the rest of diplomacy, native life and world);
+the main session merged them (the two `help_topic` pointers and a second `GameHalted` were folded
+into one each) and ran every test through the input-free runs (`autorun.ps1`). 718 redirects.
+
+### Base production (worktree agent)
+
+`base_change` (0x4E5A60), `base_reset` (0x4E5FE0; was a temp.cpp pointer, `bases_reset` now calls
+the DLL) and `base_hurry` (0x4F3FE0) in base.cpp; `base_upkeep` left alone (it needs
+`base_production`, which completes builds, creates units and plays Secret Project movies).
+New: `base_build` (0x4F81A0) and `help_topic` exe pointers, `GameInterludeState` (0x9A64A4).
+Kept from the original: 0x9A6590 is Secret Project 31 (Voice of Planet), which halves the AI's
+hurry; facility 33 (Psi Gate) doubles the hurry under `at_climax`; the Brood Pit check reads
+`Bases[*BaseIDCurrentSelected]`; the perimeter/tachyon check reads
+`PlayersData[i].region_total_bases[i]` (faction i's counter at its own id); `rule_hurry` divides
+even at 100 and the rebate uses `PlayersData[*RankingFactionIDUnk1].ranking`; `base_change` writes
+the parse gender/plural directly and returns early under `SkipTechScreenB`; `base_reset`'s last
+`base_build` writes into the loop counter and its GOVPROJECT branch clears `GOV_MAY_PROD_SP` on
+`*BaseCurrent`.
+
+Trigger group `baseprod` (`base_change`, `base_reset`, `base_hurry`): the exe's code (with
+`base_change`'s entry also put back for `base_reset`) against the DLL from the same snapshot and
+seed, `popp`, `wave_it`, `interlude`, `draw_radius` and `help_topic` recorded. Compared: the
+snapshot, the call log, parse slots and defaults, `stringTemp`, the pronouns and diplomacy block,
+the base globals block, the governor picks, `GameInterludeState`, `BaseCurrent`,
+`BaseIDCurrentSelected`, the Secret Project table, the random seed and the next `rand()`.
+
+### Diplomacy part two (worktree agent)
+
+`intervention` (0x50BA50), `mention_prototypes` (0x53A230), `pact_withdraw` (0x53C370),
+`buy_tech` (0x5401A0), `energy_trade` (0x540630) and `demand_withdrawal` (0x549270, was a temp.cpp
+pointer) in faction.cpp; `call_off_vendetta` skipped (it builds a Popup with an SEH frame). New exe
+pointers `wants_to_speak`, `Console_set_move`; globals `InfoWinUnk` 0x7AD330,
+`DiploCounterProposalID` 0x93FAB0 and `DiploUnk2`..`DiploUnk8`. Kept from the original:
+`pact_withdraw`'s coast check for sea units passes the base's x as a base index and its y as
+`is_coast`'s radius flag; `mention_prototypes` with a pact builds "PROTOPACT" and returns without a
+dialog; `energy_trade`'s gift is raised to all of the partner's reserves, its sale divisor counts
+the owners of `DiploTechGetID1`, and its REJSELLAFFORD branch is unreachable; `buy_tech` type 5
+reads tech ids from 97 + design. The batch 28 `demands_withdrawal` test now runs the real
+`demand_withdrawal` on both sides.
+
+Trigger group `diplotwo`: every ordered pair of factions 1..7 with 2..13 variants each (forced
+treaty states, friction, sunspots, human flags, dialog answers including help, reserves, rank and
+tech gaps, loans), the batch 28 notice recorders plus `X_pop`, `wants_to_speak`, `tech_achieved`,
+`double_cross`, `Console::update_data`, `Console::set_move`, `diplomacy_caption` and `help_topic`.
+Compared as for `diplonote`, plus `VehPrototypes` for `mention_prototypes`.
+
+### Native life and world (worktree agent)
+
+`alien_fauna` (0x522180, game.cpp), `world_erosion` (0x5C2CB0), `world_rivers` (0x5C38B0) and
+`world_climate` (0x5C5A30) in map.cpp. `alien_fauna`'s mind worm swarm near a base (XMINDWORMS) is
+dead code in the original (the loop before it only ends at its limit, and the same test then
+returns); it is left out with a comment. After a native is born on the fungus tile itself, the
+original redraws a tile whose coordinates are left in two stack slots by an earlier loop, possibly
+from before the call: as with `wants_to_attack`, a naked entry hands those slots in and writes them
+back, and only that `draw_tile` uses them. Forest and kelp growth is shown to whoever sees the
+source tile, as in the original. `world_erosion` reads nothing stale (the earlier note came from
+Ghidra's merged structure). `world_climate` is the orchestrator; its clock reseed is pinned in the
+test.
+
+Trigger group `natlife` (not `natworld`: any filter with "world" runs the whole world group).
+`alien_fauna`: 7 variants x 12 seeds, the player at the controls rotated, the two stack slots
+seeded with real coordinates or junk; `draw_tile`, `draw_tiles`, `MapWin::focus`, `POP2`,
+`encounter` and `interlude` recorded, `timeGetTime` pinned. `world_rivers`: 4 variants;
+`world_climate` and `world_erosion` in empty-world mode with the clock pinned. Compared: the
+snapshot, new units, the call and contact logs, the stack slots left behind, the random state.
+
+### Results
+
+| test | Council.SAV | 13 sweep saves | mismatches |
+|---|---|---|---|
+| intervention | 252 | 3,276 | 0 |
+| demand_withdrawal | 546 | 7,098 | 0 |
+| mention_prototypes | 252 | 3,276 | 0 |
+| buy_tech | 1,008 | 13,104 | 0 |
+| pact_withdraw | 84 | 1,092 | 0 |
+| energy_trade | 420 | 5,460 | 0 |
+| base_change | 2,394 | 13,398 | 0 |
+| base_reset | 938 | 5,238 | 0 |
+| base_hurry | 1,972 | 11,004 | 0 |
+| alien_fauna | 84 | 1,092 | 0 |
+| world_rivers | 4 | 52 | 0 |
+| world_climate | 4 | 52 | 0 |
+| world_erosion | 5 | 65 | 0 |
+
+The batch 28 groups (`b28main`, `diplonote`, `protodesign`) ran again in the same runs on the
+merged tree: 0 mismatches on all 14 saves. Not reached by any run: `base_reset`'s GOVPROJECT
+question (0 asked) and `alien_fauna`'s redraw at the stale stack coordinates (0), both checked by
+reading only. By the original on Council.SAV: `demand_withdrawal` 248 withdrew, 130 refused, 168
+war; `buy_tech` made 756 offers; `base_hurry` spent energy in 1,036 cases; `alien_fauna` bred 157
+natives with 127 popups. Logs: `regression-runs/2026-10-18-council-batch29.log` and
+`regression-runs/2026-10-18-sweep-batch29.log`.
+
+Two test problems were found on the way, neither in the transcriptions: the first `energy_trade`
+run hung because variant 7 answered every question with 2 ("sell the second tech"), which with one
+tech on offer means help and the question again, in the exe as in the DLL (now 2 once, then
+decline); and the first `alien_fauna` run ended the game with 0xC0000409 because the test's popup
+recorder used `sprintf_s` into a 40-byte buffer, which ends the process when the text is longer
+(now `_snprintf_s` with truncation). Since then the harness has a watchdog for input-free runs:
+every 30 s of one test it logs `... still in <test> after N s, last input: ...` (a working test
+shows the input changing, a stuck one doesn't), and after 10 minutes (trigger line
+`hang <seconds>`) it logs `HANG in <test>` and ends the game. `autorun.ps1` gives up on a save
+after 30 minutes or 2 minutes without log output, and logs the game's exit code. Runs are
+watched by polling the logs every few seconds, so a stuck test is seen within a minute.

@@ -1,3 +1,4 @@
+# Superseded by autorun.ps1 (input-free, no clicks); this one moves the real mouse.
 param([string[]]$Saves, [string]$Exe = "terranx_sweep.exe", [string]$Tests = " ", [int]$WaitSec = 90, [switch]$KeepOpen)
 # Regression sweep, fast form: launch the game once, load every save from inside the game (Ctrl+L),
 # trigger the harness, poll the log twice a second. Logs under build\sweep\<save>.log, progress in

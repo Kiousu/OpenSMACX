@@ -117,6 +117,7 @@ extern int *EnergyReportFacilities;
 extern int *EnergyReportCommerce;
 extern int *EnergyReportNet;
 extern uint32_t *GamePreferences;
+extern BOOL *GameHalted;
 extern uint32_t *GameMorePreferences;
 extern uint32_t *GameWarnings; // used for setting pop notifications
 extern uint32_t *GameRules; // bitfield
@@ -147,6 +148,8 @@ constexpr int MONUMENT_AIR_UNIT_BUILT = 9;
 constexpr int MONUMENT_NATIVE_LIFE_BRED = 10;
 constexpr int MONUMENT_FIRST_IN_SPACE = 11;
 constexpr int MONUMENT_BUILT_PRESERVE = 12;
+constexpr int MONUMENT_WINNING_UNIFY = 13; // set by the end of game code (0x5255BE..)
+constexpr int MONUMENT_WINNING_TRANS = 14; // set after the Ascent to Transcendence
 constexpr int MONUMENT_KILLED_FACTION = 15; // six slots, 15 to 20
 
 struct Monument {
@@ -173,6 +176,7 @@ extern uint32_t *StartingMissionYear;
 extern uint32_t *EndingMissionYear;
 extern uint32_t *TectonicDetonationCount;
 extern int *SunspotDuration;
+extern uint32_t *GameInterludeState;
 extern uint32_t *MountPlanetX;
 extern uint32_t *MountPlanetY;
 extern int *DustCloudDuration;
@@ -180,6 +184,7 @@ extern BOOL *IsMultiplayerNet;
 extern BOOL *IsMultiplayerPBEM;
 
 DLLEXPORT void __cdecl alien_start();
+DLLEXPORT void __cdecl alien_fauna();
 DLLEXPORT void __cdecl planetfall(uint32_t faction_id);
 DLLEXPORT void __cdecl clear_scenario();
 DLLEXPORT uint32_t __cdecl game_year(int turn);
@@ -189,6 +194,7 @@ DLLEXPORT void __cdecl clear_monuments();
 DLLEXPORT void __cdecl balance();
 DLLEXPORT void __cdecl mon_tech_discovered(int faction_id, int tech_id);
 DLLEXPORT void __cdecl repair_phase(uint32_t faction_id);
+DLLEXPORT int __cdecl energy_limit(int faction_id);
 DLLEXPORT void __cdecl allocate_energy(uint32_t faction_id);
 DLLEXPORT void __cdecl do_fungal_towers();
 DLLEXPORT void __cdecl mon_colony_founded(int faction_id, LPCSTR base_name);
@@ -204,4 +210,6 @@ DLLEXPORT void __cdecl mon_native_life_bred(int faction_id);
 DLLEXPORT void __cdecl mon_first_in_space(int faction_id);
 DLLEXPORT void __cdecl mon_built_preserve(int faction_id);
 DLLEXPORT void __cdecl mon_killed_faction(int faction_id, int faction_id_killed);
+DLLEXPORT void __cdecl mon_winning_unify(int faction_id, int faction_id_winner);
+DLLEXPORT void __cdecl mon_winning_trans(int faction_id, int faction_id_winner);
 DLLEXPORT void __cdecl energy_compute(uint32_t faction_id, BOOL recompute);

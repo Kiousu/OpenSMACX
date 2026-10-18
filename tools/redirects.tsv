@@ -718,3 +718,46 @@
 0x00188F90	?alien_start@@YAXXZ
 # --- save header: game_data entry fills the header the exe leaves uninitialized (as Thinker does)
 0x001A6AC0	?game_data@@YAHPAU_iobuf@@H@Z
+# --- batch 28: landmark relief tables, map view caches, winning monuments
+0x00077940	?mon_winning_unify@@YAXHH@Z
+0x000779D0	?mon_winning_trans@@YAXHH@Z
+0x001927D0	?delete_landmark@@YAXHH@Z
+0x00192940	?fixup_landmarks@@YAXXZ
+0x000711A0	?terrain_fixup@@YAXPAUMapWin@@@Z
+0x00071240	?mapwin_terrain_fixup@@YAXXZ
+0x00045440	?energy_limit@@YAHH@Z
+0x000E4B80	?base_init@@YAHIHH@Z
+0x00106A60	?battle_fight@@YAHHHHHH@Z
+0x00165F20	?compute_odds@@YAHHIHHH@Z
+# --- batch 28: diplomacy notices
+0x0013CE10	?make_treaty@@YAXHH@Z
+0x0013D160	?pledge_truce@@YAXHHH@Z
+0x0013E4C0	?demands_withdrawal@@YAXHH@Z
+0x0013E5C0	?renounce_pact@@YAXHH@Z
+0x00148DD0	?dont_withdrawal@@YAHHH@Z
+0x0015C730	?pact_attacks@@YAXHH@Z
+0x0015CCA0	?pact_unpact@@YAXHH@Z
+0x0015CE20	?enemies_unpact@@YAXHH@Z
+0x0015D040	?pact_truce@@YAXHH@Z
+0x0015D190	?pact_treaty@@YAXHH@Z
+0x0015D2A0	?enemies_team_up@@YAXHHH@Z
+0x0015F770	?break_treaty@@YAHHHI@Z
+# --- batch 28: prototype design
+0x0017F4B0	?prune_protos@@YAXHHH@Z
+0x00181260	?consider_designs@@YAXH@Z
+# --- batch 29: base production
+0x000E5A60	?base_change@@YAXIH@Z
+0x000E5FE0	?base_reset@@YAXIH@Z
+0x000F3FE0	?base_hurry@@YAXXZ
+# --- batch 29: diplomacy part two
+0x0010BA50	?intervention@@YAXHH@Z
+0x0013A230	?mention_prototypes@@YAXHH@Z
+0x0013C370	?pact_withdraw@@YAHHH@Z
+0x001401A0	?buy_tech@@YAHHHHHH@Z
+0x00149270	?demand_withdrawal@@YAHHH@Z
+0x00140630	?energy_trade@@YAHHH@Z
+# --- batch 29: native life and world
+0x00122180	?alien_fauna@@YAXXZ
+0x001C38B0	?world_rivers@@YAXXZ
+0x001C5A30	?world_climate@@YAXXZ
+0x001C2CB0	?world_erosion@@YAXXZ

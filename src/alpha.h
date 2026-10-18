@@ -710,6 +710,7 @@ constexpr int MaxDiffNum = 6;
 
 extern LPCSTR AlphaxFileID;
 extern LPCSTR ScriptTxtID;
+extern LPCSTR TutorTxtID;
 extern Label *Labels;
 extern RulesResourceinfo *ResourceInfo;
 extern RulesTimeControl *TimeControl;

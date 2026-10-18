@@ -28,6 +28,7 @@
 #include "council.h"
 #include "probe.h"
 #include "alpha.h"
+#include "net.h"
 #include "regress.h"
 
 #ifdef OPENSMACX_REGRESS
@@ -91,8 +92,15 @@ static int regress_crash_filter(EXCEPTION_POINTERS *ep, const char *name) {
     logf("  Vehs[-1].proto_id %d faction %u", Vehs[-1].proto_id, Vehs[-1].faction_id);
     return EXCEPTION_EXECUTE_HANDLER;
 }
+// Hang watchdog (input-free runs): run_guarded() notes which test runs since when; a watchdog
+// thread ends the game when one test runs longer than AutoHangSeconds, logging the test and its
+// last announced input, so a stuck run costs minutes instead of waiting for someone to notice.
+static const char *volatile RegressTestName = NULL;
+static volatile DWORD RegressTestStart = 0;
 static int run_guarded(const char *name, int (*fn)()) {
     regress_ctx[0] = 0;
+    RegressTestStart = GetTickCount();
+    RegressTestName = name;
     __try {
         return fn();
     } __except (regress_crash_filter(GetExceptionInformation(), name)) {
@@ -7133,6 +7141,1060 @@ static int test_alien_start() {
     return mismatches;
 }
 
+// ---------------------------------------------------------------- batch 28: diplomacy notices
+
+// The notices end in popups, and the exe functions around them open dialogs or read the
+// keyboard: record each call (function, texts, arguments) and answer with NoticeAnswer[fn].
+enum NoticeFn {
+    NF_NETMSG_POP, NF_POPP, NF_X_POPS_11, NF_X_POP_2, NF_TUT_CHECK2, NF_COMMLINK,
+    NF_DEMAND_WITHDRAWAL, NF_PACT_ENDS, NF_X_POP, NF_WANTS_TO_SPEAK, NF_TECH_ACHIEVED,
+    NF_DOUBLE_CROSS, NF_CONSOLE_UPDATE, NF_CONSOLE_SET_MOVE, NF_CAPTION, NF_HELP_TOPIC, NF_COUNT
+};
+static const char *const NoticeFnName[NF_COUNT] = { "NetMsg_pop", "popp", "X_pops_11", "X_pop_2",
+    "tut_check2", "commlink_attempter", "demand_withdrawal", "pact_ends", "X_pop", "wants_to_speak",
+    "tech_achieved", "double_cross", "Console::update_data", "Console::set_move",
+    "diplomacy_caption", "help_topic" };
+struct NoticeCall {
+    int fn;
+    char label[32];
+    char pic[32];
+    char file[16];
+    int args[3];
+};
+const int MaxNoticeCalls = 32;
+static NoticeCall NoticeCalls[MaxNoticeCalls];
+static int NoticeCallCount;
+static int NoticeAnswer[NF_COUNT];
+
+static int notice_record(int fn, LPCSTR label, LPCSTR pic, LPCSTR file, int a0, int a1, int a2) {
+    if (NoticeCallCount < MaxNoticeCalls) {
+        NoticeCall *call = &NoticeCalls[NoticeCallCount];
+        memset(call, 0, sizeof(*call));
+        call->fn = fn;
+        strncpy_s(call->label, label ? label : "", _TRUNCATE);
+        strncpy_s(call->pic, pic ? pic : "", _TRUNCATE);
+        strncpy_s(call->file, file ? file : "", _TRUNCATE);
+        call->args[0] = a0;
+        call->args[1] = a1;
+        call->args[2] = a2;
+    }
+    NoticeCallCount++;
+    return NoticeAnswer[fn];
+}
+
+// The exe passes its own pop_wait (0x5398E0, which jumps into the DLL), the DLL its export.
+static int notice_callback_id(int(__cdecl *callback)()) {
+    if (!callback) {
+        return 0;
+    }
+    return (callback == pop_wait || (uint32_t)callback == 0x005398E0) ? 1 : 2;
+}
+static int __fastcall notice_netmsg_pop(void *This, void *, LPCSTR label, int delay, int flags,
+                                        LPCSTR pcx_file) {
+    return notice_record(NF_NETMSG_POP, label, pcx_file, NULL, This == NetMsgVar, delay, flags);
+}
+static int __cdecl notice_popp(LPCSTR file, LPCSTR label, int unk, LPCSTR pic,
+                               int(__cdecl *callback)()) {
+    return notice_record(NF_POPP, label, pic, file, unk, notice_callback_id(callback), 0);
+}
+// When set, X_pops_11's answer to its next call only (energy_trade() asks again after help).
+static int NoticeFirstAnswer = -1;
+static int __cdecl notice_x_pops_11(LPCSTR label, int flags, Sprite *picture,
+                                    int(__cdecl *callback)()) {
+    int answer = notice_record(NF_X_POPS_11, label, NULL, NULL, flags, (int)picture,
+        notice_callback_id(callback));
+    if (NoticeFirstAnswer >= 0) {
+        answer = NoticeFirstAnswer;
+        NoticeFirstAnswer = -1;
+    }
+    return answer;
+}
+static int __cdecl notice_x_pop_2(LPCSTR file, LPCSTR label, int(__cdecl *callback)()) {
+    return notice_record(NF_X_POP_2, label, NULL, file, notice_callback_id(callback), 0, 0);
+}
+static int __cdecl notice_tut_check2(int flag) {
+    return notice_record(NF_TUT_CHECK2, NULL, NULL, NULL, flag, 0, 0);
+}
+static int __cdecl notice_commlink(int faction_id, int faction_id_with) {
+    return notice_record(NF_COMMLINK, NULL, NULL, NULL, faction_id, faction_id_with, 0);
+}
+static void __cdecl notice_pact_ends(int faction_id, int faction_id_with) {
+    notice_record(NF_PACT_ENDS, NULL, NULL, NULL, faction_id, faction_id_with, 0);
+}
+
+// demand_withdrawal() is in the DLL since batch 29: both sides of the demands_withdrawal test now
+// reach the real one (the exe entry is redirected), so it is no longer stubbed here.
+struct NoticeStubs {
+    JmpStub netmsg_pop_stub, popp_stub, x_pops_11_stub, x_pop_2_stub, tut_check2_stub,
+        commlink_stub, pact_ends_stub;
+    NoticeStubs()
+        : netmsg_pop_stub(0x0047A890, (void *)notice_netmsg_pop),
+          popp_stub(0x0048C0A0, (void *)notice_popp),
+          x_pops_11_stub(0x005BF7D0, (void *)notice_x_pops_11),
+          x_pop_2_stub(0x005BF330, (void *)notice_x_pop_2),
+          tut_check2_stub(0x004BA650, (void *)notice_tut_check2),
+          commlink_stub(0x005589E0, (void *)notice_commlink),
+          pact_ends_stub(0x0053C650, (void *)notice_pact_ends) {}
+    BOOL ok() const {
+        return netmsg_pop_stub.ok && popp_stub.ok && x_pops_11_stub.ok && x_pop_2_stub.ok
+            && tut_check2_stub.ok && commlink_stub.ok && pact_ends_stub.ok;
+    }
+};
+
+// Diplomacy dialog globals: DiploSecondFaction, DiploUnk1, DiploFriction, the values
+// diplomacy_check() leaves (0x93F7B8..0x93FAA0) and the tech_analysis() results.
+static uint8_t *const DiploGlobals = (uint8_t *)0x0093F678;
+const size_t DiploGlobalsSize = 0x0093FAE0 - 0x0093F678;
+
+// What a notice can change besides the game state in GameSnapshot.
+struct NoticeState {
+    char256 parse[10];
+    int parse_gender[10];
+    int parse_plural[10];
+    int gender_default;
+    BOOL plural_default;
+    char1032 temp;
+    char pronoun[64];
+    uint8_t diplo[DiploGlobalsSize];
+    int multiwin_flag;
+    uint32_t seed;
+    NoticeCall calls[MaxNoticeCalls];
+    int call_count;
+    int ret;
+};
+
+static void notice_take(NoticeState *s, int ret) {
+    memcpy(s->parse, ParseStrBuffer, sizeof(s->parse));
+    memcpy(s->parse_gender, ParseStrGender, sizeof(s->parse_gender));
+    memcpy(s->parse_plural, ParseStrPlurality, sizeof(s->parse_plural));
+    s->gender_default = *GenderDefault;
+    s->plural_default = *PluralityDefault;
+    memcpy(&s->temp, stringTemp, sizeof(s->temp));
+    memcpy(s->pronoun, PronounBuffer, sizeof(s->pronoun));
+    memcpy(s->diplo, DiploGlobals, sizeof(s->diplo));
+    s->multiwin_flag = *MultiWinFlag;
+    s->seed = random_get();
+    memcpy(s->calls, NoticeCalls, sizeof(s->calls));
+    s->call_count = NoticeCallCount;
+    s->ret = ret;
+}
+
+static void notice_restore(const NoticeState *s) {
+    memcpy(ParseStrBuffer, s->parse, sizeof(s->parse));
+    memcpy(ParseStrGender, s->parse_gender, sizeof(s->parse_gender));
+    memcpy(ParseStrPlurality, s->parse_plural, sizeof(s->parse_plural));
+    *GenderDefault = s->gender_default;
+    *PluralityDefault = s->plural_default;
+    memcpy(stringTemp, &s->temp, sizeof(s->temp));
+    memcpy(PronounBuffer, s->pronoun, sizeof(s->pronoun));
+    memcpy(DiploGlobals, s->diplo, sizeof(s->diplo));
+    *MultiWinFlag = s->multiwin_flag;
+    random_reseed(s->seed);
+}
+
+static BOOL notice_differs(const NoticeState *o, const NoticeState *n, const char *label) {
+#define DLOG(...) do { if (label) logf(__VA_ARGS__); } while (0)
+    if (o->ret != n->ret || o->call_count != n->call_count) {
+        DLOG("  %s: orig returned %d after %d calls, new %d after %d calls", label, o->ret,
+            o->call_count, n->ret, n->call_count);
+        return true;
+    }
+    for (int i = 0; i < o->call_count && i < MaxNoticeCalls; i++) {
+        const NoticeCall *a = &o->calls[i], *b = &n->calls[i];
+        if (a->fn != b->fn || strcmp(a->label, b->label) || strcmp(a->pic, b->pic)
+            || strcmp(a->file, b->file) || memcmp(a->args, b->args, sizeof(a->args))) {
+            DLOG("  %s: call %d: orig %s('%s' '%s' '%s' %d %d %d) new %s('%s' '%s' '%s' %d %d %d)",
+                label, i, NoticeFnName[a->fn], a->label, a->pic, a->file, a->args[0], a->args[1],
+                a->args[2], NoticeFnName[b->fn], b->label, b->pic, b->file, b->args[0], b->args[1],
+                b->args[2]);
+            return true;
+        }
+    }
+    for (int i = 0; i < 10; i++) {
+        if (memcmp(&o->parse[i], &n->parse[i], sizeof(char256))
+            || o->parse_gender[i] != n->parse_gender[i] || o->parse_plural[i] != n->parse_plural[i]) {
+            DLOG("  %s: parse slot %d: orig '%s' %d/%d new '%s' %d/%d", label, i, o->parse[i].str,
+                o->parse_gender[i], o->parse_plural[i], n->parse[i].str, n->parse_gender[i],
+                n->parse_plural[i]);
+            return true;
+        }
+    }
+    if (o->gender_default != n->gender_default || o->plural_default != n->plural_default) {
+        DLOG("  %s: parse defaults orig %d/%d new %d/%d", label, o->gender_default,
+            o->plural_default, n->gender_default, n->plural_default);
+        return true;
+    }
+    if (memcmp(&o->temp, &n->temp, sizeof(o->temp))) {
+        DLOG("  %s: stringTemp orig '%s' new '%s'", label, o->temp.str, n->temp.str);
+        return true;
+    }
+    if (memcmp(o->pronoun, n->pronoun, sizeof(o->pronoun))) {
+        DLOG("  %s: pronoun buffer orig '%s' new '%s'", label, o->pronoun, n->pronoun);
+        return true;
+    }
+    size_t d = first_diff(o->diplo, n->diplo, sizeof(o->diplo));
+    if (d != (size_t)-1) {
+        DLOG("  %s: diplomacy global %08X differs (orig %02X new %02X)", label,
+            (unsigned)((uintptr_t)DiploGlobals + d), o->diplo[d], n->diplo[d]);
+        return true;
+    }
+    if (o->multiwin_flag != n->multiwin_flag || o->seed != n->seed) {
+        DLOG("  %s: MultiWinFlag %d/%d, random seed %08X/%08X", label, o->multiwin_flag,
+            n->multiwin_flag, o->seed, n->seed);
+        return true;
+    }
+    return false;
+#undef DLOG
+}
+
+// Run notices as the exe and as the DLL from the same state and compare everything they leave.
+struct NoticeHarness {
+    GameSnapshot base, after_orig, after_new;
+    NoticeState saved, orig, now;
+    uint8_t status_saved;
+    int diff_saved, sunspot_saved;
+    int compared, mismatches, with_calls, changed, nonzero;
+    NoticeHarness() : compared(0), mismatches(0), with_calls(0), changed(0), nonzero(0) {
+        snap_alloc(&base); snap_alloc(&after_orig); snap_alloc(&after_new);
+        snap_take(&base);
+        NoticeCallCount = 0;
+        notice_take(&saved, 0);
+        status_saved = *FactionsStatus;
+        diff_saved = *DiffLevelCurrent;
+        sunspot_saved = *SunspotDuration;
+    }
+    ~NoticeHarness() {
+        prepare();
+        snap_free(&base); snap_free(&after_orig); snap_free(&after_new);
+    }
+    void prepare() {
+        snap_restore(&base);
+        notice_restore(&saved);
+        *FactionsStatus = status_saved;
+        *DiffLevelCurrent = diff_saved;
+        *SunspotDuration = sunspot_saved;
+        NoticeCallCount = 0;
+        memset(NoticeAnswer, 0, sizeof(NoticeAnswer));
+    }
+    // setup() puts the variant in place after each restore; exe() and dll() make the call.
+    template <class S, class E, class D>
+    void run(const char *label, S setup, E exe, D dll) {
+        prepare();
+        setup();
+        int ret_o = exe();
+        snap_take(&after_orig);
+        notice_take(&orig, ret_o);
+        prepare();
+        setup();
+        int ret_n = dll();
+        snap_take(&after_new);
+        notice_take(&now, ret_n);
+        compared++;
+        with_calls += orig.call_count > 0;
+        nonzero += ret_o != 0;
+        changed += snap_differs(&base, &after_orig, NULL);
+        const char *detail = mismatches < MAX_DETAIL ? label : NULL;
+        if (notice_differs(&orig, &now, detail) || snap_differs(&after_orig, &after_new, detail)) {
+            mismatches++;
+        }
+    }
+};
+
+static const uint8_t NoticeEntry55_56_57[6] = { 0x55, 0x8B, 0xEC, 0x56, 0x57, 0x8B };
+static const uint8_t NoticeEntry55_53_56_57[6] = { 0x55, 0x8B, 0xEC, 0x53, 0x56, 0x57 };
+
+// pact_attacks, pact_unpact, pact_truce and pact_treaty: parse slots and a notice
+static int test_pact_notices() {
+    OriginalEntry vanilla_attacks(0x0055C730, NoticeEntry55_56_57);
+    OriginalEntry vanilla_unpact(0x0055CCA0, NoticeEntry55_53_56_57);
+    OriginalEntry vanilla_truce(0x0055D040, NoticeEntry55_53_56_57);
+    OriginalEntry vanilla_treaty(0x0055D190, NoticeEntry55_56_57);
+    NoticeStubs stubs;
+    if (!vanilla_attacks.ok || !vanilla_unpact.ok || !vanilla_truce.ok || !vanilla_treaty.ok
+        || !stubs.ok()) {
+        return 1;
+    }
+    struct NoticeFnPair { const char *name; func_diplo2 *exe; func_diplo2 *dll; };
+    const NoticeFnPair fns[] = {
+        { "pact_attacks", (func_diplo2 *)0x0055C730, pact_attacks },
+        { "pact_unpact", (func_diplo2 *)0x0055CCA0, pact_unpact },
+        { "pact_truce", (func_diplo2 *)0x0055D040, pact_truce },
+        { "pact_treaty", (func_diplo2 *)0x0055D190, pact_treaty },
+    };
+    int total = 0;
+    char label[96];
+    for (const NoticeFnPair &fn : fns) {
+        NoticeHarness h;
+        for (int f1 = 1; f1 < MaxPlayerNum; f1++) {
+            for (int f2 = 1; f2 < MaxPlayerNum; f2++) {
+                if (f1 == f2) {
+                    continue;
+                }
+                sprintf_s(label, "%s(%d, %d)", fn.name, f1, f2);
+                h.run(label, [] {}, [&] { fn.exe(f1, f2); return 0; },
+                    [&] { fn.dll(f1, f2); return 0; });
+            }
+        }
+        logf("%s: %d compared (%d with a notice), %d mismatches", fn.name, h.compared,
+            h.with_calls, h.mismatches);
+        total += h.mismatches;
+    }
+    return total;
+}
+
+static int test_enemies_unpact() {
+    OriginalEntry vanilla(0x0055CE20, NoticeEntry55_56_57);
+    OriginalEntry vanilla_unpact(0x0055CCA0, NoticeEntry55_53_56_57);
+    NoticeStubs stubs;
+    if (!vanilla.ok || !vanilla_unpact.ok || !stubs.ok()) {
+        return 1;
+    }
+    func_diplo2 *exe = (func_diplo2 *)0x0055CE20;
+    NoticeHarness h;
+    char label[96];
+    int cur = *FactionIDCurrent;
+    for (int f1 = 1; f1 < MaxPlayerNum; f1++) {
+        for (int f2 = 1; f2 < MaxPlayerNum; f2++) {
+            if (f1 == f2) {
+                continue;
+            }
+            // as loaded; a pact between them; the same with omniscient view toggled; and with
+            // either of them also in a pact with the player
+            for (int v = 0; v < 5; v++) {
+                auto setup = [&] {
+                    if (v) {
+                        PlayersData[f1].diplo_treaties[f2] |= DTREATY_PACT;
+                        PlayersData[f2].diplo_treaties[f1] |= DTREATY_PACT;
+                    }
+                    if (v == 2) {
+                        *GameState ^= STATE_OMNISCIENT_VIEW;
+                    }
+                    if (v == 3) {
+                        PlayersData[f1].diplo_treaties[cur] |= DTREATY_PACT;
+                    }
+                    if (v == 4) {
+                        PlayersData[f2].diplo_treaties[cur] |= DTREATY_PACT;
+                    }
+                };
+                sprintf_s(label, "enemies_unpact(%d, %d) variant %d", f1, f2, v);
+                h.run(label, setup, [&] { exe(f1, f2); return 0; },
+                    [&] { enemies_unpact(f1, f2); return 0; });
+            }
+        }
+    }
+    logf("enemies_unpact: %d compared (%d changed state, %d with a notice), %d mismatches",
+        h.compared, h.changed, h.with_calls, h.mismatches);
+    return h.mismatches;
+}
+
+static int test_enemies_team_up() {
+    OriginalEntry vanilla(0x0055D2A0, NoticeEntry55_53_56_57);
+    NoticeStubs stubs;
+    if (!vanilla.ok || !stubs.ok()) {
+        return 1;
+    }
+    func_xyi *exe = (func_xyi *)0x0055D2A0;
+    NoticeHarness h;
+    char label[96];
+    for (int f1 = 1; f1 < MaxPlayerNum; f1++) {
+        for (int f2 = 1; f2 < MaxPlayerNum; f2++) {
+            for (int f3 = 1; f3 < MaxPlayerNum; f3++) {
+                if (f1 == f2 || f1 == f3 || f2 == f3) {
+                    continue;
+                }
+                // as loaded; then with the target human and the ally at war with it (with and
+                // without the faction holding a grudge) or not (with and without the ally
+                // holding one)
+                for (int v = 0; v < 5; v++) {
+                    auto setup = [&] {
+                        if (!v) {
+                            return;
+                        }
+                        *FactionsStatus |= (uint8_t)(1 << f3);
+                        PlayersData[f1].diplo_treaties[f3] &= ~DTREATY_VENDETTA;
+                        if (v <= 2) {
+                            PlayersData[f2].diplo_treaties[f3] |= DTREATY_VENDETTA;
+                        } else {
+                            PlayersData[f2].diplo_treaties[f3] &= ~DTREATY_VENDETTA;
+                        }
+                        if (v == 2) {
+                            PlayersData[f1].diplo_treaties[f3] |= DTREATY_WANT_REVENGE;
+                        }
+                        if (v == 4) {
+                            PlayersData[f2].diplo_treaties[f3] |= DTREATY_WANT_REVENGE;
+                        }
+                    };
+                    sprintf_s(label, "enemies_team_up(%d, %d, %d) variant %d", f1, f2, f3, v);
+                    h.run(label, setup, [&] { exe(f1, f2, f3); return 0; },
+                        [&] { enemies_team_up(f1, f2, f3); return 0; });
+                }
+            }
+        }
+    }
+    logf("enemies_team_up: %d compared (%d changed state, %d with a notice), %d mismatches",
+        h.compared, h.changed, h.with_calls, h.mismatches);
+    return h.mismatches;
+}
+
+typedef BOOL func_break_treaty(int, int, uint32_t);
+
+static int test_break_treaty() {
+    static const uint8_t entry[6] = { 0x55, 0x8B, 0xEC, 0x53, 0x8B, 0x5D };
+    OriginalEntry vanilla(0x0055F770, entry);
+    NoticeStubs stubs;
+    if (!vanilla.ok || !stubs.ok()) {
+        return 1;
+    }
+    func_break_treaty *exe = (func_break_treaty *)0x0055F770;
+    static const uint32_t states[] = { 0, DTREATY_PACT | DTREATY_TREATY, DTREATY_TREATY,
+        DTREATY_TRUCE, DTREATY_TRUCE | DTREATY_UNK_10000, DTREATY_VENDETTA | DTREATY_TREATY };
+    static const uint32_t masks[] = { DTREATY_PACT, DTREATY_TREATY, DTREATY_TRUCE,
+        DTREATY_PACT | DTREATY_TREATY | DTREATY_TRUCE, DTREATY_UNK_10000,
+        DTREATY_TRUCE | DTREATY_UNK_10000, 0xFFFFFFFF };
+    NoticeHarness h;
+    char label[96];
+    for (int f1 = 1; f1 < MaxPlayerNum; f1++) {
+        for (int f2 = 1; f2 < MaxPlayerNum; f2++) {
+            if (f1 == f2) {
+                continue;
+            }
+            // state 0 is the treaty word as loaded; the popup answers 0 and 1
+            for (int s = 0; s < (int)(sizeof(states) / sizeof(states[0])); s++) {
+                for (uint32_t mask : masks) {
+                    for (int answer = 0; answer < 2; answer++) {
+                        auto setup = [&] {
+                            if (s) {
+                                PlayersData[f1].diplo_treaties[f2] = states[s];
+                            }
+                            NoticeAnswer[NF_POPP] = answer;
+                        };
+                        sprintf_s(label, "break_treaty(%d, %d, 0x%X) state %d answer %d", f1, f2,
+                            mask, s, answer);
+                        h.run(label, setup, [&] { return (int)exe(f1, f2, mask); },
+                            [&] { return (int)break_treaty(f1, f2, mask); });
+                    }
+                }
+            }
+        }
+    }
+    logf("break_treaty: %d compared (%d returned true, %d with a popup), %d mismatches",
+        h.compared, h.nonzero, h.with_calls, h.mismatches);
+    return h.mismatches;
+}
+
+static int test_make_treaty() {
+    static const uint8_t entry[6] = { 0x55, 0x8B, 0xEC, 0x83, 0xEC, 0x50 };
+    OriginalEntry vanilla(0x0053CE10, entry);
+    NoticeStubs stubs;
+    if (!vanilla.ok || !stubs.ok()) {
+        return 1;
+    }
+    func_diplo2 *exe = (func_diplo2 *)0x0053CE10;
+    NoticeHarness h;
+    char label[96];
+    for (int f1 = 1; f1 < MaxPlayerNum; f1++) {
+        for (int f2 = 1; f2 < MaxPlayerNum; f2++) {
+            if (f1 == f2) {
+                continue;
+            }
+            // the tutorial check answering 0 and 1, and the lowest two difficulty levels that
+            // skip it
+            for (int v = 0; v < 3; v++) {
+                auto setup = [&] {
+                    NoticeAnswer[NF_TUT_CHECK2] = v != 0;
+                    if (v == 2) {
+                        *DiffLevelCurrent = DLVL_SPECIALIST;
+                    }
+                };
+                sprintf_s(label, "make_treaty(%d, %d) variant %d", f1, f2, v);
+                h.run(label, setup, [&] { exe(f1, f2); return 0; },
+                    [&] { make_treaty(f1, f2); return 0; });
+            }
+        }
+    }
+    logf("make_treaty: %d compared (%d changed state), %d mismatches", h.compared, h.changed,
+        h.mismatches);
+    return h.mismatches;
+}
+
+static int test_pledge_truce() {
+    static const uint8_t entry[6] = { 0x55, 0x8B, 0xEC, 0xA1, 0x60, 0xF6 };
+    OriginalEntry vanilla(0x0053D160, entry);
+    NoticeStubs stubs;
+    if (!vanilla.ok || !stubs.ok()) {
+        return 1;
+    }
+    func_xyi *exe = (func_xyi *)0x0053D160;
+    NoticeHarness h;
+    char label[96];
+    for (int f1 = 1; f1 < MaxPlayerNum; f1++) {
+        for (int f2 = 1; f2 < MaxPlayerNum; f2++) {
+            if (f1 == f2) {
+                continue;
+            }
+            for (int show = 0; show < 2; show++) {
+                sprintf_s(label, "pledge_truce(%d, %d, %d)", f1, f2, show);
+                h.run(label, [] {}, [&] { exe(f1, f2, show); return 0; },
+                    [&] { pledge_truce(f1, f2, show); return 0; });
+            }
+        }
+    }
+    logf("pledge_truce: %d compared (%d changed state, %d with a dialog), %d mismatches",
+        h.compared, h.changed, h.with_calls, h.mismatches);
+    return h.mismatches;
+}
+
+static int test_demands_withdrawal() {
+    static const uint8_t entry[6] = { 0x55, 0x8B, 0xEC, 0x56, 0x8B, 0x75 };
+    OriginalEntry vanilla(0x0053E4C0, entry);
+    NoticeStubs stubs;
+    if (!vanilla.ok || !stubs.ok()) {
+        return 1;
+    }
+    func_diplo2 *exe = (func_diplo2 *)0x0053E4C0;
+    NoticeHarness h;
+    char label[96];
+    for (int f1 = 1; f1 < MaxPlayerNum; f1++) {
+        for (int f2 = 1; f2 < MaxPlayerNum; f2++) {
+            if (f1 == f2) {
+                continue;
+            }
+            // variant 0: no contact; then contact without and with sunspots (since batch 29 the
+            // real demand_withdrawal() answers on both sides; the answer set here goes unused)
+            for (int v = 0; v < 9; v++) {
+                auto setup = [&] {
+                    NoticeAnswer[NF_COMMLINK] = !v;
+                    NoticeAnswer[NF_DEMAND_WITHDRAWAL] = v ? (v - 1) % 4 : 0;
+                    *SunspotDuration = (!v || v > 4) ? 3 : 0;
+                };
+                sprintf_s(label, "demands_withdrawal(%d, %d) variant %d", f1, f2, v);
+                h.run(label, setup, [&] { exe(f1, f2); return 0; },
+                    [&] { demands_withdrawal(f1, f2); return 0; });
+            }
+        }
+    }
+    logf("demands_withdrawal: %d compared (%d with a call out), %d mismatches", h.compared,
+        h.with_calls, h.mismatches);
+    return h.mismatches;
+}
+
+static int test_renounce_pact() {
+    static const uint8_t entry[6] = { 0x55, 0x8B, 0xEC, 0x53, 0x8B, 0x5D };
+    OriginalEntry vanilla(0x0053E5C0, entry);
+    NoticeStubs stubs;
+    if (!vanilla.ok || !stubs.ok()) {
+        return 1;
+    }
+    func_diplo2 *exe = (func_diplo2 *)0x0053E5C0;
+    NoticeHarness h;
+    char label[96];
+    for (int f1 = 1; f1 < MaxPlayerNum; f1++) {
+        for (int f2 = 1; f2 < MaxPlayerNum; f2++) {
+            if (f1 == f2) {
+                continue;
+            }
+            // no contact; contact without and with sunspots; contact with a pact in force
+            for (int v = 0; v < 4; v++) {
+                auto setup = [&] {
+                    NoticeAnswer[NF_COMMLINK] = !v;
+                    *SunspotDuration = v == 2 ? 3 : 0;
+                    if (v == 3) {
+                        PlayersData[f1].diplo_treaties[f2] |= DTREATY_PACT | DTREATY_TREATY;
+                        PlayersData[f2].diplo_treaties[f1] |= DTREATY_PACT | DTREATY_TREATY;
+                    }
+                };
+                sprintf_s(label, "renounce_pact(%d, %d) variant %d", f1, f2, v);
+                h.run(label, setup, [&] { exe(f1, f2); return 0; },
+                    [&] { renounce_pact(f1, f2); return 0; });
+            }
+        }
+    }
+    logf("renounce_pact: %d compared (%d changed state), %d mismatches", h.compared, h.changed,
+        h.mismatches);
+    return h.mismatches;
+}
+
+static int test_dont_withdrawal() {
+    static const uint8_t entry[6] = { 0x55, 0x8B, 0xEC, 0x83, 0xEC, 0x0C };
+    OriginalEntry vanilla(0x00548DD0, entry);
+    NoticeStubs stubs;
+    if (!vanilla.ok || !stubs.ok()) {
+        return 1;
+    }
+    func_diplo2r *exe = (func_diplo2r *)0x00548DD0;
+    NoticeHarness h;
+    char label[96];
+    for (int f1 = 1; f1 < MaxPlayerNum; f1++) {
+        for (int f2 = 1; f2 < MaxPlayerNum; f2++) {
+            if (f1 == f2) {
+                continue;
+            }
+            // a third faction's base for the units to head for
+            int base_tgt = -1;
+            for (int base_id = 0; base_id < *BaseCurrentCount; base_id++) {
+                int owner = Bases[base_id].faction_id_current;
+                if (owner && owner != f1 && owner != f2) {
+                    base_tgt = base_id;
+                    break;
+                }
+            }
+            // as loaded; the flag set; then every unit of f2 moving to that base, the third
+            // faction at war with f2 and f1's pact partner, or its treaty partner with
+            // DiploUnk1 positive or not
+            for (int v = 0; v < 5; v++) {
+                auto setup = [&] {
+                    if (!v) {
+                        return;
+                    }
+                    PlayersData[f1].diplo_treaties[f2] |= DTREATY_UNK_800000;
+                    if (v < 2 || base_tgt < 0) {
+                        return;
+                    }
+                    int t = Bases[base_tgt].faction_id_current;
+                    for (int veh_id = 0; veh_id < *VehCurrentCount; veh_id++) {
+                        if (Vehs[veh_id].faction_id == f2) {
+                            Vehs[veh_id].order = ORDER_MOVE_TO;
+                            Vehs[veh_id].waypoint_x[0] = Bases[base_tgt].x;
+                            Vehs[veh_id].waypoint_y[0] = Bases[base_tgt].y;
+                        }
+                    }
+                    PlayersData[f2].diplo_treaties[t] |= DTREATY_VENDETTA;
+                    if (v == 2) {
+                        PlayersData[f1].diplo_treaties[t] |= DTREATY_PACT;
+                    } else {
+                        PlayersData[f1].diplo_treaties[t] =
+                            (PlayersData[f1].diplo_treaties[t] & ~DTREATY_PACT) | DTREATY_TREATY;
+                        *DiploUnk1 = v == 3;
+                    }
+                };
+                sprintf_s(label, "dont_withdrawal(%d, %d) variant %d", f1, f2, v);
+                h.run(label, setup, [&] { return exe(f1, f2); },
+                    [&] { return dont_withdrawal(f1, f2); });
+            }
+        }
+    }
+    logf("dont_withdrawal: %d compared (%d found a reason), %d mismatches", h.compared,
+        h.nonzero, h.mismatches);
+    return h.mismatches;
+}
+
+// ---------------------------------------------------------------- batch 29: diplomacy part two
+
+static void *__cdecl notice_x_pop(LPCSTR label, int(__cdecl *callback)()) {
+    return (void *)notice_record(NF_X_POP, label, NULL, NULL, notice_callback_id(callback), 0, 0);
+}
+static int __cdecl notice_wants_to_speak(int faction_id, int faction_id_with) {
+    return notice_record(NF_WANTS_TO_SPEAK, NULL, NULL, NULL, faction_id, faction_id_with, 0);
+}
+static void __cdecl notice_tech_achieved(int faction_id, int tech_id, int faction_id_from, int unk) {
+    notice_record(NF_TECH_ACHIEVED, NULL, NULL, NULL, faction_id, tech_id, faction_id_from * 16 + unk);
+}
+static void __cdecl notice_double_cross(int faction_id, int faction_id_with, int faction_id_other) {
+    notice_record(NF_DOUBLE_CROSS, NULL, NULL, NULL, faction_id, faction_id_with, faction_id_other);
+}
+static void __fastcall notice_console_update(void *This, void *, int unk) {
+    notice_record(NF_CONSOLE_UPDATE, NULL, NULL, NULL, This == ConsoleVar, unk, 0);
+}
+static void __fastcall notice_console_set_move(void *This, void *, int unk) {
+    notice_record(NF_CONSOLE_SET_MOVE, NULL, NULL, NULL, This == ConsoleVar, unk, 0);
+}
+static void __cdecl notice_caption(int faction_id, int faction_id_with) {
+    notice_record(NF_CAPTION, NULL, NULL, NULL, faction_id, faction_id_with, 0);
+}
+static void __cdecl notice_help_topic(int topic, int id) {
+    notice_record(NF_HELP_TOPIC, NULL, NULL, NULL, topic, id, 0);
+}
+
+// The further dialogs, UI refreshes and game events the batch 29 diplomacy functions reach.
+struct DiploTwoStubs {
+    JmpStub x_pop_stub, speak_stub, tech_stub, double_cross_stub, update_stub, set_move_stub,
+        caption_stub, help_stub;
+    DiploTwoStubs()
+        : x_pop_stub(0x005BF310, (void *)notice_x_pop),
+          speak_stub(0x0053DCE0, (void *)notice_wants_to_speak),
+          tech_stub(0x005BB000, (void *)notice_tech_achieved),
+          double_cross_stub(0x0050BCC0, (void *)notice_double_cross),
+          update_stub(0x00514880, (void *)notice_console_update),
+          set_move_stub(0x00511520, (void *)notice_console_set_move),
+          caption_stub(0x005399A0, (void *)notice_caption),
+          help_stub(0x0044CB60, (void *)notice_help_topic) {}
+    BOOL ok() const {
+        return x_pop_stub.ok && speak_stub.ok && tech_stub.ok && double_cross_stub.ok
+            && update_stub.ok && set_move_stub.ok && caption_stub.ok && help_stub.ok;
+    }
+};
+
+static int test_intervention() {
+    static const uint8_t entry[6] = { 0x55, 0x8B, 0xEC, 0x83, 0xEC, 0x08 };
+    OriginalEntry vanilla(0x0050BA50, entry);
+    NoticeStubs stubs;
+    DiploTwoStubs stubs2;
+    if (!vanilla.ok || !stubs.ok() || !stubs2.ok()) {
+        return 1;
+    }
+    func_diplo2 *exe = (func_diplo2 *)0x0050BA50;
+    const int current_saved = *FactionIDCurrent;
+    NoticeHarness h;
+    char label[96];
+    for (int f1 = 1; f1 < MaxPlayerNum; f1++) {
+        for (int f2 = 1; f2 < MaxPlayerNum; f2++) {
+            if (f1 == f2) {
+                continue;
+            }
+            // as loaded; every other faction in a pact with f1 and free of f2; then f2 human,
+            // f1 human, f2 or f1 at the controls
+            for (int v = 0; v < 6; v++) {
+                auto setup = [&] {
+                    *FactionIDCurrent = (v == 4) ? f2 : ((v == 5) ? f1 : current_saved);
+                    if (!v) {
+                        return;
+                    }
+                    for (int i = 1; i < MaxPlayerNum; i++) {
+                        if (i != f1 && i != f2) {
+                            PlayersData[i].diplo_treaties[f1] |= DTREATY_PACT;
+                            PlayersData[i].diplo_treaties[f2] &= ~(DTREATY_PACT | DTREATY_VENDETTA);
+                        }
+                    }
+                    *FactionsStatus &= ~((1 << f1) | (1 << f2));
+                    if (v == 2) {
+                        *FactionsStatus |= 1 << f2;
+                    } else if (v == 3) {
+                        *FactionsStatus |= 1 << f1;
+                    }
+                };
+                sprintf_s(label, "intervention(%d, %d) variant %d", f1, f2, v);
+                h.run(label, setup, [&] { exe(f1, f2); return 0; },
+                    [&] { intervention(f1, f2); return 0; });
+            }
+        }
+    }
+    *FactionIDCurrent = current_saved;
+    logf("intervention: %d compared (%d changed state, %d with calls), %d mismatches", h.compared,
+        h.changed, h.with_calls, h.mismatches);
+    return h.mismatches;
+}
+
+static int test_demand_withdrawal() {
+    static const uint8_t entry[6] = { 0x55, 0x8B, 0xEC, 0x51, 0x53, 0x56 };
+    OriginalEntry vanilla(0x00549270, entry);
+    NoticeStubs stubs;
+    DiploTwoStubs stubs2;
+    if (!vanilla.ok || !stubs.ok() || !stubs2.ok()) {
+        return 1;
+    }
+    func_diplo2r *exe = (func_diplo2r *)0x00549270;
+    NoticeHarness h;
+    char label[96];
+    int answers[3] = {};
+    for (int f1 = 1; f1 < MaxPlayerNum; f1++) {
+        for (int f2 = 1; f2 < MaxPlayerNum; f2++) {
+            if (f1 == f2) {
+                continue;
+            }
+            // 0 as loaded; 1-2 DiploUnk2 (vendetta), with sunspots; 3 friction over 15;
+            // 4 friction over 5 with DiploUnk4; 5 a treaty, calm; 6-7 a truce, calm, TURNABOUT
+            // answered 1 and 0; 8-9 refused by DiploUnk6, with sunspots; 10 a pact; 11 the 0x200
+            // flag with the vendetta values set; 12 calm with revenge wanted and the friction
+            // faction pair matching
+            for (int v = 0; v < 13; v++) {
+                auto setup = [&] {
+                    if (!v) {
+                        return;
+                    }
+                    uint32_t &t_with = PlayersData[f2].diplo_treaties[f1];
+                    uint32_t &t = PlayersData[f1].diplo_treaties[f2];
+                    t_with &= ~(DTREATY_PACT | DTREATY_UNK_200 | DTREATY_WANT_REVENGE);
+                    t &= ~(DTREATY_PACT | DTREATY_TREATY);
+                    *DiploUnk2 = (v == 1 || v == 2 || v == 11);
+                    *DiploUnk3 = 0;
+                    *DiploUnk4 = (v == 4);
+                    *DiploUnk5 = (v >= 5 && v != 8 && v != 9) ? 1 : 0;
+                    *DiploUnk6 = (v == 8 || v == 9) ? 5 : 0;
+                    *DiploFriction = (v == 3) ? 16 : ((v == 4) ? 6 : 0);
+                    *SunspotDuration = (v == 2 || v == 9) ? 3 : 0;
+                    if (v == 5) {
+                        t |= DTREATY_TREATY;
+                    } else if (v == 10) {
+                        t |= DTREATY_PACT | DTREATY_TREATY;
+                    } else if (v == 11) {
+                        t_with |= DTREATY_UNK_200;
+                        t |= DTREATY_TREATY;
+                    } else if (v == 12) {
+                        t_with |= DTREATY_WANT_REVENGE;
+                    }
+                    *DiploFrictionFactionID = (v == 12) ? f2 : 0;
+                    *DiploFrictionFactionIDWith = (v == 12) ? f1 : 0;
+                    NoticeAnswer[NF_X_POPS_11] = (v != 7);
+                };
+                sprintf_s(label, "demand_withdrawal(%d, %d) variant %d", f1, f2, v);
+                h.run(label, setup, [&] { return exe(f1, f2); },
+                    [&] { return demand_withdrawal(f1, f2); });
+                int ret = h.orig.ret;
+                if (ret >= 0 && ret < 3) {
+                    answers[ret]++;
+                }
+            }
+        }
+    }
+    logf("demand_withdrawal: %d compared (answers by the original: %d withdrew, %d refused, %d war; "
+        "%d changed state), %d mismatches", h.compared, answers[0], answers[1], answers[2], h.changed,
+        h.mismatches);
+    return h.mismatches;
+}
+
+// A design of faction_id_with for mention_prototypes() to offer: its first active one.
+static int diplotwo_proto(int faction_id) {
+    for (int i = 0; i < MaxVehProtoFactionNum; i++) {
+        int proto_id = faction_id * MaxVehProtoFactionNum + i;
+        if (VehPrototypes[proto_id].flags & PROTO_ACTIVE) {
+            return proto_id;
+        }
+    }
+    return -1;
+}
+
+static int test_mention_prototypes() {
+    static const uint8_t entry[6] = { 0x55, 0x8B, 0xEC, 0x83, 0xEC, 0x08 };
+    OriginalEntry vanilla(0x0053A230, entry);
+    NoticeStubs stubs;
+    DiploTwoStubs stubs2;
+    if (!vanilla.ok || !stubs.ok() || !stubs2.ok()) {
+        return 1;
+    }
+    func_diplo2 *exe = (func_diplo2 *)0x0053A230;
+    static VehPrototype protos_saved[MaxVehProtoNum];
+    memcpy(protos_saved, VehPrototypes, sizeof(protos_saved));
+    NoticeHarness h;
+    char label[96];
+    for (int f1 = 1; f1 < MaxPlayerNum; f1++) {
+        for (int f2 = 1; f2 < MaxPlayerNum; f2++) {
+            if (f1 == f2) {
+                continue;
+            }
+            int proto_id = diplotwo_proto(f2);
+            // 0 as loaded; 1 nothing to offer; 2 unwilling to speak; 3 a pact; 4-5 offered,
+            // refused and accepted
+            for (int v = 0; v < 6; v++) {
+                auto setup = [&] {
+                    memcpy(VehPrototypes, protos_saved, sizeof(protos_saved));
+                    if (!v) {
+                        return;
+                    }
+                    *DiploProtoIDTradeable = (v == 1) ? -1 : proto_id;
+                    *DiploProtoIDBest = proto_id;
+                    NoticeAnswer[NF_WANTS_TO_SPEAK] = (v != 2);
+                    NoticeAnswer[NF_X_POPS_11] = (v == 5);
+                    if (v == 3) {
+                        PlayersData[f1].diplo_treaties[f2] |= DTREATY_PACT;
+                    } else {
+                        PlayersData[f1].diplo_treaties[f2] &= ~DTREATY_PACT;
+                    }
+                };
+                sprintf_s(label, "mention_prototypes(%d, %d) variant %d", f1, f2, v);
+                VehPrototype *after_o = (VehPrototype *)malloc(sizeof(protos_saved));
+                h.run(label, setup,
+                    [&] { exe(f1, f2); memcpy(after_o, VehPrototypes, sizeof(protos_saved)); return 0; },
+                    [&] { mention_prototypes(f1, f2); return 0; });
+                size_t d = first_diff(after_o, VehPrototypes, sizeof(protos_saved));
+                if (d != (size_t)-1) {
+                    if (h.mismatches < MAX_DETAIL) {
+                        logf("  %s: VehPrototypes byte %u differs", label, (unsigned)d);
+                    }
+                    h.mismatches++;
+                }
+                free(after_o);
+            }
+        }
+    }
+    memcpy(VehPrototypes, protos_saved, sizeof(protos_saved));
+    logf("mention_prototypes: %d compared (%d with calls), %d mismatches", h.compared, h.with_calls,
+        h.mismatches);
+    return h.mismatches;
+}
+
+static int test_buy_tech() {
+    static const uint8_t entry[6] = { 0x55, 0x8B, 0xEC, 0x83, 0xEC, 0x50 };
+    OriginalEntry vanilla(0x005401A0, entry);
+    NoticeStubs stubs;
+    DiploTwoStubs stubs2;
+    if (!vanilla.ok || !stubs.ok() || !stubs2.ok()) {
+        return 1;
+    }
+    typedef int func_buy(int, int, int, BOOL, int);
+    func_buy *exe = (func_buy *)0x005401A0;
+    NoticeHarness h;
+    char label[96];
+    const int types[] = { 0, 5, 13 };
+    for (int f1 = 1; f1 < MaxPlayerNum; f1++) {
+        for (int f2 = 1; f2 < MaxPlayerNum; f2++) {
+            if (f1 == f2) {
+                continue;
+            }
+            // a tech f2 has: the first one that f1 lacks, else the first it has
+            int tech_id = -1;
+            for (int t = 0; t < MaxTechnologyNum && tech_id < 0; t++) {
+                if (has_tech(t, f2) && !has_tech(t, f1)) {
+                    tech_id = t;
+                }
+            }
+            for (int t = 0; t < MaxTechnologyNum && tech_id < 0; t++) {
+                if (has_tech(t, f2)) {
+                    tech_id = t;
+                }
+            }
+            for (int type : types) {
+                // 0 as loaded; 1 the tech picked, rich, accepted; 2 refused; 3 poor; 4 poor with
+                // unk1 5; 5 unk1 1; 6 markup, pact and DiploUnk7; 7 nothing picked
+                for (int v = 0; v < 8; v++) {
+                    auto setup = [&] {
+                        if (!v) {
+                            return;
+                        }
+                        *DiploTechGetID1 = (v == 7) ? -1 : tech_id;
+                        *DiploProtoIDBest = (v == 7) ? -1 : diplotwo_proto(f2);
+                        *DiploUnk7 = (v == 6);
+                        *DiploUnk8 = f2;
+                        PlayersData[f1].energy_reserves = (v == 3 || v == 4) ? 10 : 100000;
+                        if (v == 6) {
+                            PlayersData[f1].diplo_treaties[f2] |= DTREATY_PACT;
+                        }
+                        NoticeAnswer[NF_X_POPS_11] = (v != 2);
+                    };
+                    int unk1 = (v == 4) ? 5 : ((v == 5) ? 1 : 0);
+                    BOOL markup = (v == 6);
+                    sprintf_s(label, "buy_tech(%d, %d, %d, %d, %d) variant %d", f1, f2, unk1, markup,
+                        type, v);
+                    h.run(label, setup, [&] { return exe(f1, f2, unk1, markup, type); },
+                        [&] { return buy_tech(f1, f2, unk1, markup, type); });
+                }
+            }
+        }
+    }
+    logf("buy_tech: %d compared (%d made an offer, %d with calls), %d mismatches", h.compared,
+        h.nonzero, h.with_calls, h.mismatches);
+    return h.mismatches;
+}
+
+static int test_energy_trade() {
+    static const uint8_t entry[6] = { 0x55, 0x8B, 0xEC, 0x83, 0xEC, 0x60 };
+    OriginalEntry vanilla(0x00540630, entry);
+    NoticeStubs stubs;
+    DiploTwoStubs stubs2;
+    if (!vanilla.ok || !stubs.ok() || !stubs2.ok()) {
+        return 1;
+    }
+    func_diplo2r *exe = (func_diplo2r *)0x00540630;
+    NoticeHarness h;
+    char label[96];
+    for (int f1 = 1; f1 < MaxPlayerNum; f1++) {
+        for (int f2 = 1; f2 < MaxPlayerNum; f2++) {
+            if (f1 == f2) {
+                continue;
+            }
+            // 0 as loaded; 1 a gift from a rich pact partner; 2-4 a loan (agreed, refused, with
+            // a pact and rank); 5-8 a tech sale (first tech, help then first, second, declined);
+            // 9 nothing on offer
+            for (int v = 0; v < 10; v++) {
+                auto setup = [&] {
+                    NoticeFirstAnswer = -1;
+                    if (!v) {
+                        return;
+                    }
+                    PlayerData *p = &PlayersData[f1];
+                    PlayerData *p_with = &PlayersData[f2];
+                    const int proposals[] = { 0, 1, 6, 6, 1, 4, 4, 2, 4, 0 };
+                    *DiploCounterProposalID = proposals[v];
+                    p_with->diplo_treaties[f1] &= ~(DTREATY_PACT | DTREATY_VENDETTA | DTREATY_WANT_REVENGE);
+                    p->diplo_treaties[f2] &= ~DTREATY_PACT;
+                    p_with->loan_balance[f1] = 0;
+                    p->loan_balance[f2] = 0;
+                    if (v == 1) {
+                        p_with->diplo_treaties[f1] |= DTREATY_PACT;
+                        p_with->ranking = 7;
+                        p->ranking = 0;
+                        p_with->energy_reserves = 100000;
+                        p->energy_reserves = 0;
+                        p_with->tech_ranking = 100;
+                        p->tech_ranking = 0;
+                        p_with->diplo_patience[f1] = 0;
+                    } else if (v >= 2 && v <= 4) {
+                        p_with->diplo_treaties[f1] |= DTREATY_TREATY;
+                        p_with->energy_reserves = 1000;
+                        if (v == 4) {
+                            p->diplo_treaties[f2] |= DTREATY_PACT;
+                            p_with->ranking = 7;
+                            p->ranking = 0;
+                        }
+                    } else if (v >= 5) {
+                        p_with->energy_reserves = 5000;
+                    }
+                    NoticeAnswer[NF_X_POPS_11] = (v == 3 || v == 7 || v == 8) ? 0 : 1;
+                    if (v == 6) {
+                        NoticeFirstAnswer = 3;
+                    } else if (v == 7) {
+                        // the second tech once, then decline: with one tech on offer the answer 2
+                        // is help and the question comes again, in the exe as in the DLL
+                        NoticeFirstAnswer = 2;
+                    }
+                };
+                sprintf_s(label, "energy_trade(%d, %d) variant %d", f1, f2, v);
+                h.run(label, setup, [&] { return exe(f1, f2); },
+                    [&] { return energy_trade(f1, f2); });
+            }
+        }
+    }
+    NoticeFirstAnswer = -1;
+    logf("energy_trade: %d compared (%d returned true, %d changed state), %d mismatches", h.compared,
+        h.nonzero, h.changed, h.mismatches);
+    return h.mismatches;
+}
+
+static int test_pact_withdraw() {
+    static const uint8_t entry[6] = { 0x55, 0x8B, 0xEC, 0x83, 0xEC, 0x1C };
+    OriginalEntry vanilla(0x0053C370, entry);
+    NoticeStubs stubs;
+    DiploTwoStubs stubs2;
+    if (!vanilla.ok || !stubs.ok() || !stubs2.ok()) {
+        return 1;
+    }
+    func_diplo2r *exe = (func_diplo2r *)0x0053C370;
+    const BOOL view_saved = *MapWinUnitNotViewMode;
+    const int selected_saved = *MapWinVehIDSelected;
+    NoticeHarness h;
+    char label[96];
+    int moved = 0;
+    for (int f1 = 1; f1 < MaxPlayerNum; f1++) {
+        for (int f2 = 1; f2 < MaxPlayerNum; f2++) {
+            if (f1 == f2) {
+                continue;
+            }
+            // as loaded; with f1's last unit in f2's territory selected in the map window
+            int selected = -1;
+            for (int veh_id = 0; veh_id < *VehCurrentCount; veh_id++) {
+                if (Vehs[veh_id].faction_id == f1
+                    && whose_territory(f1, Vehs[veh_id].x, Vehs[veh_id].y, NULL, false) == f2) {
+                    selected = veh_id;
+                }
+            }
+            for (int v = 0; v < 2; v++) {
+                auto setup = [&] {
+                    *MapWinUnitNotViewMode = v ? true : view_saved;
+                    *MapWinVehIDSelected = v ? selected : selected_saved;
+                };
+                sprintf_s(label, "pact_withdraw(%d, %d) variant %d", f1, f2, v);
+                h.run(label, setup, [&] { return exe(f1, f2); },
+                    [&] { return pact_withdraw(f1, f2); });
+                moved += h.orig.ret;
+            }
+        }
+    }
+    *MapWinUnitNotViewMode = view_saved;
+    *MapWinVehIDSelected = selected_saved;
+    logf("pact_withdraw: %d compared (%d units moved by the original, %d with calls), %d mismatches",
+        h.compared, moved, h.with_calls, h.mismatches);
+    return h.mismatches;
+}
+
 // ---------------------------------------------------------------- wants_to_attack stack leftovers
 // Call a wants_to_attack entry with the slots of the original's uninitialized buffer seeded
 // (slot f at esp_entry - 0x138 + 4 * f) and read back what the call left there.
@@ -7418,6 +8480,2072 @@ static int test_save_header() {
     return mismatches;
 }
 
+// ---------------------------------------------------------------- batch 28: prototype design
+
+// X_pop() is a dialog: record what it was asked and answer with XPopAnswer
+static int XPopAnswer;
+static int XPopCount;
+static char XPopLabel[32];
+static int __cdecl xpop_recorder(LPCSTR label, int(*UNUSED(callback))(void)) {
+    XPopCount++;
+    strncpy_s(XPopLabel, label ? label : "", _TRUNCATE);
+    return XPopAnswer;
+}
+
+// NetDaemon::synch(), lock_base() and unlock_base() as recorders: one (kind, id) entry per call,
+// kind = synch message type, or 1000 for lock_base and 2000 for unlock_base
+struct NetCall {
+    int kind;
+    int id;
+};
+static const int MaxNetCalls = 256;
+static NetCall NetCalls[MaxNetCalls];
+static int NetCallCount;
+static int LockBaseAnswer;
+static void net_call(int kind, int id) {
+    if (NetCallCount < MaxNetCalls) {
+        NetCalls[NetCallCount].kind = kind;
+        NetCalls[NetCallCount].id = id;
+    }
+    NetCallCount++;
+}
+static void __fastcall synch_recorder(void *UNUSED(This), void *UNUSED(edx_unused), int16_t type,
+    int id, int UNUSED(id2), int UNUSED(unk), char *UNUSED(data), uint32_t UNUSED(delay),
+    int16_t UNUSED(unk2)) {
+    net_call(type, id);
+}
+static int __fastcall lock_base_recorder(void *UNUSED(This), void *UNUSED(edx_unused), int base_id,
+    int UNUSED(lock_flags), int UNUSED(unk1), int UNUSED(unk2)) {
+    net_call(1000, base_id);
+    return LockBaseAnswer;
+}
+static void __fastcall unlock_base_recorder(void *UNUSED(This), void *UNUSED(edx_unused),
+    int base_id) {
+    net_call(2000, base_id);
+}
+
+static int test_prune_protos() {
+    // run the exe's own prune_protos, not the jump into the DLL
+    static const uint8_t prune_entry[6] = { 0x55, 0x8B, 0xEC, 0x83, 0xEC, 0x30 };
+    OriginalEntry vanilla_prune(0x0057F4B0, prune_entry);
+    JmpStub popp_stub(0x0048C0A0, (void *)popp_recorder);
+    JmpStub xpop_stub(0x005BF310, (void *)xpop_recorder);
+    JmpStub synch_stub(0x00532E00, (void *)synch_recorder);
+    JmpStub lock_stub(0x00530D50, (void *)lock_base_recorder);
+    JmpStub unlock_stub(0x00530E50, (void *)unlock_base_recorder);
+    if (!vanilla_prune.ok || !popp_stub.ok || !xpop_stub.ok || !synch_stub.ok || !lock_stub.ok
+        || !unlock_stub.ok) {
+        return 1;
+    }
+    GameSnapshot base, after_orig, after_new;
+    snap_alloc(&base); snap_alloc(&after_orig); snap_alloc(&after_new);
+    snap_take(&base);
+    const size_t proto_size = sizeof(VehPrototype) * MaxVehProtoNum;
+    uint8_t *proto_saved = (uint8_t *)malloc(proto_size);
+    uint8_t *proto_o = (uint8_t *)malloc(proto_size);
+    memcpy(proto_saved, VehPrototypes, proto_size);
+    const size_t parse_size = 2 * sizeof(char256);
+    static uint8_t temp_saved[sizeof(char1032)], temp_o[sizeof(char1032)];
+    static uint8_t parse_saved[2 * sizeof(char256)], parse_o[2 * sizeof(char256)];
+    int gender_saved[2] = { ParseStrGender[0], ParseStrGender[1] };
+    int plural_saved[2] = { ParseStrPlurality[0], ParseStrPlurality[1] };
+    memcpy(temp_saved, stringTemp, sizeof(char1032));
+    memcpy(parse_saved, ParseStrBuffer, parse_size);
+    static NetCall calls_o[MaxNetCalls];
+    uint8_t status_saved = *FactionsStatus;
+    BOOL net_saved = *IsMultiplayerNet;
+    uint32_t prefs_saved = *GameMorePreferences;
+    int player = *FactionIDCurrent;
+    int compared = 0, mismatches = 0, obsoleted = 0, typed = 0, flagged = 0, requeued = 0;
+    int asked = 0, kept = 0, told = 0, net_calls = 0;
+    char label[96];
+    // variant bits: 1 = this faction's obsolete marks and every PROTO_UNK_8/200 flag cleared
+    // first, 2 = synch; mode: 0 computer player, 1 human with the auto prune preference,
+    // 2 human in a network game, 3 human without either (returns after the first part).
+    // The player at the controls answers the question 0, 1 or 2; in a network game lock_base
+    // refuses every base on odd answers.
+    auto prepare = [&](int f, int variant, int mode, int answer) {
+        snap_restore(&base);
+        memcpy(VehPrototypes, proto_saved, proto_size);
+        if (variant & 1) {
+            for (int id = 0; id < MaxVehProtoNum; id++) {
+                VehPrototypes[id].obsolete_factions &= ~(1 << f);
+                VehPrototypes[id].flags &= ~(PROTO_UNK_8 | PROTO_UNK_200);
+            }
+        }
+        memcpy(stringTemp, temp_saved, sizeof(char1032));
+        memcpy(ParseStrBuffer, parse_saved, parse_size);
+        ParseStrGender[0] = gender_saved[0]; ParseStrGender[1] = gender_saved[1];
+        ParseStrPlurality[0] = plural_saved[0]; ParseStrPlurality[1] = plural_saved[1];
+        *FactionsStatus = mode ? (uint8_t)(status_saved | (1 << f))
+            : (uint8_t)(status_saved & ~(1 << f));
+        *IsMultiplayerNet = mode == 2;
+        *GameMorePreferences = mode == 1 ? (prefs_saved | MPREF_BSC_AUTO_PRUNE_OBS_VEH)
+            : (prefs_saved & ~MPREF_BSC_AUTO_PRUNE_OBS_VEH);
+        XPopAnswer = answer;
+        XPopCount = 0;
+        XPopLabel[0] = 0;
+        PoppAnswer = 0;
+        PoppCount = 0;
+        PoppLabel[0] = PoppPic[0] = 0;
+        LockBaseAnswer = mode == 2 && (answer & 1);
+        NetCallCount = 0;
+    };
+    VehPrototype *protos = (VehPrototype *)proto_saved; // as loaded
+    for (int f = 0; f < MaxPlayerNum; f++) {
+        // kept prototypes: for a computer player only whether it is basic or typed complete
+        // matters (one of each kind); humans also compare ranges with it and flag it: all of them
+        int kept_ids[2 * MaxVehProtoFactionNum];
+        int kept_count = 0;
+        int basic_first = -1, typed_first = -1, untyped_first = -1;
+        for (int i = 0; i < 2 * MaxVehProtoFactionNum; i++) {
+            int id = i < MaxVehProtoFactionNum ? i : f * MaxVehProtoFactionNum + i - MaxVehProtoFactionNum;
+            if ((!f && i >= MaxVehProtoFactionNum) || !(protos[id].flags & PROTO_ACTIVE)) {
+                continue;
+            }
+            kept_ids[kept_count++] = id;
+            if (id < MaxVehProtoFactionNum) {
+                basic_first = basic_first < 0 ? id : basic_first;
+            } else if (protos[id].flags & PROTO_TYPED_COMPLETE) {
+                typed_first = typed_first < 0 ? id : typed_first;
+            } else {
+                untyped_first = untyped_first < 0 ? id : untyped_first;
+            }
+        }
+        for (int k = 0; k < kept_count; k++) {
+            int kept_id = kept_ids[k];
+            BOOL ai_kept = kept_id == basic_first || kept_id == typed_first
+                || kept_id == untyped_first;
+            for (int mode = 0; mode < 4; mode++) {
+                BOOL human_rules = mode == 1 || mode == 2;
+                if (!human_rules && !ai_kept) {
+                    continue;
+                }
+                int answers = (human_rules && f == player) ? 3 : 1;
+                for (int variant = 0; variant < 4; variant++) {
+                    // other humans: as loaded without synch, and cleared with synch
+                    if (human_rules && f != player && (variant == 1 || variant == 2)) {
+                        continue;
+                    }
+                    for (int answer = 0; answer < answers; answer++) {
+                        BOOL synch = (variant & 2) != 0;
+                        REGRESS_CTX("prune_protos(%d, %d, %d) variant %d mode %d answer %d", f,
+                            kept_id, synch, variant, mode, answer);
+                        prepare(f, variant, mode, answer);
+                        prune_protos_OG(f, kept_id, synch);
+                        snap_take(&after_orig);
+                        memcpy(proto_o, VehPrototypes, proto_size);
+                        memcpy(temp_o, stringTemp, sizeof(char1032));
+                        memcpy(parse_o, ParseStrBuffer, parse_size);
+                        int xpop_o = XPopCount, popp_o = PoppCount, net_o = NetCallCount;
+                        char xpop_label_o[32], popp_label_o[32], popp_pic_o[32];
+                        strcpy_s(xpop_label_o, XPopLabel);
+                        strcpy_s(popp_label_o, PoppLabel);
+                        strcpy_s(popp_pic_o, PoppPic);
+                        memcpy(calls_o, NetCalls, sizeof(calls_o));
+                        prepare(f, variant, mode, answer);
+                        static VehPrototype before[MaxVehProtoNum]; // what both calls started from
+                        memcpy(before, VehPrototypes, proto_size);
+                        prune_protos(f, kept_id, synch);
+                        snap_take(&after_new);
+                        compared++;
+                        VehPrototype *after = (VehPrototype *)proto_o;
+                        for (int id = 0; id < MaxVehProtoNum; id++) {
+                            obsoleted += (after[id].obsolete_factions & ~before[id].obsolete_factions
+                                & (1 << f)) != 0;
+                            typed += (after[id].flags & ~before[id].flags & PROTO_TYPED_COMPLETE) != 0;
+                            flagged += (after[id].flags & ~before[id].flags & PROTO_UNK_8) != 0;
+                            kept += (before[id].obsolete_factions & ~after[id].obsolete_factions
+                                & (1 << f)) != 0;
+                        }
+                        for (int b = 0; b < base.base_count; b++) {
+                            requeued += memcmp(after_orig.bases[b].queue_production_id,
+                                base.bases[b].queue_production_id,
+                                sizeof(base.bases[b].queue_production_id)) != 0;
+                        }
+                        asked += xpop_o;
+                        told += popp_o;
+                        net_calls += net_o;
+                        sprintf_s(label, "prune_protos(%d, %d, %d) variant %d mode %d answer %d",
+                            f, kept_id, synch, variant, mode, answer);
+                        BOOL diff = false;
+                        if (xpop_o != XPopCount || strcmp(xpop_label_o, XPopLabel)
+                            || popp_o != PoppCount || strcmp(popp_label_o, PoppLabel)
+                            || strcmp(popp_pic_o, PoppPic) || net_o != NetCallCount
+                            || memcmp(calls_o, NetCalls,
+                                sizeof(NetCall) * (net_o < MaxNetCalls ? net_o : MaxNetCalls))) {
+                            if (mismatches < MAX_DETAIL) {
+                                logf("  %s: orig X_pop %d '%s' popp %d '%s' '%s' net %d; new X_pop %d "
+                                    "'%s' popp %d '%s' '%s' net %d", label, xpop_o, xpop_label_o,
+                                    popp_o, popp_label_o, popp_pic_o, net_o, XPopCount, XPopLabel,
+                                    PoppCount, PoppLabel, PoppPic, NetCallCount);
+                            }
+                            diff = true;
+                        }
+                        if (!diff) {
+                            diff = snap_differs(&after_orig, &after_new,
+                                mismatches < MAX_DETAIL ? label : NULL);
+                        }
+                        size_t at;
+                        if (!diff && (at = first_diff(proto_o, VehPrototypes, proto_size)) != (size_t)-1) {
+                            if (mismatches < MAX_DETAIL) {
+                                logf("  %s: VehPrototype[%u] +0x%X differs", label,
+                                    (unsigned)(at / sizeof(VehPrototype)),
+                                    (unsigned)(at % sizeof(VehPrototype)));
+                            }
+                            diff = true;
+                        }
+                        if (!diff && (memcmp(temp_o, stringTemp, sizeof(char1032))
+                            || memcmp(parse_o, ParseStrBuffer, parse_size))) {
+                            if (mismatches < MAX_DETAIL) {
+                                logf("  %s: popup text differs: orig '%s' / '%s' new '%s' / '%s'",
+                                    label, ((char256 *)parse_o)[0].str, ((char256 *)parse_o)[1].str,
+                                    ParseStrBuffer[0].str, ParseStrBuffer[1].str);
+                            }
+                            diff = true;
+                        }
+                        if (diff) {
+                            mismatches++;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    snap_restore(&base);
+    memcpy(VehPrototypes, proto_saved, proto_size);
+    free(proto_saved);
+    free(proto_o);
+    memcpy(stringTemp, temp_saved, sizeof(char1032));
+    memcpy(ParseStrBuffer, parse_saved, parse_size);
+    ParseStrGender[0] = gender_saved[0]; ParseStrGender[1] = gender_saved[1];
+    ParseStrPlurality[0] = plural_saved[0]; ParseStrPlurality[1] = plural_saved[1];
+    *FactionsStatus = status_saved;
+    *IsMultiplayerNet = net_saved;
+    *GameMorePreferences = prefs_saved;
+    snap_free(&base); snap_free(&after_orig); snap_free(&after_new);
+    logf("prune_protos: %d compared (original: %d marks obsolete, %d typed complete, %d kept "
+        "designs flagged, %d marks removed, %d queues changed, %d questions, %d network popups, "
+        "%d net calls), %d mismatches", compared, obsoleted, typed, flagged, kept, requeued,
+        asked, told, net_calls, mismatches);
+    return mismatches;
+}
+
+static int test_consider_designs() {
+    // run the exe's own consider_designs, not the jump into the DLL (its propose_proto calls go
+    // to the DLL on both sides)
+    static const uint8_t consider_entry[6] = { 0x55, 0x8B, 0xEC, 0x83, 0xEC, 0x3C };
+    OriginalEntry vanilla_consider(0x00581260, consider_entry);
+    JmpStub popp_stub(0x0048C0A0, (void *)popp_recorder);
+    JmpStub xpop_stub(0x005BF310, (void *)xpop_recorder);
+    JmpStub synch_stub(0x00532E00, (void *)synch_recorder);
+    if (!vanilla_consider.ok || !popp_stub.ok || !xpop_stub.ok || !synch_stub.ok) {
+        return 1;
+    }
+    // selection globals touched by kill()/veh_kill(), same set as the stack_kill test
+    static int *const extra_globals[] = { (int *)0x0093928C, (int *)0x00939290, (int *)0x008C6B2C,
+        (int *)0x008C6B34, (int *)0x009A64DC };
+    const int extra_count = (int)(sizeof(extra_globals) / sizeof(extra_globals[0]));
+    int extra_saved[5], extra_o[5];
+    for (int i = 0; i < extra_count; i++) {
+        extra_saved[i] = *extra_globals[i];
+    }
+    const size_t bung_size = sizeof(BungedDesign) * MaxPlayerNum * MaxBungedDesignNum;
+    const size_t proto_size = sizeof(VehPrototype) * MaxVehProtoNum;
+    uint8_t *bung_saved = (uint8_t *)malloc(bung_size);
+    uint8_t *bung_o = (uint8_t *)malloc(bung_size);
+    uint8_t *proto_saved = (uint8_t *)malloc(proto_size);
+    uint8_t *proto_o = (uint8_t *)malloc(proto_size);
+    memcpy(bung_saved, BungList, bung_size);
+    memcpy(proto_saved, VehPrototypes, proto_size);
+    // DesignSuggestAbilities .. DesignSuggestState
+    uint8_t *const suggest = (uint8_t *)DesignSuggestAbilities;
+    const size_t suggest_size = 0x0093FC58 - 0x0093FC34;
+    uint8_t suggest_saved[0x24], suggest_o[0x24];
+    memcpy(suggest_saved, suggest, suggest_size);
+    const size_t parse_size = 2 * sizeof(char256);
+    static uint8_t temp_saved[sizeof(char1032)], temp_o[sizeof(char1032)];
+    static uint8_t parse_saved[2 * sizeof(char256)], parse_o[2 * sizeof(char256)];
+    int gender_saved[2] = { ParseStrGender[0], ParseStrGender[1] };
+    int plural_saved[2] = { ParseStrPlurality[0], ParseStrPlurality[1] };
+    memcpy(temp_saved, stringTemp, sizeof(char1032));
+    memcpy(parse_saved, ParseStrBuffer, parse_size);
+    int new_design_saved = *ProtoIDNewDesign;
+    uint8_t status_saved = *FactionsStatus;
+    uint32_t rules_saved = *GameRules;
+    int un_saved[2] = { ProposalPassCount[PROP_REPEAL_UN_CHARTER],
+        ProposalPassCount[PROP_REINSTATE_UN_CHARTER] };
+    BOOL draw_saved = VehBattleUnkTgl[0];
+    GameSnapshot base, after_orig, after_new;
+    snap_alloc(&base); snap_alloc(&after_orig); snap_alloc(&after_new);
+    VehBattleUnkTgl[0] = true; // kill() skips its map redraw while this is set
+    snap_take(&base);
+    int compared = 0, mismatches = 0, changed_designs = 0, runs_changed = 0, suggested = 0;
+    int requeued = 0;
+    char label[96];
+    // variant 0: as loaded; 1: the design workshop asks for a suggestion (any category); 2: the
+    // faction's obsolete marks cleared; 3: a computer player as human, the human as a computer
+    // player; 4: the UN Charter repealed and intense rivalry switched
+    auto prepare = [&](int f, int variant) {
+        snap_restore(&base);
+        memcpy(BungList, bung_saved, bung_size);
+        memcpy(VehPrototypes, proto_saved, proto_size);
+        memcpy(suggest, suggest_saved, suggest_size);
+        memcpy(stringTemp, temp_saved, sizeof(char1032));
+        memcpy(ParseStrBuffer, parse_saved, parse_size);
+        ParseStrGender[0] = gender_saved[0]; ParseStrGender[1] = gender_saved[1];
+        ParseStrPlurality[0] = plural_saved[0]; ParseStrPlurality[1] = plural_saved[1];
+        *ProtoIDNewDesign = new_design_saved;
+        *FactionsStatus = status_saved;
+        *GameRules = rules_saved;
+        ProposalPassCount[PROP_REPEAL_UN_CHARTER] = un_saved[0];
+        ProposalPassCount[PROP_REINSTATE_UN_CHARTER] = un_saved[1];
+        for (int i = 0; i < extra_count; i++) {
+            *extra_globals[i] = extra_saved[i];
+        }
+        if (variant == 1) {
+            *DesignSuggestState = 1;
+            *DesignSuggestCategory = -1;
+        } else if (variant == 2) {
+            for (int id = 0; id < MaxVehProtoNum; id++) {
+                VehPrototypes[id].obsolete_factions &= ~(1 << f);
+            }
+        } else if (variant == 3) {
+            *FactionsStatus ^= (uint8_t)(1 << f);
+        } else if (variant == 4) {
+            ProposalPassCount[PROP_REPEAL_UN_CHARTER] = un_saved[1] + 1;
+            *GameRules ^= RULES_INTENSE_RIVALRY;
+        }
+        XPopAnswer = 0;
+        XPopCount = 0;
+        XPopLabel[0] = 0;
+        PoppAnswer = 0;
+        PoppCount = 0;
+        PoppLabel[0] = PoppPic[0] = 0;
+        NetCallCount = 0;
+    };
+    for (int f = 1; f < MaxPlayerNum; f++) {
+        for (int variant = 0; variant < 5; variant++) {
+            REGRESS_CTX("consider_designs(%d) variant %d", f, variant);
+            prepare(f, variant);
+            consider_designs_OG(f);
+            snap_take(&after_orig);
+            memcpy(bung_o, BungList, bung_size);
+            memcpy(proto_o, VehPrototypes, proto_size);
+            memcpy(suggest_o, suggest, suggest_size);
+            memcpy(temp_o, stringTemp, sizeof(char1032));
+            memcpy(parse_o, ParseStrBuffer, parse_size);
+            int new_design_o = *ProtoIDNewDesign;
+            for (int i = 0; i < extra_count; i++) {
+                extra_o[i] = *extra_globals[i];
+            }
+            int xpop_o = XPopCount, popp_o = PoppCount, net_o = NetCallCount;
+            prepare(f, variant);
+            static VehPrototype before[MaxVehProtoNum]; // what both calls started from
+            memcpy(before, VehPrototypes, proto_size);
+            consider_designs(f);
+            snap_take(&after_new);
+            compared++;
+            int changed = 0;
+            for (int id = 0; id < MaxVehProtoNum; id++) {
+                changed += memcmp(&before[id], &((VehPrototype *)proto_o)[id],
+                    sizeof(VehPrototype)) != 0;
+            }
+            changed_designs += changed;
+            runs_changed += changed != 0;
+            suggested += memcmp(suggest_o, suggest_saved, suggest_size) != 0;
+            for (int b = 0; b < base.base_count; b++) {
+                requeued += memcmp(after_orig.bases[b].queue_production_id,
+                    base.bases[b].queue_production_id, sizeof(base.bases[b].queue_production_id)) != 0;
+            }
+            sprintf_s(label, "consider_designs(%d) variant %d", f, variant);
+            BOOL diff = false;
+            if (xpop_o != XPopCount || popp_o != PoppCount || net_o != NetCallCount) {
+                if (mismatches < MAX_DETAIL) {
+                    logf("  %s: orig X_pop %d popp %d net %d; new X_pop %d popp %d net %d", label,
+                        xpop_o, popp_o, net_o, XPopCount, PoppCount, NetCallCount);
+                }
+                diff = true;
+            }
+            if (!diff) {
+                diff = snap_differs(&after_orig, &after_new, mismatches < MAX_DETAIL ? label : NULL);
+            }
+            size_t at;
+            if (!diff && (at = first_diff(proto_o, VehPrototypes, proto_size)) != (size_t)-1) {
+                if (mismatches < MAX_DETAIL) {
+                    logf("  %s: VehPrototype[%u] +0x%X differs (orig %02X new %02X)", label,
+                        (unsigned)(at / sizeof(VehPrototype)), (unsigned)(at % sizeof(VehPrototype)),
+                        proto_o[at], ((uint8_t *)VehPrototypes)[at]);
+                }
+                diff = true;
+            }
+            if (!diff && (at = first_diff(bung_o, BungList, bung_size)) != (size_t)-1) {
+                if (mismatches < MAX_DETAIL) {
+                    logf("  %s: BungList byte %u differs", label, (unsigned)at);
+                }
+                diff = true;
+            }
+            if (!diff && (at = first_diff(suggest_o, suggest, suggest_size)) != (size_t)-1) {
+                if (mismatches < MAX_DETAIL) {
+                    logf("  %s: design suggestion +0x%X differs", label, (unsigned)at);
+                }
+                diff = true;
+            }
+            if (!diff && new_design_o != *ProtoIDNewDesign) {
+                if (mismatches < MAX_DETAIL) {
+                    logf("  %s: new design id orig %d new %d", label, new_design_o,
+                        *ProtoIDNewDesign);
+                }
+                diff = true;
+            }
+            if (!diff && (memcmp(temp_o, stringTemp, sizeof(char1032))
+                || memcmp(parse_o, ParseStrBuffer, parse_size))) {
+                if (mismatches < MAX_DETAIL) {
+                    logf("  %s: popup text differs", label);
+                }
+                diff = true;
+            }
+            for (int i = 0; i < extra_count && !diff; i++) {
+                if (extra_o[i] != *extra_globals[i]) {
+                    if (mismatches < MAX_DETAIL) {
+                        logf("  %s: selection global %08X differs", label,
+                            (unsigned)extra_globals[i]);
+                    }
+                    diff = true;
+                }
+            }
+            if (diff) {
+                mismatches++;
+            }
+        }
+    }
+    snap_restore(&base);
+    memcpy(BungList, bung_saved, bung_size);
+    memcpy(VehPrototypes, proto_saved, proto_size);
+    memcpy(suggest, suggest_saved, suggest_size);
+    memcpy(stringTemp, temp_saved, sizeof(char1032));
+    memcpy(ParseStrBuffer, parse_saved, parse_size);
+    ParseStrGender[0] = gender_saved[0]; ParseStrGender[1] = gender_saved[1];
+    ParseStrPlurality[0] = plural_saved[0]; ParseStrPlurality[1] = plural_saved[1];
+    *ProtoIDNewDesign = new_design_saved;
+    *FactionsStatus = status_saved;
+    *GameRules = rules_saved;
+    ProposalPassCount[PROP_REPEAL_UN_CHARTER] = un_saved[0];
+    ProposalPassCount[PROP_REINSTATE_UN_CHARTER] = un_saved[1];
+    for (int i = 0; i < extra_count; i++) {
+        *extra_globals[i] = extra_saved[i];
+    }
+    VehBattleUnkTgl[0] = draw_saved;
+    snap_free(&base); snap_free(&after_orig); snap_free(&after_new);
+    free(bung_saved); free(bung_o); free(proto_saved); free(proto_o);
+    logf("consider_designs: %d compared (original: %d prototype slots changed in %d runs, %d "
+        "suggestions recorded, %d base queues changed), %d mismatches", compared,
+        changed_designs, runs_changed, suggested, requeued, mismatches);
+    return mismatches;
+}
+
+// ---------------------------------------------------------------- batch 28: landmarks, map view caches
+
+static int test_mon_winning() {
+    typedef void mon_ii(int, int);
+    static const uint8_t entry[6] = { 0x55, 0x8B, 0xEC, 0xA1, 0xD4, 0x64 };
+    const struct { const char *name; uint32_t address; int record_id; mon_ii *repl; } fns[] = {
+        { "mon_winning_unify", 0x00477940, MONUMENT_WINNING_UNIFY, mon_winning_unify },
+        { "mon_winning_trans", 0x004779D0, MONUMENT_WINNING_TRANS, mon_winning_trans },
+    };
+    uint8_t *saved = (uint8_t *)malloc(MonumentTableSize);
+    uint8_t *after_o = (uint8_t *)malloc(MonumentTableSize);
+    memcpy(saved, MonumentTable, MonumentTableSize);
+    int compared = 0, mismatches = 0, recorded = 0;
+    for (const auto &fn : fns) {
+        for (int f = 0; f < MaxPlayerNum; f++) {
+            if (f == *FactionIDCurrent) {
+                continue; // the player at the controls gets the monument screen
+            }
+            uint32_t rule_flags = Players[f].rule_flags;
+            // as loaded; the record clear for everyone; the record already held; alien flag flipped
+            for (int variant = 0; variant < 4; variant++) {
+                auto prepare = [&]() {
+                    memcpy(MonumentTable, saved, MonumentTableSize);
+                    Players[f].rule_flags = rule_flags ^ (variant == 3 ? RFLAG_ALIEN : 0);
+                    if (variant == 1 || variant == 3) {
+                        for (int g = 0; g < MaxPlayerNum; g++) {
+                            Monuments[g].records[fn.record_id].achieved = false;
+                        }
+                    } else if (variant == 2) {
+                        Monuments[f].records[fn.record_id].achieved = true;
+                    }
+                };
+                for (int winner = -1; winner < 4; winner += 4) {
+                    prepare();
+                    {
+                        OriginalEntry orig(fn.address, entry);
+                        ((mon_ii *)fn.address)(f, winner);
+                    }
+                    memcpy(after_o, MonumentTable, MonumentTableSize);
+                    prepare();
+                    recorded += memcmp(after_o, MonumentTable, MonumentTableSize) != 0;
+                    fn.repl(f, winner);
+                    compared++;
+                    size_t d = first_diff(after_o, MonumentTable, MonumentTableSize);
+                    if (d != (size_t)-1) {
+                        if (mismatches < MAX_DETAIL) {
+                            logf("  %s(%d, %d) variant %d: monument byte %u differs (orig %02X new %02X)",
+                                fn.name, f, winner, variant, (unsigned)d, after_o[d], MonumentTable[d]);
+                        }
+                        mismatches++;
+                    }
+                }
+            }
+            Players[f].rule_flags = rule_flags;
+        }
+    }
+    memcpy(MonumentTable, saved, MonumentTableSize);
+    free(saved);
+    free(after_o);
+    logf("mon_winning: %d compared (%d changed the table in the original), %d mismatches", compared,
+        recorded, mismatches);
+    return mismatches;
+}
+
+static int test_energy_limit() {
+    static const uint8_t entry[6] = { 0xB8, 0x0A, 0x00, 0x00, 0x00, 0xC3 };
+    int compared = 0, mismatches = 0;
+    for (int f = -1; f <= MaxPlayerNum; f++) {
+        int orig_value;
+        {
+            OriginalEntry orig(0x00445440, entry);
+            orig_value = ((func_i *)0x00445440)(f);
+        }
+        int new_value = energy_limit(f);
+        compared++;
+        if (orig_value != new_value) {
+            if (mismatches < MAX_DETAIL) {
+                logf("  energy_limit(%d): orig %d new %d", f, orig_value, new_value);
+            }
+            mismatches++;
+        }
+    }
+    logf("energy_limit: %d compared, %d mismatches", compared, mismatches);
+    return mismatches;
+}
+
+static const uint32_t LandmarkReliefBits = BIT2_CRATER | BIT2_VOLCANO | BIT2_CANYON | BIT2_MESA | BIT2_RIDGE;
+
+static void landmark_tables(uint8_t *tables[5]) {
+    tables[0] = LandmarkAltCrater;
+    tables[1] = LandmarkAltVolcano;
+    tables[2] = LandmarkAltCanyon;
+    tables[3] = LandmarkAltMesa;
+    tables[4] = LandmarkAltRidge;
+}
+
+// Tile index to coordinates (the map holds every other x on a row).
+static void landmark_tile_xy(uint32_t i, int *x, int *y) {
+    *y = (int)(i / *MapLongitude);
+    *x = (int)(i % *MapLongitude) * 2 + (*y & 1);
+}
+
+// Mark a relief landmark tile as deleted (code -1 - code), as delete_landmark() leaves it.
+static BOOL landmark_mark_deleted(Map *tile) {
+    int code = (int)tile->bit2 >> 24;
+    if (!(tile->bit2 & LandmarkReliefBits) || code < 0) {
+        return false;
+    }
+    tile->bit2 = ((uint32_t)(-1 - code) << 24) | (tile->bit2 & 0xFFFFFF);
+    return true;
+}
+
+static int test_fixup_landmarks() {
+    static const uint8_t entry[6] = { 0x55, 0x8B, 0xEC, 0x83, 0xEC, 0x08 };
+    uint8_t *tables[5];
+    landmark_tables(tables);
+    uint8_t saved[5][LandmarkAltSize], after_o[5][LandmarkAltSize];
+    for (int t = 0; t < 5; t++) {
+        memcpy(saved[t], tables[t], LandmarkAltSize);
+    }
+    uint32_t *bit2_saved = (uint32_t *)malloc(*MapArea * sizeof(uint32_t));
+    for (uint32_t i = 0; i < *MapArea; i++) {
+        bit2_saved[i] = (*MapTiles)[i].bit2;
+    }
+    int compared = 0, mismatches = 0, cleared = 0;
+    for (int variant = 0; variant < 3; variant++) {
+        // as loaded; every other relief landmark tile deleted; every relief landmark tile deleted
+        int deleted = 0;
+        for (uint32_t i = 0; i < *MapArea; i++) {
+            Map *tile = &(*MapTiles)[i];
+            tile->bit2 = bit2_saved[i];
+            if (variant == 2 || (variant == 1 && i % 2)) {
+                landmark_mark_deleted(tile);
+            }
+            deleted += tile->bit2 && (int)tile->bit2 >> 24 < 0;
+        }
+        for (int t = 0; t < 5; t++) {
+            memset(tables[t], 0x5A, LandmarkAltSize);
+        }
+        {
+            OriginalEntry orig(0x00592940, entry);
+            ((func_void *)0x00592940)();
+        }
+        for (int t = 0; t < 5; t++) {
+            memcpy(after_o[t], tables[t], LandmarkAltSize);
+            memset(tables[t], 0xA5, LandmarkAltSize);
+        }
+        fixup_landmarks();
+        compared++;
+        for (int t = 0; t < 5; t++) {
+            size_t d = first_diff(after_o[t], tables[t], LandmarkAltSize);
+            if (d != (size_t)-1) {
+                if (mismatches < MAX_DETAIL) {
+                    logf("  fixup_landmarks variant %d: table %d entry %u differs (orig %02X new %02X)",
+                        variant, t, (unsigned)d, after_o[t][d], tables[t][d]);
+                }
+                mismatches++;
+            }
+        }
+        int zeroed = 0;
+        uint8_t *defaults[5] = { LandmarkAltCraterDefault, LandmarkAltVolcanoDefault,
+            LandmarkAltCanyonDefault, LandmarkAltMesaDefault, LandmarkAltRidgeDefault };
+        for (int t = 0; t < 5; t++) {
+            for (int e = 0; e < LandmarkAltSize; e++) {
+                zeroed += defaults[t][e] && !after_o[t][e];
+            }
+        }
+        logf("  fixup_landmarks variant %d: %d tiles with a negative code, %d entries zeroed by the original",
+            variant, deleted, zeroed);
+        cleared += zeroed;
+    }
+    for (uint32_t i = 0; i < *MapArea; i++) {
+        (*MapTiles)[i].bit2 = bit2_saved[i];
+    }
+    for (int t = 0; t < 5; t++) {
+        memcpy(tables[t], saved[t], LandmarkAltSize);
+    }
+    free(bit2_saved);
+    logf("fixup_landmarks: %d compared (%d entries zeroed in all), %d mismatches", compared, cleared,
+        mismatches);
+    return mismatches;
+}
+
+static int test_delete_landmark() {
+    static const uint8_t entry[6] = { 0x55, 0x8B, 0xEC, 0x51, 0xA1, 0xF0 };
+    const uint32_t cache_size = *MapArea * 12;
+    uint8_t *tables[5];
+    landmark_tables(tables);
+    uint8_t saved[5][LandmarkAltSize], after_o[5][LandmarkAltSize];
+    for (int t = 0; t < 5; t++) {
+        memcpy(saved[t], tables[t], LandmarkAltSize);
+    }
+    uint32_t bitfield_saved = *UnkBitfield1;
+    int unk_saved[MaxMapWinNum], unk_o[MaxMapWinNum];
+    uint8_t *cache_saved[MaxMapWinNum] = {}, *cache_o[MaxMapWinNum] = {};
+    int views = 0;
+    for (int w = 0; w < MaxMapWinNum; w++) {
+        unk_saved[w] = MapWinList[w]->unk_1;
+        if (MapWinList[w]->draw_toggle_a && MapWinList[w]->tile_cache) {
+            cache_saved[w] = (uint8_t *)malloc(cache_size);
+            cache_o[w] = (uint8_t *)malloc(cache_size);
+            memcpy(cache_saved[w], MapWinList[w]->tile_cache, cache_size);
+            views++;
+        }
+    }
+    int compared = 0, mismatches = 0, relief = 0, changed = 0;
+    for (int pass = 0; pass < 2; pass++) {
+        // pass 0 as loaded, pass 1 with the tile's landmark already deleted
+        for (uint32_t i = 0; i < *MapArea; i++) {
+            Map *tile = &(*MapTiles)[i];
+            const uint32_t bit2_saved = tile->bit2;
+            BOOL is_relief = (bit2_saved & LandmarkReliefBits) != 0;
+            if (!is_relief && (pass || i % (bit2_saved ? 13 : 97))) {
+                continue; // every relief tile, a sample of the others
+            }
+            int x, y;
+            landmark_tile_xy(i, &x, &y);
+            auto prepare = [&]() {
+                tile->bit2 = bit2_saved;
+                if (pass) {
+                    landmark_mark_deleted(tile);
+                }
+                for (int t = 0; t < 5; t++) {
+                    memcpy(tables[t], saved[t], LandmarkAltSize);
+                }
+                *UnkBitfield1 = bitfield_saved;
+                for (int w = 0; w < MaxMapWinNum; w++) {
+                    MapWinList[w]->unk_1 = unk_saved[w];
+                    if (cache_saved[w]) {
+                        memcpy(MapWinList[w]->tile_cache, cache_saved[w], cache_size);
+                    }
+                }
+            };
+            prepare();
+            {
+                OriginalEntry orig(0x005927D0, entry);
+                ((func_xy *)0x005927D0)(x, y);
+            }
+            uint32_t bit2_o = tile->bit2, bitfield_o = *UnkBitfield1;
+            for (int t = 0; t < 5; t++) {
+                memcpy(after_o[t], tables[t], LandmarkAltSize);
+            }
+            for (int w = 0; w < MaxMapWinNum; w++) {
+                unk_o[w] = MapWinList[w]->unk_1;
+                if (cache_o[w]) {
+                    memcpy(cache_o[w], MapWinList[w]->tile_cache, cache_size);
+                }
+            }
+            prepare();
+            changed += bit2_o != tile->bit2;
+            delete_landmark(x, y);
+            compared++;
+            relief += is_relief;
+            char what[96] = "";
+            if (bit2_o != tile->bit2) {
+                sprintf_s(what, "bit2 %08X vs %08X", bit2_o, tile->bit2);
+            } else if (bitfield_o != *UnkBitfield1) {
+                sprintf_s(what, "UnkBitfield1 %08X vs %08X", bitfield_o, *UnkBitfield1);
+            }
+            for (int t = 0; t < 5 && !what[0]; t++) {
+                size_t d = first_diff(after_o[t], tables[t], LandmarkAltSize);
+                if (d != (size_t)-1) {
+                    sprintf_s(what, "table %d entry %u: %02X vs %02X", t, (unsigned)d, after_o[t][d],
+                        tables[t][d]);
+                }
+            }
+            for (int w = 0; w < MaxMapWinNum && !what[0]; w++) {
+                if (unk_o[w] != MapWinList[w]->unk_1) {
+                    sprintf_s(what, "view %d unk_1 %d vs %d", w, unk_o[w], MapWinList[w]->unk_1);
+                } else if (cache_o[w]) {
+                    size_t d = first_diff(cache_o[w], MapWinList[w]->tile_cache, cache_size);
+                    if (d != (size_t)-1) {
+                        sprintf_s(what, "view %d cache byte %u: %02X vs %02X", w, (unsigned)d,
+                            cache_o[w][d], MapWinList[w]->tile_cache[d]);
+                    }
+                }
+            }
+            if (what[0]) {
+                if (mismatches < MAX_DETAIL) {
+                    logf("  delete_landmark(%d, %d) pass %d (bit2 %08X): %s", x, y, pass, bit2_saved, what);
+                }
+                mismatches++;
+            }
+            tile->bit2 = bit2_saved;
+        }
+    }
+    for (int t = 0; t < 5; t++) {
+        memcpy(tables[t], saved[t], LandmarkAltSize);
+    }
+    *UnkBitfield1 = bitfield_saved;
+    for (int w = 0; w < MaxMapWinNum; w++) {
+        MapWinList[w]->unk_1 = unk_saved[w];
+        if (cache_saved[w]) {
+            memcpy(MapWinList[w]->tile_cache, cache_saved[w], cache_size);
+            free(cache_saved[w]);
+            free(cache_o[w]);
+        }
+    }
+    logf("delete_landmark: %d compared (%d on relief landmark tiles, %d changed the tile in the original, "
+        "%d views in use), %d mismatches", compared, relief, changed, views, mismatches);
+    return mismatches;
+}
+
+// Bytes 0 to 9 of every 12-byte cache entry (terrain_fixup() leaves 10 and 11 as allocated).
+static size_t tile_cache_diff(const uint8_t *a, const uint8_t *b) {
+    for (uint32_t i = 0; i < *MapArea; i++) {
+        size_t d = first_diff(a + i * 12, b + i * 12, 10);
+        if (d != (size_t)-1) {
+            return i * 12 + d;
+        }
+    }
+    return (size_t)-1;
+}
+
+static int test_terrain_fixup() {
+    static const uint8_t entry[6] = { 0x55, 0x8B, 0xEC, 0x56, 0x8B, 0x75 };
+    typedef void func_win(void *);
+    struct FakeWin {
+        void *vtable;
+        uint8_t *tile_cache;
+    };
+    const uint8_t climate_saved = (*MapTiles)->climate;
+    const uint8_t climates[] = { climate_saved, 0x00, 0xD0, 0xFF, 0x25, 0x90 };
+    int compared = 0, mismatches = 0;
+    for (uint8_t climate : climates) {
+        (*MapTiles)->climate = climate;
+        for (int start = 0; start < 2; start++) {
+            // no cache yet; an old cache to free first
+            FakeWin win_o = { NULL, start ? (uint8_t *)_malloc(64) : NULL };
+            FakeWin win_n = { NULL, start ? (uint8_t *)_malloc(64) : NULL };
+            {
+                OriginalEntry orig(0x004711A0, entry);
+                ((func_win *)0x004711A0)(&win_o);
+            }
+            terrain_fixup((MapWin *)&win_n);
+            compared++;
+            size_t d = (win_o.tile_cache && win_n.tile_cache)
+                ? tile_cache_diff(win_o.tile_cache, win_n.tile_cache) : 0;
+            if (d != (size_t)-1) {
+                if (mismatches < MAX_DETAIL) {
+                    logf("  terrain_fixup climate %02X start %d: cache byte %d differs (orig %02X new %02X)",
+                        climate, start, (int)d, win_o.tile_cache ? win_o.tile_cache[d] : 0,
+                        win_n.tile_cache ? win_n.tile_cache[d] : 0);
+                }
+                mismatches++;
+            }
+            _free(win_o.tile_cache);
+            _free(win_n.tile_cache);
+        }
+    }
+    (*MapTiles)->climate = climate_saved;
+    {
+        OriginalEntry orig(0x004711A0, entry);
+        ((func_win *)0x004711A0)(NULL);
+    }
+    terrain_fixup(NULL);
+    compared++;
+    logf("terrain_fixup: %d compared (map area %u), %d mismatches", compared, *MapArea, mismatches);
+    return mismatches;
+}
+
+static int test_mapwin_terrain_fixup() {
+    static const uint8_t entry[6] = { 0x56, 0xBE, 0x3C, 0x3C, 0x7D, 0x00 };
+    static const uint8_t entry_tf[6] = { 0x55, 0x8B, 0xEC, 0x56, 0x8B, 0x75 };
+    const uint32_t cache_size = *MapArea * 12;
+    const int view_count = MaxMapWinNum + 3;
+    MapWin *views[MaxMapWinNum + 3];
+    for (int w = 0; w < MaxMapWinNum; w++) {
+        views[w] = MapWinList[w];
+    }
+    views[MaxMapWinNum] = MapWinUnk;
+    views[MaxMapWinNum + 1] = MapWinUnk2;
+    views[MaxMapWinNum + 2] = BaseMapWin;
+    uint8_t *saved[MaxMapWinNum + 3] = {}, *after_o[MaxMapWinNum + 3] = {};
+    for (int w = 0; w < view_count; w++) {
+        if (views[w]->tile_cache) {
+            saved[w] = (uint8_t *)malloc(cache_size);
+            memcpy(saved[w], views[w]->tile_cache, cache_size);
+        }
+        after_o[w] = (uint8_t *)malloc(cache_size);
+    }
+    // mark the caches so a rebuilt one shows, on both runs
+    auto mark = [&]() {
+        for (int w = 0; w < view_count; w++) {
+            if (views[w]->tile_cache) {
+                memset(views[w]->tile_cache, 0x33, cache_size);
+            }
+        }
+    };
+    int compared = 0, mismatches = 0, rebuilt = 0;
+    BOOL null_o[MaxMapWinNum + 3];
+    mark();
+    {
+        OriginalEntry orig(0x00471240, entry);
+        OriginalEntry orig_tf(0x004711A0, entry_tf);
+        ((func_void *)0x00471240)();
+    }
+    for (int w = 0; w < view_count; w++) {
+        null_o[w] = !views[w]->tile_cache;
+        if (!null_o[w]) {
+            memcpy(after_o[w], views[w]->tile_cache, cache_size);
+            rebuilt += after_o[w][0] != 0x33;
+        }
+    }
+    mark();
+    mapwin_terrain_fixup();
+    for (int w = 0; w < view_count; w++) {
+        compared++;
+        size_t d = (size_t)-1;
+        if (null_o[w] != !views[w]->tile_cache) {
+            d = 0;
+        } else if (!null_o[w]) {
+            d = tile_cache_diff(after_o[w], views[w]->tile_cache);
+        }
+        if (d != (size_t)-1) {
+            if (mismatches < MAX_DETAIL) {
+                logf("  mapwin_terrain_fixup view %d: cache byte %d differs (orig null %d, new null %d)", w,
+                    (int)d, null_o[w], !views[w]->tile_cache);
+            }
+            mismatches++;
+        }
+    }
+    // the rebuilt caches are valid as they are (all heights to be worked out again); put back the
+    // ones that were not rebuilt
+    for (int w = 0; w < view_count; w++) {
+        if (saved[w] && views[w]->tile_cache) {
+            memcpy(views[w]->tile_cache, saved[w], cache_size);
+        }
+        free(saved[w]);
+        free(after_o[w]);
+    }
+    logf("mapwin_terrain_fixup: %d views compared (%d rebuilt by the original), %d mismatches", compared,
+        rebuilt, mismatches);
+    return mismatches;
+}
+
+// Tiles without a base for base_init(): land and sea, own territory, others' and unclaimed.
+static int base_init_tiles(int faction_id, int (*tiles)[2], int max) {
+    int count = 0, land = 0, sea = 0, own = 0;
+    const uint32_t step = 97 + faction_id * 2;
+    for (uint32_t n = 0, i = faction_id * 31; n < *MapArea && count < max; n++, i = (i + step) % *MapArea) {
+        Map *tile = &(*MapTiles)[i];
+        if (tile->bit & BIT_BASE_IN_TILE) {
+            continue;
+        }
+        int x, y;
+        landmark_tile_xy(i, &x, &y);
+        BOOL ocean = is_ocean(x, y);
+        BOOL mine = tile->territory == faction_id;
+        if ((ocean && sea >= max / 3) || (!ocean && land >= max - max / 3) || (mine && own >= max / 2)) {
+            continue;
+        }
+        tiles[count][0] = x;
+        tiles[count][1] = y;
+        count++;
+        sea += ocean;
+        land += !ocean;
+        own += mine;
+    }
+    return count;
+}
+
+static int test_base_init() {
+    typedef int func_base_init(uint32_t, int, int);
+    static const uint8_t entry[6] = { 0x55, 0x8B, 0xEC, 0x83, 0xEC, 0x0C };
+    int *const replay_offset = (int *)0x009469F8;
+    uint8_t *const replay = (uint8_t *)0x00950324;
+    const int replay_saved = *replay_offset;
+    uint8_t replay_o[8];
+    uint8_t globals_saved[BaseGlobalsSize], globals_o[BaseGlobalsSize];
+    memcpy(globals_saved, BaseGlobals, BaseGlobalsSize);
+    const int turn_saved = *TurnCurrentNum;
+    const BOOL net_saved = *IsMultiplayerNet;
+    const int selected_saved = *BaseIDCurrentSelected;
+    const int compute_saved = *BaseComputeID;
+    Base *const current_saved = *BaseCurrent;
+    const uint32_t bitfield_saved = *UnkBitfield1;
+    GameSnapshot base, after_orig, after_new;
+    snap_alloc(&base); snap_alloc(&after_orig); snap_alloc(&after_new);
+    snap_take(&base);
+    const int count = base.base_count_global;
+    if (count >= MaxBaseNum) {
+        logf("base_init: base table full, skipped");
+        snap_free(&base); snap_free(&after_orig); snap_free(&after_new);
+        return 0;
+    }
+    Base slot_saved = Bases[count]; // the slot the new base goes into
+    Base slot_o;
+    int compared = 0, mismatches = 0, first_bases = 0, sea_bases = 0;
+    char label[96];
+    // variant 0: as loaded; 1: turn 0; 2: the faction's first base; 3: first base in a network
+    // game; 4: first base at turn 80; 5: first base at turn 0; 6: base table full
+    auto run = [&](BOOL orig, int f, int x, int y, int variant, int *ret, int *rand_next) {
+        snap_restore(&base);
+        Bases[count] = slot_saved;
+        memset(&Bases[count].facilities_built[9], 0x5A, 3); // left as they were by the original
+        *replay_offset = replay_saved;
+        memcpy(BaseGlobals, globals_saved, BaseGlobalsSize);
+        *BaseIDCurrentSelected = selected_saved;
+        *BaseComputeID = compute_saved;
+        *BaseCurrent = current_saved;
+        *UnkBitfield1 = bitfield_saved;
+        *TurnCurrentNum = (variant == 1 || variant == 5) ? 0 : (variant == 4 ? 80 : turn_saved);
+        *IsMultiplayerNet = variant == 3;
+        if (variant >= 2 && variant <= 5) {
+            PlayersData[f].current_num_bases = 0;
+        } else if (variant == 6) {
+            *BaseCurrentCount = MaxBaseNum;
+        }
+        reseed((uint32_t)(f * 977 + x * 7 + y + variant));
+        if (orig) {
+            OriginalEntry original(0x004E4B80, entry);
+            *ret = ((func_base_init *)0x004E4B80)(f, x, y);
+        } else {
+            *ret = base_init(f, x, y);
+        }
+        *rand_next = _rand();
+    };
+    static int tiles[8][2];
+    for (int f = 1; f < MaxPlayerNum; f++) {
+        int tile_count = base_init_tiles(f, tiles, 6);
+        for (int t = 0; t < tile_count; t++) {
+            int x = tiles[t][0], y = tiles[t][1];
+            for (int v = 0; v < 7; v++) {
+                if (v == 6 && (f != 1 || t)) {
+                    continue;
+                }
+                int ret_o, ret_n, rand_o, rand_n;
+                REGRESS_CTX("base_init(%d, %d, %d) variant %d", f, x, y, v);
+                run(true, f, x, y, v, &ret_o, &rand_o);
+                snap_take(&after_orig);
+                slot_o = Bases[count];
+                int replay_end_o = *replay_offset;
+                memcpy(replay_o, replay + replay_saved, sizeof(replay_o));
+                memcpy(globals_o, BaseGlobals, BaseGlobalsSize);
+                int selected_o = *BaseIDCurrentSelected, compute_o = *BaseComputeID;
+                Base *current_o = *BaseCurrent;
+                uint32_t bitfield_o = *UnkBitfield1;
+                run(false, f, x, y, v, &ret_n, &rand_n);
+                snap_take(&after_new);
+                compared++;
+                if (ret_o >= 0) {
+                    first_bases += v >= 2;
+                    sea_bases += is_ocean(x, y);
+                }
+                sprintf_s(label, "base_init(%d, %d, %d) variant %d", f, x, y, v);
+                BOOL diff = false;
+                if (ret_o != ret_n || rand_o != rand_n || replay_end_o != *replay_offset
+                    || selected_o != *BaseIDCurrentSelected || compute_o != *BaseComputeID
+                    || current_o != *BaseCurrent || bitfield_o != *UnkBitfield1
+                    || (replay_end_o != replay_saved && memcmp(replay_o, replay + replay_saved, sizeof(replay_o)))) {
+                    if (mismatches < MAX_DETAIL) {
+                        logf("  %s: orig %d rand %d replay %d selected %d compute %d bits %08X; new %d "
+                            "rand %d replay %d selected %d compute %d bits %08X", label, ret_o, rand_o,
+                            replay_end_o, selected_o, compute_o, bitfield_o, ret_n, rand_n,
+                            *replay_offset, *BaseIDCurrentSelected, *BaseComputeID, *UnkBitfield1);
+                    }
+                    diff = true;
+                }
+                if (!diff) {
+                    diff = snap_differs(&after_orig, &after_new, mismatches < MAX_DETAIL ? label : NULL);
+                }
+                size_t at;
+                if (!diff && (at = first_diff(&slot_o, &Bases[count], sizeof(Base))) != (size_t)-1) {
+                    if (mismatches < MAX_DETAIL) {
+                        logf("  %s: new Base +0x%X differs (orig %02X new %02X)", label, (unsigned)at,
+                            ((uint8_t *)&slot_o)[at], ((uint8_t *)&Bases[count])[at]);
+                    }
+                    diff = true;
+                }
+                if (!diff && base_globals_differ(globals_o, BaseGlobals, mismatches < MAX_DETAIL ? label : NULL)) {
+                    diff = true;
+                }
+                if (diff) {
+                    mismatches++;
+                }
+            }
+        }
+    }
+    snap_restore(&base);
+    Bases[count] = slot_saved;
+    *replay_offset = replay_saved;
+    memcpy(BaseGlobals, globals_saved, BaseGlobalsSize);
+    *BaseIDCurrentSelected = selected_saved;
+    *BaseComputeID = compute_saved;
+    *BaseCurrent = current_saved;
+    *UnkBitfield1 = bitfield_saved;
+    *TurnCurrentNum = turn_saved;
+    *IsMultiplayerNet = net_saved;
+    snap_free(&base); snap_free(&after_orig); snap_free(&after_new);
+    logf("base_init: %d compared (by the original: %d first bases, %d at sea), %d mismatches", compared,
+        first_bases, sea_bases, mismatches);
+    return mismatches;
+}
+
+// battle_fight_2() fights the battle: record what battle_fight() hands it instead
+static int BattleFight2Args[7];
+static int BattleFight2Count;
+static int __cdecl battle_fight_2_recorder(int veh_id, int offset, int x, int y, BOOL is_arty, int unk1,
+                                           int unk2) {
+    const int args[7] = { veh_id, offset, x, y, is_arty, unk1, unk2 };
+    memcpy(BattleFight2Args, args, sizeof(args));
+    BattleFight2Count++;
+    return veh_id * 3 + offset; // something the caller passes back
+}
+
+static int test_battle_fight() {
+    typedef int func_bf(int, int, BOOL, int, int);
+    static const uint8_t entry[6] = { 0x55, 0x8B, 0xEC, 0x53, 0x8B, 0x5D };
+    JmpStub stub(0x00506AF0, (void *)battle_fight_2_recorder);
+    if (!stub.ok) {
+        return 1;
+    }
+    const BOOL flat_saved = *MapIsFlat;
+    int compared = 0, mismatches = 0, wrapped = 0;
+    for (int flat = 0; flat < 2; flat++) {
+        *MapIsFlat = flat ? !flat_saved : flat_saved;
+        for (int veh_id = 0; veh_id < *VehCurrentCount; veh_id += (Vehs[veh_id].x < 3
+                || Vehs[veh_id].x >= *MapLongitudeBounds - 3) ? 1 : 7) {
+            for (int arty = 0; arty < 2; arty++) {
+                for (int offset = 0; offset < (arty ? 25 : 9); offset++) {
+                    int args_o[7], ret_o, ret_n;
+                    BattleFight2Count = 0;
+                    {
+                        OriginalEntry orig(0x00506A60, entry);
+                        ret_o = ((func_bf *)0x00506A60)(veh_id, offset, arty, veh_id & 1, offset & 2);
+                    }
+                    memcpy(args_o, BattleFight2Args, sizeof(args_o));
+                    int count_o = BattleFight2Count;
+                    BattleFight2Count = 0;
+                    ret_n = battle_fight(veh_id, offset, arty, veh_id & 1, offset & 2);
+                    compared++;
+                    int x_raw = Vehs[veh_id].x + (arty ? RadiusOffsetX[offset] : RadiusBaseX[offset]);
+                    wrapped += x_raw != args_o[2];
+                    if (ret_o != ret_n || count_o != BattleFight2Count
+                        || memcmp(args_o, BattleFight2Args, sizeof(args_o))) {
+                        if (mismatches < MAX_DETAIL) {
+                            logf("  battle_fight(%d, %d, %d) flat %d: orig (%d, %d) ret %d, new (%d, %d) ret %d",
+                                veh_id, offset, arty, *MapIsFlat, args_o[2], args_o[3], ret_o,
+                                BattleFight2Args[2], BattleFight2Args[3], ret_n);
+                        }
+                        mismatches++;
+                    }
+                }
+            }
+        }
+    }
+    *MapIsFlat = flat_saved;
+    logf("battle_fight: %d compared (%d wrapped x), %d mismatches", compared, wrapped, mismatches);
+    return mismatches;
+}
+
+static int test_compute_odds() {
+    typedef int func_odds(int, uint32_t, int, int, int);
+    static const uint8_t entry[6] = { 0x55, 0x8B, 0xEC, 0x83, 0xEC, 0x20 };
+    const int odds_values[] = { 1, 7, 100, 12345 };
+    int compared = 0, mismatches = 0, air = 0, at_base = 0, changed = 0;
+    for (uint32_t f = 1; f < MaxPlayerNum; f++) {
+        const uint32_t flags_saved = PlayersData[f].flags;
+        // attackers: up to four units of each triad of the faction
+        int attackers[12], atk_count = 0, per_triad[3] = {};
+        for (int v = 0; v < *VehCurrentCount && atk_count < 12; v++) {
+            if (Vehs[v].faction_id != f) {
+                continue;
+            }
+            int t = Chassis[VehPrototypes[Vehs[v].proto_id].chassis_id].triad;
+            if (t <= TRIAD_AIR && per_triad[t] < 4) {
+                per_triad[t]++;
+                attackers[atk_count++] = v;
+            }
+        }
+        for (int a = 0; a < atk_count; a++) {
+            int veh_id_atk = attackers[a];
+            BOOL is_air = Chassis[VehPrototypes[Vehs[veh_id_atk].proto_id].chassis_id].triad == TRIAD_AIR;
+            for (int veh_id_def = (int)(f * 13 + a) % 17; veh_id_def < *VehCurrentCount; veh_id_def += 17) {
+                if (Vehs[veh_id_def].faction_id == f) {
+                    continue;
+                }
+                int base_at_def = base_at(Vehs[veh_id_def].x, Vehs[veh_id_def].y);
+                const int base_ids[] = { -2, -1, base_at_def };
+                for (int b = 0; b < 3; b++) {
+                    if (b == 2 && base_at_def < 0) {
+                        continue;
+                    }
+                    for (int flag = 0; flag < 2; flag++) {
+                        PlayersData[f].flags = flag ? flags_saved ^ PFLAG_UNK_80000 : flags_saved;
+                        for (int odds : odds_values) {
+                            int ret_o, ret_n;
+                            {
+                                OriginalEntry orig(0x00565F20, entry);
+                                ret_o = ((func_odds *)0x00565F20)(odds, f, veh_id_atk, veh_id_def, base_ids[b]);
+                            }
+                            ret_n = compute_odds(odds, f, veh_id_atk, veh_id_def, base_ids[b]);
+                            compared++;
+                            air += is_air;
+                            at_base += base_at_def >= 0 && b != 1;
+                            changed += ret_o != odds;
+                            if (ret_o != ret_n) {
+                                if (mismatches < MAX_DETAIL) {
+                                    logf("  compute_odds(%d, %u, %d, %d, %d) flag %d: orig %d new %d", odds, f,
+                                        veh_id_atk, veh_id_def, base_ids[b], flag, ret_o, ret_n);
+                                }
+                                mismatches++;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        PlayersData[f].flags = flags_saved;
+    }
+    logf("compute_odds: %d compared (%d air attackers, %d at a base, %d changed the odds), %d mismatches",
+        compared, air, at_base, changed, mismatches);
+    return mismatches;
+}
+
+// name_base() was redirected upstream ("added some minor randomization for sea bases"); base_init()
+// calls it on both sides, so check it against the exe's own code separately.
+static int test_name_base() {
+    typedef void func_name_base(uint32_t, LPSTR, BOOL, BOOL);
+    static const uint8_t entry[6] = { 0x55, 0x8B, 0xEC, 0x83, 0xEC, 0x54 };
+    const uint32_t offsets[] = { 0, 1, 2, 3, 5, 8, 13, 21, 34, 60, 120 };
+    const int gender_saved = *GenderDefault, plural_saved = *PluralityDefault;
+    int compared = 0, mismatches = 0, generic = 0;
+    for (uint32_t f = 1; f < MaxPlayerNum; f++) {
+        const uint32_t land_saved = PlayersData[f].base_name_offset;
+        const uint32_t sea_saved = PlayersData[f].base_sea_name_offset;
+        for (uint32_t offset : offsets) {
+            for (int sea = 0; sea < 2; sea++) {
+                for (int is_final = 0; is_final < 2; is_final++) {
+                    char name_o[32], name_n[32];
+                    memset(name_o, 0x77, sizeof(name_o));
+                    memset(name_n, 0x77, sizeof(name_n));
+                    PlayersData[f].base_name_offset = offset;
+                    PlayersData[f].base_sea_name_offset = offset / 2;
+                    *GenderDefault = 9;
+                    *PluralityDefault = 9;
+                    {
+                        OriginalEntry orig(0x004E4090, entry);
+                        ((func_name_base *)0x004E4090)(f, name_o, is_final, sea);
+                    }
+                    uint32_t land_o = PlayersData[f].base_name_offset;
+                    uint32_t sea_o = PlayersData[f].base_sea_name_offset;
+                    int gender_o = *GenderDefault, plural_o = *PluralityDefault;
+                    PlayersData[f].base_name_offset = offset;
+                    PlayersData[f].base_sea_name_offset = offset / 2;
+                    *GenderDefault = 9;
+                    *PluralityDefault = 9;
+                    name_base(f, name_n, is_final, sea);
+                    compared++;
+                    generic += strchr(name_o, ' ') && isdigit((uint8_t)name_o[strlen(name_o) - 1]);
+                    if (memcmp(name_o, name_n, sizeof(name_o)) || land_o != PlayersData[f].base_name_offset
+                        || sea_o != PlayersData[f].base_sea_name_offset || gender_o != *GenderDefault
+                        || plural_o != *PluralityDefault) {
+                        if (mismatches < MAX_DETAIL) {
+                            logf("  name_base(%u) offset %u sea %d final %d: orig '%.24s' (%u/%u) new '%.24s' (%u/%u)",
+                                f, offset, sea, is_final, name_o, land_o, sea_o, name_n,
+                                PlayersData[f].base_name_offset, PlayersData[f].base_sea_name_offset);
+                        }
+                        mismatches++;
+                    }
+                }
+            }
+        }
+        PlayersData[f].base_name_offset = land_saved;
+        PlayersData[f].base_sea_name_offset = sea_saved;
+    }
+    *GenderDefault = gender_saved;
+    *PluralityDefault = plural_saved;
+    logf("name_base: %d compared (%d default names by the original), %d mismatches", compared, generic,
+        mismatches);
+    return mismatches;
+}
+
+// ---------------------------------------------------------------- batch 29: native life and world
+
+// alien_fauna() draws, focuses the map and opens popups for the player at the controls: record
+// those calls instead (with the parse text at the time of a popup).
+struct FaunaCall { int fn, args[3]; char text[40]; };
+static FaunaCall FaunaCalls[64];
+static int FaunaCallCount;
+static int FaunaFocusAnswer;
+static void fauna_call_record(int fn, int a0, int a1, int a2, const char *text) {
+    if (FaunaCallCount < 64) {
+        FaunaCall c = { fn, { a0, a1, a2 }, "" };
+        if (text) {
+            strncpy_s(c.text, text, _TRUNCATE);
+        }
+        FaunaCalls[FaunaCallCount] = c;
+    }
+    FaunaCallCount++;
+}
+static void __cdecl fauna_draw_tile_recorder(int x, int y, int mode) {
+    fauna_call_record(1, x, y, mode, NULL);
+}
+static void __cdecl fauna_draw_tiles_recorder(int x, int y, int mode) {
+    fauna_call_record(2, x, y, mode, NULL);
+}
+static int __fastcall fauna_focus_recorder(void *This, void *, int x, int y) {
+    fauna_call_record(3, (int)This, x, y, NULL);
+    return FaunaFocusAnswer;
+}
+static int __cdecl fauna_pop2_recorder(LPCSTR label, LPCSTR pcx, int unk) {
+    char text[40];
+    // truncating: sprintf_s ends the process (0xC0000409) when the text is longer than the buffer
+    _snprintf_s(text, _TRUNCATE, "%s|%s|%s", label ? label : "", pcx ? pcx : "", ParseStrBuffer[0].str);
+    fauna_call_record(4, unk, 0, 0, text);
+    return 0;
+}
+
+// Call fn (alien_fauna or the original) with the two stack slots it can read before writing them
+// seeded: at its entry [esp_entry - 0x10] (the original's [ebp-0xc]) and [esp_entry - 8] ([ebp-4]);
+// returns what it leaves there.
+static __declspec(naked) void fauna_seeded_call(void *fn, int seed_c, int seed_4, int *out_c,
+                                                int *out_4) {
+    __asm {
+        mov eax, [esp + 8]
+        mov [esp - 0x14], eax       // esp_entry = esp - 4 at the call
+        mov eax, [esp + 12]
+        mov [esp - 0xC], eax
+        mov eax, [esp + 4]
+        call eax
+        mov eax, [esp - 0x14]
+        mov ecx, [esp + 16]
+        mov [ecx], eax
+        mov eax, [esp - 0xC]
+        mov ecx, [esp + 20]
+        mov [ecx], eax
+        ret
+    }
+}
+
+static int test_alien_fauna() {
+    static const uint8_t entry[6] = { 0x55, 0x8B, 0xEC, 0x83, 0xEC, 0x3C };
+    JmpStub encounter_stub(0x0055E370, (void *)encounter_recorder);
+    JmpStub interlude_stub(0x005230E0, (void *)interlude_recorder);
+    JmpStub draw_tile_stub(0x0046AF40, (void *)fauna_draw_tile_recorder);
+    JmpStub draw_tiles_stub(0x0046B140, (void *)fauna_draw_tiles_recorder);
+    JmpStub focus_stub(0x0046B310, (void *)fauna_focus_recorder);
+    JmpStub pop2_stub(0x00405140, (void *)fauna_pop2_recorder);
+    TimeGetTimePin pin; // the SMACX sealurk choice reads the clock
+    if (!encounter_stub.ok || !interlude_stub.ok || !draw_tile_stub.ok || !draw_tiles_stub.ok
+        || !focus_stub.ok || !pop2_stub.ok || !pin.ok()) {
+        logf("alien_fauna: cannot stub the UI calls or pin timeGetTime");
+        return 1;
+    }
+    GameSnapshot base, after_orig, after_new;
+    snap_alloc(&base); snap_alloc(&after_orig); snap_alloc(&after_new);
+    snap_take(&base);
+    const int count = base.veh_count_global;
+    const int spare = (MaxVehNum - count) < 160 ? (MaxVehNum - count) : 160;
+    Veh *slots_saved = (Veh *)malloc(sizeof(Veh) * (spare > 0 ? spare : 1));
+    Veh *slots_o = (Veh *)malloc(sizeof(Veh) * (spare > 0 ? spare : 1));
+    memcpy(slots_saved, &Vehs[count], sizeof(Veh) * spare);
+    const int turn_saved = *TurnCurrentNum;
+    const int current_saved = *FactionIDCurrent;
+    const BOOL expansion_saved = *ExpansionEnabled;
+    const uint32_t rules_saved = *GameRules;
+    const int dist_saved = *BaseFindDist;
+    const int compute_saved = *BaseComputeID;
+    char256 parse_saved[2];
+    memcpy(parse_saved, ParseStrBuffer, sizeof(parse_saved));
+    const int every = (5 - (int)*MapNativeLifeForms) * 2;
+    const int birth_turn = (turn_saved / every) * every ? (turn_saved / every) * every : every;
+    int compared = 0, mismatches = 0, born = 0, draws = 0, popups = 0, stale_draws = 0;
+    int seed_c = 0, seed_4 = 0;
+    char label[96];
+    // variant 0: as loaded; 1: a turn when native life is born; 2: the same, other clock parity
+    // and SMACX flipped; 3: early game birth turn; 4: no forest or kelp left (the stack slots
+    // reach the redraw); 5: no native life (scenario rule); 6: unit table nearly full
+    auto run = [&](BOOL orig, int variant, int seed, int *slot_c, int *slot_4, int *rand_next) {
+        snap_restore(&base);
+        memcpy(&Vehs[count], slots_saved, sizeof(Veh) * spare);
+        *BaseFindDist = dist_saved;
+        *BaseComputeID = compute_saved;
+        memcpy(ParseStrBuffer, parse_saved, sizeof(parse_saved));
+        *TurnCurrentNum = variant == 0 || variant >= 5 ? turn_saved : (variant == 3 ? every : birth_turn);
+        *FactionIDCurrent = 1 + seed % (MaxPlayerNum - 1);
+        *ExpansionEnabled = variant == 2 ? !expansion_saved : expansion_saved;
+        *GameRules = variant == 5 ? rules_saved | RULES_SCN_NO_NATIVE_LIFE : rules_saved;
+        if (variant == 4) {
+            for (uint32_t i = 0; i < *MapArea; i++) {
+                (*MapTiles)[i].bit &= ~(BIT_FOREST | BIT_FARM);
+            }
+        } else if (variant == 6) {
+            *VehCurrentCount = 0x700;
+        }
+        FixedTimeValue = (DWORD)(seed * 7 + variant);
+        FaunaFocusAnswer = seed & 1;
+        FaunaCallCount = 0;
+        SpotCallCount = 0;
+        reseed((uint32_t)(seed * 977 + variant * 31 + 5));
+        seed_c = (seed % 3) ? seed * 13 % *MapLongitudeBounds : 0x7FFF0000 + seed;
+        seed_4 = (seed % 3) ? seed * 7 % *MapLatitudeBounds : -1 - seed;
+        if (orig) {
+            OriginalEntry original(0x00522180, entry);
+            fauna_seeded_call((void *)0x00522180, seed_c, seed_4, slot_c, slot_4);
+        } else {
+            fauna_seeded_call((void *)alien_fauna, seed_c, seed_4, slot_c, slot_4);
+        }
+        *rand_next = _rand();
+    };
+    static FaunaCall calls_o[64];
+    static SpotCall spots_o[32];
+    for (int variant = 0; variant < 7; variant++) {
+        for (int seed = 0; seed < 12; seed++) {
+            int c_o, d_o, r_o, c_n, d_n, r_n;
+            REGRESS_CTX("alien_fauna() variant %d seed %d", variant, seed);
+            run(true, variant, seed, &c_o, &d_o, &r_o);
+            snap_take(&after_orig);
+            memcpy(slots_o, &Vehs[count], sizeof(Veh) * spare);
+            int calls_count_o = FaunaCallCount, spots_count_o = SpotCallCount;
+            memcpy(calls_o, FaunaCalls, sizeof(calls_o));
+            memcpy(spots_o, SpotCalls, sizeof(spots_o));
+            int dist_o = *BaseFindDist, compute_o = *BaseComputeID;
+            char parse_o[256];
+            memcpy(parse_o, ParseStrBuffer[0].str, sizeof(parse_o));
+            int new_count = *VehCurrentCount - (variant == 6 ? 0x700 : count);
+            run(false, variant, seed, &c_n, &d_n, &r_n);
+            snap_take(&after_new);
+            compared++;
+            born += new_count > 0 ? new_count : 0;
+            for (int i = 0; i < calls_count_o && i < 64; i++) {
+                draws += calls_o[i].fn <= 2;
+                popups += calls_o[i].fn == 4;
+                stale_draws += calls_o[i].fn == 1 && seed % 3 == 0
+                    && (calls_o[i].args[0] == seed_c || calls_o[i].args[1] == seed_4);
+            }
+            sprintf_s(label, "alien_fauna() variant %d seed %d", variant, seed);
+            BOOL diff = false;
+            if (r_o != r_n || c_o != c_n || d_o != d_n || calls_count_o != FaunaCallCount
+                || spots_count_o != SpotCallCount || dist_o != *BaseFindDist
+                || compute_o != *BaseComputeID || strcmp(parse_o, ParseStrBuffer[0].str)) {
+                if (mismatches < MAX_DETAIL) {
+                    logf("  %s: orig rand %d slots %d,%d calls %d spots %d dist %d; new rand %d slots %d,%d "
+                        "calls %d spots %d dist %d", label, r_o, c_o, d_o, calls_count_o, spots_count_o,
+                        dist_o, r_n, c_n, d_n, FaunaCallCount, SpotCallCount, *BaseFindDist);
+                }
+                diff = true;
+            }
+            int recorded = calls_count_o < 64 ? calls_count_o : 64;
+            for (int i = 0; i < recorded && !diff; i++) {
+                if (calls_o[i].fn != FaunaCalls[i].fn || memcmp(calls_o[i].args, FaunaCalls[i].args,
+                    sizeof(calls_o[i].args)) || strcmp(calls_o[i].text, FaunaCalls[i].text)) {
+                    if (mismatches < MAX_DETAIL) {
+                        logf("  %s: call %d orig %d(%d, %d, %d) '%s' new %d(%d, %d, %d) '%s'", label, i,
+                            calls_o[i].fn, calls_o[i].args[0], calls_o[i].args[1], calls_o[i].args[2],
+                            calls_o[i].text, FaunaCalls[i].fn, FaunaCalls[i].args[0],
+                            FaunaCalls[i].args[1], FaunaCalls[i].args[2], FaunaCalls[i].text);
+                    }
+                    diff = true;
+                }
+            }
+            int spots = spots_count_o < 32 ? spots_count_o : 32;
+            if (!diff && memcmp(spots_o, SpotCalls, sizeof(SpotCall) * spots)) {
+                if (mismatches < MAX_DETAIL) {
+                    logf("  %s: contact/interlude calls differ", label);
+                }
+                diff = true;
+            }
+            if (!diff) {
+                diff = snap_differs(&after_orig, &after_new, mismatches < MAX_DETAIL ? label : NULL);
+            }
+            size_t at;
+            if (!diff && (at = first_diff(slots_o, &Vehs[count], sizeof(Veh) * spare)) != (size_t)-1) {
+                if (mismatches < MAX_DETAIL) {
+                    logf("  %s: new Veh %u +0x%X differs", label, (unsigned)(count + at / sizeof(Veh)),
+                        (unsigned)(at % sizeof(Veh)));
+                }
+                diff = true;
+            }
+            if (diff) {
+                mismatches++;
+            }
+        }
+    }
+    snap_restore(&base);
+    memcpy(&Vehs[count], slots_saved, sizeof(Veh) * spare);
+    *TurnCurrentNum = turn_saved;
+    *FactionIDCurrent = current_saved;
+    *ExpansionEnabled = expansion_saved;
+    *GameRules = rules_saved;
+    *BaseFindDist = dist_saved;
+    *BaseComputeID = compute_saved;
+    memcpy(ParseStrBuffer, parse_saved, sizeof(parse_saved));
+    free(slots_saved);
+    free(slots_o);
+    snap_free(&base); snap_free(&after_orig); snap_free(&after_new);
+    logf("alien_fauna: %d compared (by the original: %d units born, %d redraws, %d popups, %d redraws "
+        "at the seeded junk stack values), %d mismatches", compared, born, draws, popups, stale_draws,
+        mismatches);
+    return mismatches;
+}
+
+static int test_world_rivers() {
+    static const uint8_t entry[6] = { 0x55, 0x8B, 0xEC, 0x81, 0xEC, 0x8C };
+    SnapHarness h("world_rivers");
+    const BOOL flat_saved = *MapIsFlat;
+    int extra = 0;
+    char label[96];
+    // variant 0: as loaded; 1: every 23rd land tile becomes a source too; 2: the same on a flat
+    // map; 3: every 7th land tile a source
+    for (int variant = 0; variant < 4; variant++) {
+        auto prepare = [&]() {
+            *MapIsFlat = variant == 2 ? !flat_saved : flat_saved;
+            if (variant) {
+                int every = variant == 3 ? 7 : 23;
+                for (uint32_t i = 0; i < *MapArea; i++) {
+                    Map *tile = &(*MapTiles)[i];
+                    if ((tile->climate & 0xE0) >= 0x60 && !(i % every)) {
+                        tile->bit |= BIT_RIVERBED;
+                    }
+                }
+            }
+        };
+        uint32_t seed_o = 0, seed_n = 0;
+        int rand_o = 0, rand_n = 0;
+        sprintf_s(label, "world_rivers() variant %d", variant);
+        REGRESS_CTX("%s", label);
+        h.compare(label,
+            [&] {
+                prepare();
+                reseed(variant + 1);
+                {
+                    OriginalEntry orig(0x005C38B0, entry);
+                    ((func_void *)0x005C38B0)();
+                }
+                seed_o = Rand->get_seed();
+                rand_o = _rand();
+            },
+            [&] {
+                prepare();
+                reseed(variant + 1);
+                world_rivers();
+                seed_n = Rand->get_seed();
+                rand_n = _rand();
+            });
+        if (seed_o != seed_n || rand_o != rand_n) {
+            logf("  %s: random state differs (orig %08X/%d new %08X/%d)", label, seed_o, rand_o, seed_n,
+                rand_n);
+            extra++;
+        }
+    }
+    *MapIsFlat = flat_saved;
+    return h.report() + extra;
+}
+
+// world_climate() ends by redrawing the map views; record those calls instead.
+static int ClimateClearCalls[16];
+static int ClimateClearCount;
+static void __fastcall climate_mapwin_clear_recorder(void *This, void *) {
+    if (ClimateClearCount < 16) {
+        ClimateClearCalls[ClimateClearCount] = (int)This;
+    }
+    ClimateClearCount++;
+}
+static void __fastcall climate_worldwin_clear_recorder(void *This, void *) {
+    if (ClimateClearCount < 16) {
+        ClimateClearCalls[ClimateClearCount] = -(int)This;
+    }
+    ClimateClearCount++;
+}
+
+static int test_world_climate() {
+    static const uint8_t entry[6] = { 0x6A, 0x02, 0xE8, 0x29, 0x8D, 0xF5 };
+    JmpStub mapwin_stub(0x0046FD90, (void *)climate_mapwin_clear_recorder);
+    JmpStub worldwin_stub(0x004C45E0, (void *)climate_worldwin_clear_recorder);
+    TimeGetTimePin pin; // the climate ends by reseeding from the clock
+    if (!mapwin_stub.ok || !worldwin_stub.ok || !pin.ok()) {
+        logf("world_climate: cannot stub the redraws or pin timeGetTime");
+        return 1;
+    }
+    SnapHarness h("world_climate");
+    h.empty_world(); // world_shorelines() runs alt_set(), which submerges bases and kills units
+    const BOOL halted_saved = *GameHalted;
+    const BOOL build_saved = *WorldBuildUnk2;
+    int extra = 0;
+    char label[96];
+    // variants: game halted or not, world building or not, two clock values
+    for (int variant = 0; variant < 4; variant++) {
+        int calls_o[16], count_o = 0;
+        uint32_t seed_o = 0, seed_n = 0;
+        int rand_o = 0, rand_n = 0;
+        auto prepare = [&]() {
+            *GameHalted = variant & 1;
+            *WorldBuildUnk2 = (variant & 2) != 0;
+            FixedTimeValue = 1000003u * (variant + 1);
+            ClimateClearCount = 0;
+            reseed(variant + 11);
+        };
+        sprintf_s(label, "world_climate() variant %d", variant);
+        REGRESS_CTX("%s", label);
+        h.compare(label,
+            [&] {
+                prepare();
+                {
+                    OriginalEntry orig(0x005C5A30, entry);
+                    ((func_void *)0x005C5A30)();
+                }
+                seed_o = Rand->get_seed();
+                rand_o = _rand();
+                count_o = ClimateClearCount;
+                memcpy(calls_o, ClimateClearCalls, sizeof(calls_o));
+            },
+            [&] {
+                prepare();
+                world_climate();
+                seed_n = Rand->get_seed();
+                rand_n = _rand();
+            });
+        int recorded = count_o < 16 ? count_o : 16;
+        if (seed_o != seed_n || rand_o != rand_n || count_o != ClimateClearCount
+            || memcmp(calls_o, ClimateClearCalls, sizeof(int) * recorded)) {
+            logf("  %s: random state or redraws differ (orig %08X/%d %d redraws, new %08X/%d %d redraws)",
+                label, seed_o, rand_o, count_o, seed_n, rand_n, ClimateClearCount);
+            extra++;
+        }
+    }
+    *GameHalted = halted_saved;
+    *WorldBuildUnk2 = build_saved;
+    return h.report() + extra;
+}
+
+static int test_world_erosion() {
+    static const uint8_t entry[6] = { 0x55, 0x8B, 0xEC, 0x81, 0xEC, 0x14 };
+    SnapHarness h("world_erosion");
+    h.empty_world(); // world_shorelines() runs alt_set(), which submerges bases and kills units
+    const uint32_t land_saved = *MapLandCoverage, ocean_saved = *MapOceanCoverage;
+    const uint32_t erosive_saved = *MapErosiveForces;
+    const BOOL flat_saved = *MapIsFlat;
+    int extra = 0;
+    char label[96];
+    // variant 0: as loaded; 1: land coverage 1 (plains and beach scale with the map); 2: no
+    // erosive forces (capped); 3: ocean coverage 0 and erosive 2; 4: ocean coverage 3 on a flat map
+    for (int variant = 0; variant < 5; variant++) {
+        auto prepare = [&]() {
+            *MapLandCoverage = variant == 1 ? 1 : land_saved;
+            *MapErosiveForces = variant == 2 ? 0 : (variant == 3 ? 2 : erosive_saved);
+            *MapOceanCoverage = variant == 3 ? 0 : (variant == 4 ? 3 : ocean_saved);
+            *MapIsFlat = variant == 4 ? !flat_saved : flat_saved;
+            reseed(variant * 7 + 3);
+        };
+        uint32_t seed_o = 0, seed_n = 0;
+        int rand_o = 0, rand_n = 0;
+        sprintf_s(label, "world_erosion() variant %d", variant);
+        REGRESS_CTX("%s", label);
+        h.compare(label,
+            [&] {
+                prepare();
+                {
+                    OriginalEntry orig(0x005C2CB0, entry);
+                    ((func_void *)0x005C2CB0)();
+                }
+                seed_o = Rand->get_seed();
+                rand_o = _rand();
+            },
+            [&] {
+                prepare();
+                world_erosion();
+                seed_n = Rand->get_seed();
+                rand_n = _rand();
+            });
+        if (seed_o != seed_n || rand_o != rand_n) {
+            logf("  %s: random state differs (orig %08X/%d new %08X/%d)", label, seed_o, rand_o, seed_n,
+                rand_n);
+            extra++;
+        }
+    }
+    *MapLandCoverage = land_saved;
+    *MapOceanCoverage = ocean_saved;
+    *MapErosiveForces = erosive_saved;
+    *MapIsFlat = flat_saved;
+    return h.report() + extra;
+}
+
+// ---------------------------------------------------------------- batch 29: base production
+
+// popp, wave_it, interlude, draw_radius and help_topic are recorded; popp answers ProdPoppAnswers
+// in turn (then 0, which also ends the GOVPROJECT help loop).
+enum ProdFn { PF_POPP, PF_WAVE_IT, PF_INTERLUDE, PF_DRAW_RADIUS, PF_HELP_TOPIC };
+struct ProdCall {
+    int fn;
+    char label[32];
+    char pic[32];
+    char file[16];
+    int args[4];
+};
+const int MaxProdCalls = 16;
+static ProdCall ProdCalls[MaxProdCalls];
+static int ProdCallCount;
+static int ProdPoppAnswers[4];
+static int ProdPoppAsked;
+
+static void prod_record(int fn, LPCSTR label, LPCSTR pic, LPCSTR file, int a0, int a1, int a2, int a3) {
+    if (ProdCallCount < MaxProdCalls) {
+        ProdCall *call = &ProdCalls[ProdCallCount];
+        memset(call, 0, sizeof(*call));
+        call->fn = fn;
+        strncpy_s(call->label, label ? label : "", _TRUNCATE);
+        strncpy_s(call->pic, pic ? pic : "", _TRUNCATE);
+        strncpy_s(call->file, file ? file : "", _TRUNCATE);
+        call->args[0] = a0;
+        call->args[1] = a1;
+        call->args[2] = a2;
+        call->args[3] = a3;
+    }
+    ProdCallCount++;
+}
+static int __cdecl prod_popp(LPCSTR file, LPCSTR label, int unk, LPCSTR pic, int(__cdecl *callback)()) {
+    prod_record(PF_POPP, label, pic, file, unk, callback != NULL, 0, 0);
+    int answer = ProdPoppAsked < 4 ? ProdPoppAnswers[ProdPoppAsked] : 0;
+    ProdPoppAsked++;
+    return answer;
+}
+static void __cdecl prod_wave_it(int sound_id) {
+    prod_record(PF_WAVE_IT, NULL, NULL, NULL, sound_id, 0, 0, 0);
+}
+static void __cdecl prod_interlude(int event_id, LPCSTR text, int unk1, int unk2) {
+    prod_record(PF_INTERLUDE, text, NULL, NULL, event_id, unk1, unk2, 0);
+}
+static void __cdecl prod_draw_radius(int x, int y, int unk1, int unk2) {
+    prod_record(PF_DRAW_RADIUS, NULL, NULL, NULL, x, y, unk1, unk2);
+}
+static void __cdecl prod_help_topic(int topic, int id) {
+    prod_record(PF_HELP_TOPIC, NULL, NULL, NULL, topic, id, 0, 0);
+}
+
+struct ProdStubs {
+    JmpStub popp_stub, wave_stub, interlude_stub, draw_stub, help_stub;
+    ProdStubs()
+        : popp_stub(0x0048C0A0, (void *)prod_popp),
+          wave_stub(0x004455F0, (void *)prod_wave_it),
+          interlude_stub(0x005230E0, (void *)prod_interlude),
+          draw_stub(0x0046AEF0, (void *)prod_draw_radius),
+          help_stub(0x0044CB60, (void *)prod_help_topic) {}
+    BOOL ok() const {
+        return popp_stub.ok && wave_stub.ok && interlude_stub.ok && draw_stub.ok && help_stub.ok;
+    }
+};
+
+// What the production functions can change besides the game state in GameSnapshot.
+struct ProdState {
+    NoticeState notice; // parse slots and defaults, stringTemp, pronouns, diplomacy globals, seed
+    uint8_t globals[BaseGlobalsSize];
+    int pick_id[4];
+    int pick_value[4];
+    uint32_t interlude_state;
+    Base *current;
+    int selected;
+    int sp[MaxSecretProjectNum];
+    int rand_next; // the exe's rand() after the call
+    ProdCall calls[MaxProdCalls];
+    int call_count;
+};
+
+static void prod_take(ProdState *s, int rand_next) {
+    notice_take(&s->notice, 0);
+    memcpy(s->globals, BaseGlobals, BaseGlobalsSize);
+    memcpy(s->pick_id, BaseGovPickID, sizeof(s->pick_id));
+    memcpy(s->pick_value, BaseGovPickValue, sizeof(s->pick_value));
+    s->interlude_state = *GameInterludeState;
+    s->current = *BaseCurrent;
+    s->selected = *BaseIDCurrentSelected;
+    memcpy(s->sp, SecretProjectTable, sizeof(s->sp));
+    s->rand_next = rand_next;
+    memcpy(s->calls, ProdCalls, sizeof(s->calls));
+    s->call_count = ProdCallCount;
+}
+
+static void prod_restore(const ProdState *s) {
+    notice_restore(&s->notice);
+    memcpy(BaseGlobals, s->globals, BaseGlobalsSize);
+    memcpy(BaseGovPickID, s->pick_id, sizeof(s->pick_id));
+    memcpy(BaseGovPickValue, s->pick_value, sizeof(s->pick_value));
+    *GameInterludeState = s->interlude_state;
+    *BaseCurrent = s->current;
+    *BaseIDCurrentSelected = s->selected;
+    memcpy(SecretProjectTable, s->sp, sizeof(s->sp));
+}
+
+static BOOL prod_differs(const ProdState *o, const ProdState *n, const char *label) {
+#define DLOG(...) do { if (label) logf(__VA_ARGS__); } while (0)
+    if (o->call_count != n->call_count) {
+        DLOG("  %s: orig made %d calls, new %d", label, o->call_count, n->call_count);
+        return true;
+    }
+    for (int i = 0; i < o->call_count && i < MaxProdCalls; i++) {
+        const ProdCall *a = &o->calls[i], *b = &n->calls[i];
+        if (a->fn != b->fn || strcmp(a->label, b->label) || strcmp(a->pic, b->pic)
+            || strcmp(a->file, b->file) || memcmp(a->args, b->args, sizeof(a->args))) {
+            DLOG("  %s: call %d: orig fn %d '%s' '%s' (%d, %d, %d, %d), new fn %d '%s' '%s' (%d, %d, %d, %d)",
+                label, i, a->fn, a->label, a->pic, a->args[0], a->args[1], a->args[2], a->args[3],
+                b->fn, b->label, b->pic, b->args[0], b->args[1], b->args[2], b->args[3]);
+            return true;
+        }
+    }
+    if (notice_differs(&o->notice, &n->notice, label) || base_globals_differ(o->globals, n->globals, label)) {
+        return true;
+    }
+    if (memcmp(o->pick_id, n->pick_id, sizeof(o->pick_id))
+        || memcmp(o->pick_value, n->pick_value, sizeof(o->pick_value))) {
+        DLOG("  %s: governor picks orig %d/%d %d/%d %d/%d %d/%d new %d/%d %d/%d %d/%d %d/%d", label,
+            o->pick_id[0], o->pick_value[0], o->pick_id[1], o->pick_value[1], o->pick_id[2],
+            o->pick_value[2], o->pick_id[3], o->pick_value[3], n->pick_id[0], n->pick_value[0],
+            n->pick_id[1], n->pick_value[1], n->pick_id[2], n->pick_value[2], n->pick_id[3],
+            n->pick_value[3]);
+        return true;
+    }
+    if (o->interlude_state != n->interlude_state || o->current != n->current
+        || o->selected != n->selected || o->rand_next != n->rand_next
+        || memcmp(o->sp, n->sp, sizeof(o->sp))) {
+        DLOG("  %s: interlude state %08X/%08X, current base %p/%p, selected %d/%d, rand %d/%d", label,
+            o->interlude_state, n->interlude_state, (void *)o->current, (void *)n->current,
+            o->selected, n->selected, o->rand_next, n->rand_next);
+        return true;
+    }
+    return false;
+#undef DLOG
+}
+
+// Run a production function as the exe and as the DLL from the same state and compare.
+struct ProdHarness {
+    GameSnapshot base, after_orig, after_new;
+    ProdState saved, orig, now;
+    uint8_t status_saved;
+    int diff_saved, sunspot_saved, current_saved, skip_saved;
+    uint32_t game_state_saved;
+    BOOL net_saved;
+    int compared, mismatches, with_calls, changed;
+    ProdHarness() : compared(0), mismatches(0), with_calls(0), changed(0) {
+        snap_alloc(&base); snap_alloc(&after_orig); snap_alloc(&after_new);
+        snap_take(&base);
+        ProdCallCount = 0;
+        prod_take(&saved, 0);
+        status_saved = *FactionsStatus;
+        diff_saved = *DiffLevelCurrent;
+        sunspot_saved = *SunspotDuration;
+        current_saved = *FactionIDCurrent;
+        skip_saved = *SkipTechScreenB;
+        game_state_saved = *GameState;
+        net_saved = *IsMultiplayerNet;
+    }
+    ~ProdHarness() {
+        prepare();
+        snap_free(&base); snap_free(&after_orig); snap_free(&after_new);
+    }
+    void prepare() {
+        snap_restore(&base);
+        prod_restore(&saved);
+        *FactionsStatus = status_saved;
+        *DiffLevelCurrent = diff_saved;
+        *SunspotDuration = sunspot_saved;
+        *FactionIDCurrent = current_saved;
+        *SkipTechScreenB = skip_saved;
+        *GameState = game_state_saved;
+        *IsMultiplayerNet = net_saved;
+        ProdCallCount = 0;
+        ProdPoppAsked = 0;
+        memset(ProdPoppAnswers, 0, sizeof(ProdPoppAnswers));
+    }
+    // setup() puts the variant in place after each restore; exe() and dll() make the call.
+    template <class S, class E, class D>
+    void run(const char *label, uint32_t seed, S setup, E exe, D dll) {
+        REGRESS_CTX("%s", label);
+        prepare();
+        setup();
+        reseed(seed);
+        exe();
+        int rand_o = _rand();
+        snap_take(&after_orig);
+        prod_take(&orig, rand_o);
+        prepare();
+        setup();
+        reseed(seed);
+        dll();
+        int rand_n = _rand();
+        snap_take(&after_new);
+        prod_take(&now, rand_n);
+        compared++;
+        with_calls += orig.call_count > 0;
+        changed += snap_differs(&base, &after_orig, NULL);
+        const char *detail = mismatches < MAX_DETAIL ? label : NULL;
+        if (prod_differs(&orig, &now, detail) || snap_differs(&after_orig, &after_new, detail)) {
+            mismatches++;
+        }
+    }
+};
+
+static const uint8_t BaseChangeEntry[6] = { 0x55, 0x8B, 0xEC, 0x83, 0xEC, 0x24 };
+static const uint8_t BaseResetEntry[6] = { 0x55, 0x8B, 0xEC, 0x83, 0xEC, 0x08 };
+static const uint8_t BaseHurryEntry[6] = { 0x55, 0x8B, 0xEC, 0x83, 0xEC, 0x1C };
+
+// a prototype of the faction (or a basic one) other than the item the base builds
+static int prod_other_unit(uint32_t faction_id, int current) {
+    for (int i = 0; i < MaxVehProtoFactionNum; i++) {
+        int proto_id = faction_id * MaxVehProtoFactionNum + i;
+        if ((VehPrototypes[proto_id].flags & PROTO_ACTIVE) && proto_id != current) {
+            return proto_id;
+        }
+    }
+    return current == BSC_SCOUT_PATROL ? BSC_FORMERS : BSC_SCOUT_PATROL;
+}
+
+static int test_base_change() {
+    OriginalEntry vanilla(0x004E5A60, BaseChangeEntry);
+    ProdStubs stubs;
+    if (!vanilla.ok || !stubs.ok()) {
+        return 1;
+    }
+    typedef void func_change(uint32_t, int);
+    func_change *exe = (func_change *)0x004E5A60;
+    int sp_free[2] = { -1, -1 }, sp_built = -1;
+    for (int k = 0; k < MaxSecretProjectNum; k++) {
+        if (SecretProjectTable[k] == -1) {
+            if (sp_free[0] < 0) {
+                sp_free[0] = k;
+            } else if (sp_free[1] < 0) {
+                sp_free[1] = k;
+            }
+        } else if (SecretProjectTable[k] >= 0 && sp_built < 0) {
+            sp_built = k;
+        }
+    }
+    ProdHarness h;
+    char label[112];
+    for (int base_id = 0; base_id < *BaseCurrentCount; base_id += 5) {
+        Base *b = &Bases[base_id];
+        uint32_t f = b->faction_id_current;
+        int other_base = -1;
+        for (int j = 0; j < *BaseCurrentCount && other_base < 0; j++) {
+            if (j != base_id && Bases[j].faction_id_current == f) {
+                other_base = j;
+            }
+        }
+        const int items[] = { b->queue_production_id[0], prod_other_unit(f, b->queue_production_id[0]),
+            -FAC_RECYCLING_TANKS, sp_free[0] >= 0 ? -(FAC_HUMAN_GENOME_PROJ + sp_free[0]) : 99999,
+            sp_built >= 0 ? -(FAC_HUMAN_GENOME_PROJ + sp_built) : 99999,
+            SecretProjectTable[SP_VOICE_OF_PLANET] == -1 ? -(FAC_HUMAN_GENOME_PROJ + SP_VOICE_OF_PLANET)
+                : 99999 };
+        // as loaded; human (retooling); moving off another free project the faction's other base
+        // also builds; the same alone; sunspots; game state bit 1; no project intel yet
+        for (int v = 0; v < 7; v++) {
+            for (int item : items) {
+                auto setup = [&] {
+                    if (v == 1) {
+                        *FactionsStatus ^= (uint8_t)(1 << f);
+                        b->production_id_last = b->queue_production_id[0];
+                        b->minerals_accumulated_2 = 60;
+                    } else if ((v == 2 || v == 3) && sp_free[1] >= 0) {
+                        b->queue_production_id[0] = -(FAC_HUMAN_GENOME_PROJ + sp_free[1]);
+                        if (v == 2 && other_base >= 0) {
+                            Bases[other_base].queue_production_id[0] = b->queue_production_id[0];
+                        }
+                    } else if (v == 4) {
+                        *SunspotDuration = 3;
+                    } else if (v == 5) {
+                        *GameState |= STATE_UNK_1;
+                    } else if (v == 6) {
+                        memset(PlayersData[f].secret_project_intel, 0,
+                            sizeof(PlayersData[f].secret_project_intel));
+                    }
+                };
+                sprintf_s(label, "base_change(%d, %d) variant %d", base_id, item, v);
+                h.run(label, (uint32_t)(base_id * 37 + item + v), setup, [&] { exe(base_id, item); },
+                    [&] { base_change(base_id, item); });
+            }
+        }
+    }
+    logf("base_change: %d compared (%d with a call out, %d changed the game state), %d mismatches",
+        h.compared, h.with_calls, h.changed, h.mismatches);
+    return h.mismatches;
+}
+
+static int test_base_reset() {
+    OriginalEntry vanilla(0x004E5FE0, BaseResetEntry);
+    OriginalEntry vanilla_change(0x004E5A60, BaseChangeEntry);
+    ProdStubs stubs;
+    if (!vanilla.ok || !vanilla_change.ok || !stubs.ok()) {
+        return 1;
+    }
+    func_xy *exe = (func_xy *)0x004E5FE0;
+    const uint32_t priorities = GOV_PRIORITY_EXPLORE | GOV_PRIORITY_DISCOVER | GOV_PRIORITY_BUILD
+        | GOV_PRIORITY_CONQUER;
+    ProdHarness h;
+    char label[96];
+    int asked = 0;
+    for (int base_id = 0; base_id < *BaseCurrentCount; base_id++) {
+        Base *b = &Bases[base_id];
+        uint32_t f = b->faction_id_current;
+        // as loaded with and without the governor priorities; as a human base with the governor
+        // and all four priorities; the governor allowed projects, answering help then 2, or 1; the
+        // governor without priorities
+        for (int v = 0; v < 6; v++) {
+            if (v >= 2 && base_id % 3) {
+                continue;
+            }
+            BOOL priorities_flag = v == 1 || v == 2 || v == 5;
+            auto setup = [&] {
+                if (v >= 2) {
+                    *FactionsStatus |= (uint8_t)(1 << f);
+                    b->governor |= GOV_ACTIVE;
+                }
+                if (v == 2) {
+                    b->governor |= priorities;
+                } else if (v == 3 || v == 4) {
+                    b->governor |= GOV_MAY_PROD_SP;
+                    ProdPoppAnswers[0] = v == 3 ? 3 : 1;
+                    ProdPoppAnswers[1] = v == 3 ? 2 : 0;
+                } else if (v == 5) {
+                    b->governor &= ~priorities;
+                }
+            };
+            sprintf_s(label, "base_reset(%d, %d) variant %d", base_id, priorities_flag, v);
+            h.run(label, (uint32_t)(base_id * 31 + v), setup, [&] { exe(base_id, priorities_flag); },
+                [&] { base_reset(base_id, priorities_flag); });
+            asked += h.orig.call_count > 0 && h.orig.calls[0].fn == PF_POPP
+                && !strcmp(h.orig.calls[0].label, "GOVPROJECT");
+        }
+    }
+    logf("base_reset: %d compared (%d with a call out, %d asked GOVPROJECT first, %d changed the game "
+        "state), %d mismatches", h.compared, h.with_calls, asked, h.changed, h.mismatches);
+    return h.mismatches;
+}
+
+static int test_base_hurry() {
+    OriginalEntry vanilla(0x004F3FE0, BaseHurryEntry);
+    ProdStubs stubs;
+    if (!vanilla.ok || !stubs.ok()) {
+        return 1;
+    }
+    func_void *exe = (func_void *)0x004F3FE0;
+    int sp_free = -1;
+    for (int k = 0; k < MaxSecretProjectNum && sp_free < 0; k++) {
+        if (SecretProjectTable[k] == -1) {
+            sp_free = k;
+        }
+    }
+    ProdHarness h;
+    char label[96];
+    int spent = 0;
+    for (int base_id = 0; base_id < *BaseCurrentCount; base_id++) {
+        Base *b = &Bases[base_id];
+        uint32_t f = b->faction_id_current;
+        PlayerData *p = &PlayersData[f];
+        // 0 as loaded; 1 minerals in stock and 3000 energy; 2 a free project with 5000; 3 a
+        // perimeter defense with 2500 at vendetta; 4 the headquarters; 5 a psi gate; 6 the Ascent
+        // with 4000; 7 a riot under police -3 building recycling tanks; 8 human with the governor
+        // allowed to hurry; 9 the Voice of Planet built; 10 a colony pod at size 1; 11 at size 3
+        for (int v = 0; v < 12; v++) {
+            if (v >= 2 && base_id % 2) {
+                continue;
+            }
+            auto setup = [&] {
+                *BaseCurrent = b;
+                *BaseIDCurrentSelected = base_id;
+                if (v >= 1 && b->minerals_accumulated < 1) {
+                    b->minerals_accumulated = 1 + base_id % 7;
+                }
+                if (v == 1) {
+                    p->energy_reserves = 3000;
+                } else if (v == 2 && sp_free >= 0) {
+                    b->queue_production_id[0] = -(FAC_HUMAN_GENOME_PROJ + sp_free);
+                    p->energy_reserves = 5000;
+                } else if (v == 3) {
+                    b->queue_production_id[0] = -FAC_PERIMETER_DEFENSE;
+                    p->energy_reserves = 2500;
+                    p->diplo_treaties[f % 7 + 1] |= DTREATY_VENDETTA;
+                } else if (v == 4) {
+                    b->queue_production_id[0] = -FAC_HEADQUARTERS;
+                } else if (v == 5) {
+                    b->queue_production_id[0] = -FAC_PSI_GATE;
+                } else if (v == 6) {
+                    b->queue_production_id[0] = -(FAC_HUMAN_GENOME_PROJ + SP_ASCENT_TO_TRANSCENDENCE);
+                    p->energy_reserves = 4000;
+                } else if (v == 7) {
+                    b->queue_production_id[0] = -FAC_RECYCLING_TANKS;
+                    b->state |= BSTATE_DRONE_RIOTS_ACTIVE;
+                    b->drone_total = b->talent_total + 2;
+                    p->soc_effect_pending.police = -3;
+                } else if (v == 8) {
+                    *FactionsStatus |= (uint8_t)(1 << f);
+                    b->governor |= GOV_ACTIVE | GOV_MAY_HURRY_PRODUCTION;
+                } else if (v == 9) {
+                    SecretProjectTable[SP_VOICE_OF_PLANET] = base_id;
+                } else if (v == 10 || v == 11) {
+                    b->queue_production_id[0] = BSC_COLONY_POD;
+                    b->population_size = v == 10 ? 1 : 3;
+                }
+            };
+            sprintf_s(label, "base_hurry() base %d variant %d", base_id, v);
+            h.run(label, (uint32_t)(base_id * 41 + v), setup, [&] {
+                int energy = p->energy_reserves;
+                exe();
+                spent += p->energy_reserves != energy;
+            }, [&] { base_hurry(); });
+        }
+    }
+    logf("base_hurry: %d compared (%d spent energy, %d with a call out), %d mismatches", h.compared,
+        spent, h.with_calls, h.mismatches);
+    return h.mismatches;
+}
+
 static DWORD WINAPI regress_watcher(LPVOID) {
     for (;;) {
         Sleep(1000);
@@ -7427,7 +10555,234 @@ static DWORD WINAPI regress_watcher(LPVOID) {
     }
 }
 
+// Input-free runs. A trigger file that is already there when the game starts and holds a line
+// "load <save file>" makes the harness load that save in place of the main menu (as Thinker's
+// command line load does), run the tests named on the other lines once the game is under way
+// (from a timer, so no map click is needed) and, with a line "exit", end the game afterwards; a
+// line "notests" only loads the save.
+static char AutoLoadPath[MAX_PATH];
+static BOOL AutoExit = false;
+static BOOL AutoNoTests = false; // a line "notests": only load the save (for boot tests)
+static int AutoHangSeconds = 600; // a line "hang <seconds>": the watchdog's limit per test
+
+// Every 30 s of one test the watchdog logs a heartbeat with the test's last announced input (a
+// working test shows it changing, a stuck one doesn't), so whoever watches the log knows early;
+// only after AutoHangSeconds does it end the game.
+static DWORD WINAPI regress_hang_watchdog(LPVOID) {
+    const char *beat_name = NULL;
+    DWORD beat_next = 0;
+    for (;;) {
+        Sleep(2000);
+        const char *name = RegressTestName;
+        if (!name) {
+            beat_name = NULL;
+            continue;
+        }
+        DWORD elapsed = GetTickCount() - RegressTestStart;
+        if (name != beat_name) {
+            beat_name = name;
+            beat_next = 30000;
+        }
+        if (elapsed >= beat_next && regress_log) {
+            fprintf(regress_log, "  ... still in %s after %lu s, last input: %s\n", name, elapsed / 1000,
+                regress_ctx);
+            fflush(regress_log);
+            beat_next += 30000;
+        }
+        if (elapsed > (DWORD)AutoHangSeconds * 1000) {
+            if (regress_log) {
+                fprintf(regress_log, "HANG in %s: no result after %d s, last input: %s\n", name,
+                    AutoHangSeconds, regress_ctx);
+                fprintf(regress_log, "TOTAL mismatches: -1 (hang)\n");
+                fflush(regress_log);
+            }
+            TerminateProcess(GetCurrentProcess(), 3);
+        }
+    }
+}
+static JmpStub *AutoMenuStub = NULL;
+static UINT_PTR AutoTimer = 0;
+static int AutoTicks = 0;
+typedef int __cdecl func_top_menu(int);
+static func_top_menu *const top_menu_exe = (func_top_menu *)0x0058E360;
+
+static void auto_log(const char *fmt, const char *arg, unsigned value) {
+    FILE *log = fopen(LOG_FILE, "w");
+    if (log) {
+        fprintf(log, fmt, arg, value);
+        fputs("\nTOTAL mismatches: -1 (auto run failed)\n", log);
+        fclose(log);
+    }
+}
+
+static void CALLBACK regress_auto_timer(HWND, UINT, UINT_PTR, DWORD) {
+    if (*GameHalted || ++AutoTicks < 3) {
+        return; // let the turn get under way first
+    }
+    KillTimer(NULL, AutoTimer);
+    AutoTimer = 0;
+    if (AutoNoTests) {
+        DeleteFileA(TRIGGER_FILE);
+        return;
+    }
+    regress_run();
+    if (AutoExit) {
+        TerminateProcess(GetCurrentProcess(), 0); // no prefs or saves written on the way out
+    }
+}
+
+// Message-driven input for input-free runs: the UI scripts (tools/mp/msg.ps1) post clicks and keys
+// to the game window instead of using the real mouse and keyboard. The game also asks Windows
+// directly whether Ctrl, Shift, Alt or a mouse button is down and where the cursor is, which
+// posted messages don't change, so a message hook on the game's thread notes what the messages
+// it takes off the queue say, and the exe's GetKeyState, GetAsyncKeyState and GetCursorPos
+// imports add that to the real state. Mouse messages from the real mouse are noted the same way,
+// so the two agree while someone uses the game window by hand.
+static BOOL VirtualKeyDown[256];
+static POINT VirtualCursor; // client coordinates of the last mouse message
+static HWND VirtualCursorWindow = NULL;
+static HHOOK InputHook = NULL;
+static FARPROC *const ImportGetCursorPos = (FARPROC *)0x00669284;
+static FARPROC *const ImportGetKeyState = (FARPROC *)0x0066932C;
+static FARPROC *const ImportGetAsyncKeyState = (FARPROC *)0x00669330;
+
+static LRESULT CALLBACK input_hook(int code, WPARAM wparam, LPARAM lparam) {
+    if (code == HC_ACTION && wparam == PM_REMOVE) {
+        const MSG *msg = (const MSG *)lparam;
+        switch (msg->message) {
+          case WM_KEYDOWN:
+          case WM_SYSKEYDOWN:
+            VirtualKeyDown[msg->wParam & 0xFF] = true;
+            break;
+          case WM_KEYUP:
+          case WM_SYSKEYUP:
+            VirtualKeyDown[msg->wParam & 0xFF] = false;
+            break;
+          case WM_LBUTTONDOWN:
+            VirtualKeyDown[VK_LBUTTON] = true;
+            break;
+          case WM_LBUTTONUP:
+            VirtualKeyDown[VK_LBUTTON] = false;
+            break;
+          case WM_RBUTTONDOWN:
+            VirtualKeyDown[VK_RBUTTON] = true;
+            break;
+          case WM_RBUTTONUP:
+            VirtualKeyDown[VK_RBUTTON] = false;
+            break;
+        }
+        if (msg->message >= WM_MOUSEMOVE && msg->message <= WM_MBUTTONDBLCLK) {
+            VirtualCursor.x = (int16_t)LOWORD(msg->lParam);
+            VirtualCursor.y = (int16_t)HIWORD(msg->lParam);
+            VirtualCursorWindow = msg->hwnd;
+        }
+    }
+    return CallNextHookEx(InputHook, code, wparam, lparam);
+}
+
+static BOOL virtual_key_down(int vk) {
+    if (vk == VK_LCONTROL || vk == VK_RCONTROL) {
+        vk = VK_CONTROL;
+    } else if (vk == VK_LSHIFT || vk == VK_RSHIFT) {
+        vk = VK_SHIFT;
+    } else if (vk == VK_LMENU || vk == VK_RMENU) {
+        vk = VK_MENU;
+    }
+    return VirtualKeyDown[vk & 0xFF];
+}
+
+static SHORT WINAPI input_get_key_state(int vk) {
+    SHORT state = GetKeyState(vk);
+    return virtual_key_down(vk) ? (SHORT)(state | 0x8000) : state;
+}
+
+static SHORT WINAPI input_get_async_key_state(int vk) {
+    SHORT state = GetAsyncKeyState(vk);
+    return virtual_key_down(vk) ? (SHORT)(state | 0x8000) : state;
+}
+
+static BOOL WINAPI input_get_cursor_pos(LPPOINT point) {
+    if (!VirtualCursorWindow) {
+        return GetCursorPos(point);
+    }
+    *point = VirtualCursor;
+    return ClientToScreen(VirtualCursorWindow, point);
+}
+
+static void input_hook_import(FARPROC *entry, FARPROC replacement) {
+    DWORD protect;
+    if (VirtualProtect(entry, sizeof(FARPROC), PAGE_READWRITE, &protect)) {
+        *entry = replacement;
+        VirtualProtect(entry, sizeof(FARPROC), protect, &protect);
+    }
+}
+
+// The driver posts the character messages itself (with the right Shift and Ctrl) and marks its
+// key messages with lParam bit 25 (reserved); the game's TranslateMessage would otherwise add a
+// second character, made from the real keyboard state.
+static FARPROC *const ImportTranslateMessage = (FARPROC *)0x0066935C;
+static BOOL WINAPI input_translate_message(const MSG *msg) {
+    if ((msg->message == WM_KEYDOWN || msg->message == WM_SYSKEYDOWN) && (msg->lParam & (1 << 25))) {
+        return false;
+    }
+    return TranslateMessage(msg);
+}
+
+static void install_input_hooks() {
+    InputHook = SetWindowsHookExA(WH_GETMESSAGE, input_hook, NULL, GetCurrentThreadId());
+    input_hook_import(ImportTranslateMessage, (FARPROC)input_translate_message);
+    input_hook_import(ImportGetKeyState, (FARPROC)input_get_key_state);
+    input_hook_import(ImportGetAsyncKeyState, (FARPROC)input_get_async_key_state);
+    input_hook_import(ImportGetCursorPos, (FARPROC)input_get_cursor_pos);
+}
+
+static int __cdecl regress_auto_top_menu(int unk) {
+    delete AutoMenuStub; // the real main menu from now on
+    AutoMenuStub = NULL;
+    install_input_hooks(); // on the game's own thread
+
+    uint32_t result = load_daemon(AutoLoadPath, false);
+    if (result) {
+        auto_log("auto run: loading %s failed (%u)", AutoLoadPath, result);
+        if (AutoExit) {
+            TerminateProcess(GetCurrentProcess(), 1);
+        }
+        return top_menu_exe(unk);
+    }
+    for (int i = 1; i < MaxPlayerNum; i++) {
+        load_faction_art(i);
+    }
+    AutoTicks = 0;
+    AutoTimer = SetTimer(NULL, 0, 1000, regress_auto_timer);
+    return 0;
+}
+
 void regress_init() {
+    FILE *trig = fopen(TRIGGER_FILE, "r");
+    if (trig) {
+        char line[MAX_PATH + 8];
+        while (fgets(line, sizeof(line), trig)) {
+            size_t n = strlen(line);
+            while (n && isspace((unsigned char)line[n - 1])) {
+                line[--n] = 0;
+            }
+            if (!strncmp(line, "load ", 5)) {
+                strcpy_s(AutoLoadPath, line + 5);
+            } else if (!strcmp(line, "exit")) {
+                AutoExit = true;
+            } else if (!strcmp(line, "notests")) {
+                AutoNoTests = true;
+            } else if (!strncmp(line, "hang ", 5) && atoi(line + 5) > 0) {
+                AutoHangSeconds = atoi(line + 5);
+            }
+        }
+        fclose(trig);
+    }
+    if (AutoLoadPath[0]) {
+        AutoMenuStub = new JmpStub(0x0058E360, (void *)regress_auto_top_menu);
+        CreateThread(NULL, 0, regress_hang_watchdog, NULL, 0, NULL);
+        return; // no watcher: the timer runs the tests
+    }
     if (!regress_thread) {
         regress_thread = CreateThread(NULL, 0, regress_watcher, NULL, 0, NULL);
     }
@@ -7438,9 +10793,15 @@ void regress_run() {
     regress_filter[0] = 0;
     FILE *trig = fopen(TRIGGER_FILE, "r");
     if (trig) {
-        size_t n = fread(regress_filter, 1, sizeof(regress_filter) - 1, trig);
-        regress_filter[n] = 0;
+        char line[MAX_PATH + 8];
+        while (fgets(line, sizeof(line), trig)) { // skip the input-free run's "load" and "exit"
+            if (strncmp(line, "load ", 5) && strncmp(line, "exit", 4) && strncmp(line, "notests", 7)
+                && strncmp(line, "hang ", 5)) {
+                strncat_s(regress_filter, line, _TRUNCATE);
+            }
+        }
         fclose(trig);
+        size_t n = strlen(regress_filter);
         while (n && isspace((unsigned char)regress_filter[n - 1])) { // whitespace-only = all tests
             regress_filter[--n] = 0;
         }
@@ -7561,6 +10922,36 @@ void regress_run() {
     if (test_enabled("batch26", "upgrade_prototype")) total += run_guarded("upgrade_prototype", test_upgrade_prototype);
     if (test_enabled("batch27", "veh_init")) total += run_guarded("veh_init", test_veh_init);
     if (test_enabled("batch27", "alien_start")) total += run_guarded("alien_start", test_alien_start);
+    if (test_enabled("diplonote", "pact_notices")) total += run_guarded("pact_notices", test_pact_notices);
+    if (test_enabled("diplonote", "enemies_unpact")) total += run_guarded("enemies_unpact", test_enemies_unpact);
+    if (test_enabled("diplonote", "enemies_team_up")) total += run_guarded("enemies_team_up", test_enemies_team_up);
+    if (test_enabled("diplonote", "break_treaty")) total += run_guarded("break_treaty", test_break_treaty);
+    if (test_enabled("diplonote", "make_treaty")) total += run_guarded("make_treaty", test_make_treaty);
+    if (test_enabled("diplonote", "pledge_truce")) total += run_guarded("pledge_truce", test_pledge_truce);
+    if (test_enabled("diplonote", "demands_withdrawal")) total += run_guarded("demands_withdrawal", test_demands_withdrawal);
+    if (test_enabled("diplonote", "renounce_pact")) total += run_guarded("renounce_pact", test_renounce_pact);
+    if (test_enabled("diplonote", "dont_withdrawal")) total += run_guarded("dont_withdrawal", test_dont_withdrawal);
+    if (test_enabled("diplotwo", "intervention")) total += run_guarded("intervention", test_intervention);
+    if (test_enabled("diplotwo", "demand_withdrawal")) total += run_guarded("demand_withdrawal", test_demand_withdrawal);
+    if (test_enabled("diplotwo", "mention_prototypes")) total += run_guarded("mention_prototypes", test_mention_prototypes);
+    if (test_enabled("diplotwo", "buy_tech")) total += run_guarded("buy_tech", test_buy_tech);
+    if (test_enabled("diplotwo", "pact_withdraw")) total += run_guarded("pact_withdraw", test_pact_withdraw);
+    if (test_enabled("diplotwo", "energy_trade")) total += run_guarded("energy_trade", test_energy_trade);
+    if (test_enabled("b28main", "mon_winning")) total += run_guarded("mon_winning", test_mon_winning);
+    if (test_enabled("b28main", "energy_limit")) total += run_guarded("energy_limit", test_energy_limit);
+    if (test_enabled("b28main", "fixup_landmarks")) total += run_guarded("fixup_landmarks", test_fixup_landmarks);
+    if (test_enabled("b28main", "delete_landmark")) total += run_guarded("delete_landmark", test_delete_landmark);
+    if (test_enabled("b28main", "terrain_fixup")) total += run_guarded("terrain_fixup", test_terrain_fixup);
+    if (test_enabled("b28main", "mapwin_terrain_fixup")) total += run_guarded("mapwin_terrain_fixup", test_mapwin_terrain_fixup);
+    if (test_enabled("b28main", "base_init")) total += run_guarded("base_init", test_base_init);
+    if (test_enabled("b28main", "name_base")) total += run_guarded("name_base", test_name_base);
+    if (test_enabled("b28main", "battle_fight")) total += run_guarded("battle_fight", test_battle_fight);
+    if (test_enabled("b28main", "compute_odds")) total += run_guarded("compute_odds", test_compute_odds);
+    if (test_enabled("protodesign", "prune_protos")) total += run_guarded("prune_protos", test_prune_protos);
+    if (test_enabled("protodesign", "consider_designs")) total += run_guarded("consider_designs", test_consider_designs);
+    if (test_enabled("baseprod", "base_change")) total += run_guarded("base_change", test_base_change);
+    if (test_enabled("baseprod", "base_reset")) total += run_guarded("base_reset", test_base_reset);
+    if (test_enabled("baseprod", "base_hurry")) total += run_guarded("base_hurry", test_base_hurry);
     if (test_enabled("enemy_capabilities")) total += run_guarded("enemy_capabilities", test_enemy_capabilities);
     if (test_enabled("social_ai")) total += run_guarded("social_ai", test_social_ai);
     if (test_enabled("Path::sensors") || test_enabled("path_sensors")) total += run_guarded("path_sensors", test_path_sensors);
@@ -7572,6 +10963,11 @@ void regress_run() {
     if (test_enabled("world", "build_continent")) total += run_guarded("build_continent", test_build_continent);
     if (test_enabled("world", "build_hills")) total += run_guarded("build_hills", test_build_hills);
     total += run_guarded("world_void", test_world_void);
+    if (test_enabled("natlife", "alien_fauna")) total += run_guarded("alien_fauna", test_alien_fauna);
+    if (test_enabled("natlife", "world_rivers")) total += run_guarded("world_rivers", test_world_rivers);
+    if (test_enabled("natlife", "world_climate")) total += run_guarded("world_climate", test_world_climate);
+    if (test_enabled("natlife", "world_erosion")) total += run_guarded("world_erosion", test_world_erosion);
+    RegressTestName = NULL; // the hang watchdog stands down
     logf("TOTAL mismatches: %d (%lu ms)", total, GetTickCount() - t0);
     fclose(regress_log);
     regress_log = NULL;

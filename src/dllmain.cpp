@@ -17,11 +17,13 @@
  */
 #include "stdafx.h"
 #include "regress.h"
+#include "window.h"
 
 BOOL APIENTRY DllMain(HMODULE UNUSED(hModule), uint32_t  ul_reason_for_call,
     LPVOID UNUSED(lpReserved)) {
     switch (ul_reason_for_call) {
     case DLL_PROCESS_ATTACH:
+        window_init(); // optional windowed mode, off unless the ini asks for it
         regress_init(); // trigger-file watcher; does nothing unless opensmacx_regress.txt appears
         break;
     case DLL_THREAD_ATTACH:

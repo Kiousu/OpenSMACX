@@ -1,0 +1,562 @@
+Batch 29 sweep, 2026-10-18: 718-redirect exe, input-free runs, filter 'baseprod diplotwo natlife
+diplonote protodesign b28main', the 13 sweep saves.
+
+== sw_aki2120.SAV: OpenSMACX regression run: turn 20, 17 bases, 84 vehs, filter='baseprod diplotwo natlife diplonote protodesign b28main'
+pact_attacks: 42 compared (42 with a notice), 0 mismatches
+pact_unpact: 42 compared (42 with a notice), 0 mismatches
+pact_truce: 42 compared (42 with a notice), 0 mismatches
+pact_treaty: 42 compared (42 with a notice), 0 mismatches
+enemies_unpact: 210 compared (114 changed state, 138 with a notice), 0 mismatches
+enemies_team_up: 1050 compared (870 changed state, 30 with a notice), 0 mismatches
+break_treaty: 3528 compared (714 returned true, 1092 with a popup), 0 mismatches
+make_treaty: 126 compared (126 changed state), 0 mismatches
+pledge_truce: 84 compared (84 changed state, 42 with a dialog), 0 mismatches
+demands_withdrawal: 378 compared (378 with a call out), 0 mismatches
+renounce_pact: 168 compared (126 changed state), 0 mismatches
+dont_withdrawal: 210 compared (0 found a reason), 0 mismatches
+intervention: 252 compared (210 changed state, 120 with calls), 0 mismatches
+demand_withdrawal: 546 compared (answers by the original: 252 withdrew, 126 refused, 168 war; 546 changed state), 0 mismatches
+mention_prototypes: 252 compared (114 with calls), 0 mismatches
+buy_tech: 1008 compared (600 made an offer, 600 with calls), 0 mismatches
+pact_withdraw: 84 compared (2 units moved by the original, 0 with calls), 0 mismatches
+energy_trade: 420 compared (185 returned true, 378 changed state), 0 mismatches
+mon_winning: 112 compared (56 changed the table in the original), 0 mismatches
+energy_limit: 10 compared, 0 mismatches
+  fixup_landmarks variant 0: 0 tiles with a negative code, 0 entries zeroed by the original
+  fixup_landmarks variant 1: 55 tiles with a negative code, 23 entries zeroed by the original
+  fixup_landmarks variant 2: 120 tiles with a negative code, 25 entries zeroed by the original
+fixup_landmarks: 3 compared (48 entries zeroed in all), 0 mismatches
+delete_landmark: 863 compared (240 on relief landmark tiles, 743 changed the tile in the original, 1 views in use), 0 mismatches
+terrain_fixup: 13 compared (map area 8192), 0 mismatches
+mapwin_terrain_fixup: 11 views compared (4 rebuilt by the original), 0 mismatches
+base_init: 253 compared (by the original: 168 first bases, 84 at sea), 0 mismatches
+name_base: 308 compared (4 default names by the original), 0 mismatches
+battle_fight: 816 compared (0 wrapped x), 0 mismatches
+compute_odds: 2512 compared (72 air attackers, 448 at a base, 2104 changed the odds), 0 mismatches
+prune_protos: 1408 compared (original: 104 marks obsolete, 0 typed complete, 4 kept designs flagged, 0 marks removed, 0 queues changed, 0 questions, 0 network popups, 56 net calls), 0 mismatches
+consider_designs: 35 compared (original: 1 prototype slots changed in 1 runs, 7 suggestions recorded, 0 base queues changed), 0 mismatches
+base_change: 168 compared (110 with a call out, 133 changed the game state), 0 mismatches
+base_reset: 58 compared (33 with a call out, 0 asked GOVPROJECT first, 50 changed the game state), 0 mismatches
+base_hurry: 124 compared (56 spent energy, 0 with a call out), 0 mismatches
+alien_fauna: 84 compared (by the original: 80 units born, 3 redraws, 0 popups, 0 redraws at the seeded junk stack values), 0 mismatches
+world_rivers: 4 compared (4 changed state), 0 mismatches
+world_climate: 4 compared (4 changed state), 0 mismatches
+world_erosion: 5 compared (5 changed state), 0 mismatches
+TOTAL mismatches: 0 (2312 ms)
+
+== sw_aki2152.SAV: OpenSMACX regression run: turn 52, 72 bases, 219 vehs, filter='baseprod diplotwo natlife diplonote protodesign b28main'
+pact_attacks: 42 compared (42 with a notice), 0 mismatches
+pact_unpact: 42 compared (42 with a notice), 0 mismatches
+pact_truce: 42 compared (42 with a notice), 0 mismatches
+pact_treaty: 42 compared (42 with a notice), 0 mismatches
+enemies_unpact: 210 compared (114 changed state, 138 with a notice), 0 mismatches
+enemies_team_up: 1050 compared (870 changed state, 30 with a notice), 0 mismatches
+break_treaty: 3528 compared (720 returned true, 1104 with a popup), 0 mismatches
+make_treaty: 126 compared (126 changed state), 0 mismatches
+pledge_truce: 84 compared (84 changed state, 42 with a dialog), 0 mismatches
+demands_withdrawal: 378 compared (378 with a call out), 0 mismatches
+renounce_pact: 168 compared (126 changed state), 0 mismatches
+dont_withdrawal: 210 compared (4 found a reason), 0 mismatches
+intervention: 252 compared (210 changed state, 120 with calls), 0 mismatches
+demand_withdrawal: 546 compared (answers by the original: 252 withdrew, 126 refused, 168 war; 544 changed state), 0 mismatches
+mention_prototypes: 252 compared (138 with calls), 0 mismatches
+buy_tech: 1008 compared (642 made an offer, 642 with calls), 0 mismatches
+pact_withdraw: 84 compared (32 units moved by the original, 1 with calls), 0 mismatches
+energy_trade: 420 compared (187 returned true, 378 changed state), 0 mismatches
+mon_winning: 112 compared (56 changed the table in the original), 0 mismatches
+energy_limit: 10 compared, 0 mismatches
+  fixup_landmarks variant 0: 51 tiles with a negative code, 0 entries zeroed by the original
+  fixup_landmarks variant 1: 111 tiles with a negative code, 23 entries zeroed by the original
+  fixup_landmarks variant 2: 171 tiles with a negative code, 25 entries zeroed by the original
+fixup_landmarks: 3 compared (48 entries zeroed in all), 0 mismatches
+delete_landmark: 863 compared (240 on relief landmark tiles, 738 changed the tile in the original, 1 views in use), 0 mismatches
+terrain_fixup: 13 compared (map area 8192), 0 mismatches
+mapwin_terrain_fixup: 11 views compared (4 rebuilt by the original), 0 mismatches
+base_init: 253 compared (by the original: 168 first bases, 84 at sea), 0 mismatches
+name_base: 308 compared (4 default names by the original), 0 mismatches
+battle_fight: 2244 compared (13 wrapped x), 0 mismatches
+compute_odds: 7088 compared (0 air attackers, 2240 at a base, 5946 changed the odds), 0 mismatches
+prune_protos: 1452 compared (original: 104 marks obsolete, 0 typed complete, 4 kept designs flagged, 0 marks removed, 0 queues changed, 0 questions, 0 network popups, 60 net calls), 0 mismatches
+consider_designs: 35 compared (original: 17 prototype slots changed in 6 runs, 7 suggestions recorded, 0 base queues changed), 0 mismatches
+base_change: 630 compared (440 with a call out, 528 changed the game state), 0 mismatches
+base_reset: 240 compared (192 with a call out, 0 asked GOVPROJECT first, 226 changed the game state), 0 mismatches
+base_hurry: 504 compared (329 spent energy, 0 with a call out), 0 mismatches
+alien_fauna: 84 compared (by the original: 121 units born, 26 redraws, 17 popups, 0 redraws at the seeded junk stack values), 0 mismatches
+world_rivers: 4 compared (4 changed state), 0 mismatches
+world_climate: 4 compared (4 changed state), 0 mismatches
+world_erosion: 5 compared (5 changed state), 0 mismatches
+TOTAL mismatches: 0 (3500 ms)
+
+== sw_aki2213.SAV: OpenSMACX regression run: turn 113, 300 bases, 1151 vehs, filter='baseprod diplotwo natlife diplonote protodesign b28main'
+pact_attacks: 42 compared (42 with a notice), 0 mismatches
+pact_unpact: 42 compared (42 with a notice), 0 mismatches
+pact_truce: 42 compared (42 with a notice), 0 mismatches
+pact_treaty: 42 compared (42 with a notice), 0 mismatches
+enemies_unpact: 210 compared (122 changed state, 138 with a notice), 0 mismatches
+enemies_team_up: 1050 compared (865 changed state, 30 with a notice), 0 mismatches
+break_treaty: 3528 compared (792 returned true, 1248 with a popup), 0 mismatches
+make_treaty: 126 compared (126 changed state), 0 mismatches
+pledge_truce: 84 compared (84 changed state, 42 with a dialog), 0 mismatches
+demands_withdrawal: 378 compared (378 with a call out), 0 mismatches
+renounce_pact: 168 compared (126 changed state), 0 mismatches
+dont_withdrawal: 210 compared (68 found a reason), 0 mismatches
+intervention: 252 compared (210 changed state, 120 with calls), 0 mismatches
+demand_withdrawal: 546 compared (answers by the original: 252 withdrew, 126 refused, 168 war; 500 changed state), 0 mismatches
+mention_prototypes: 252 compared (210 with calls), 0 mismatches
+buy_tech: 1008 compared (750 made an offer, 750 with calls), 0 mismatches
+pact_withdraw: 84 compared (28 units moved by the original, 4 with calls), 0 mismatches
+energy_trade: 420 compared (192 returned true, 378 changed state), 0 mismatches
+mon_winning: 112 compared (56 changed the table in the original), 0 mismatches
+energy_limit: 10 compared, 0 mismatches
+  fixup_landmarks variant 0: 83 tiles with a negative code, 0 entries zeroed by the original
+  fixup_landmarks variant 1: 143 tiles with a negative code, 23 entries zeroed by the original
+  fixup_landmarks variant 2: 203 tiles with a negative code, 25 entries zeroed by the original
+fixup_landmarks: 3 compared (48 entries zeroed in all), 0 mismatches
+delete_landmark: 863 compared (240 on relief landmark tiles, 734 changed the tile in the original, 1 views in use), 0 mismatches
+terrain_fixup: 13 compared (map area 8192), 0 mismatches
+mapwin_terrain_fixup: 11 views compared (4 rebuilt by the original), 0 mismatches
+base_init: 253 compared (by the original: 168 first bases, 84 at sea), 0 mismatches
+name_base: 308 compared (4 default names by the original), 0 mismatches
+battle_fight: 11832 compared (99 wrapped x), 0 mismatches
+compute_odds: 54848 compared (0 air attackers, 19456 at a base, 49912 changed the odds), 0 mismatches
+prune_protos: 1780 compared (original: 1828 marks obsolete, 0 typed complete, 48 kept designs flagged, 0 marks removed, 88 queues changed, 0 questions, 0 network popups, 8472 net calls), 0 mismatches
+consider_designs: 35 compared (original: 49 prototype slots changed in 14 runs, 7 suggestions recorded, 0 base queues changed), 0 mismatches
+base_change: 2520 compared (2195 with a call out, 2361 changed the game state), 0 mismatches
+base_reset: 1000 compared (863 with a call out, 0 asked GOVPROJECT first, 976 changed the game state), 0 mismatches
+base_hurry: 2100 compared (1079 spent energy, 0 with a call out), 0 mismatches
+alien_fauna: 84 compared (by the original: 122 units born, 239 redraws, 121 popups, 0 redraws at the seeded junk stack values), 0 mismatches
+world_rivers: 4 compared (3 changed state), 0 mismatches
+world_climate: 4 compared (4 changed state), 0 mismatches
+world_erosion: 5 compared (5 changed state), 0 mismatches
+TOTAL mismatches: 0 (7922 ms)
+
+== sw_aki2247.SAV: OpenSMACX regression run: turn 147, 300 bases, 1590 vehs, filter='baseprod diplotwo natlife diplonote protodesign b28main'
+pact_attacks: 42 compared (42 with a notice), 0 mismatches
+pact_unpact: 42 compared (42 with a notice), 0 mismatches
+pact_truce: 42 compared (42 with a notice), 0 mismatches
+pact_treaty: 42 compared (42 with a notice), 0 mismatches
+enemies_unpact: 210 compared (122 changed state, 162 with a notice), 0 mismatches
+enemies_team_up: 1050 compared (865 changed state, 30 with a notice), 0 mismatches
+break_treaty: 3528 compared (758 returned true, 1180 with a popup), 0 mismatches
+make_treaty: 126 compared (126 changed state), 0 mismatches
+pledge_truce: 84 compared (84 changed state, 42 with a dialog), 0 mismatches
+demands_withdrawal: 378 compared (378 with a call out), 0 mismatches
+renounce_pact: 168 compared (126 changed state), 0 mismatches
+dont_withdrawal: 210 compared (48 found a reason), 0 mismatches
+intervention: 252 compared (210 changed state, 120 with calls), 0 mismatches
+demand_withdrawal: 546 compared (answers by the original: 250 withdrew, 128 refused, 168 war; 520 changed state), 0 mismatches
+mention_prototypes: 252 compared (210 with calls), 0 mismatches
+buy_tech: 1008 compared (756 made an offer, 756 with calls), 0 mismatches
+pact_withdraw: 84 compared (118 units moved by the original, 10 with calls), 0 mismatches
+energy_trade: 420 compared (148 returned true, 378 changed state), 0 mismatches
+mon_winning: 112 compared (56 changed the table in the original), 0 mismatches
+energy_limit: 10 compared, 0 mismatches
+  fixup_landmarks variant 0: 147 tiles with a negative code, 0 entries zeroed by the original
+  fixup_landmarks variant 1: 207 tiles with a negative code, 23 entries zeroed by the original
+  fixup_landmarks variant 2: 276 tiles with a negative code, 25 entries zeroed by the original
+fixup_landmarks: 3 compared (48 entries zeroed in all), 0 mismatches
+delete_landmark: 879 compared (258 on relief landmark tiles, 738 changed the tile in the original, 1 views in use), 0 mismatches
+terrain_fixup: 13 compared (map area 8192), 0 mismatches
+mapwin_terrain_fixup: 11 views compared (4 rebuilt by the original), 0 mismatches
+base_init: 253 compared (by the original: 168 first bases, 84 at sea), 0 mismatches
+name_base: 308 compared (4 default names by the original), 0 mismatches
+battle_fight: 16116 compared (108 wrapped x), 0 mismatches
+compute_odds: 91776 compared (6080 air attackers, 28960 at a base, 84538 changed the odds), 0 mismatches
+prune_protos: 2216 compared (original: 5146 marks obsolete, 0 typed complete, 110 kept designs flagged, 0 marks removed, 688 queues changed, 0 questions, 0 network popups, 33717 net calls), 0 mismatches
+consider_designs: 35 compared (original: 83 prototype slots changed in 12 runs, 7 suggestions recorded, 3 base queues changed), 0 mismatches
+base_change: 2520 compared (2210 with a call out, 2368 changed the game state), 0 mismatches
+base_reset: 1000 compared (899 with a call out, 0 asked GOVPROJECT first, 988 changed the game state), 0 mismatches
+base_hurry: 2100 compared (1060 spent energy, 0 with a call out), 0 mismatches
+alien_fauna: 84 compared (by the original: 111 units born, 158 redraws, 162 popups, 0 redraws at the seeded junk stack values), 0 mismatches
+world_rivers: 4 compared (3 changed state), 0 mismatches
+world_climate: 4 compared (4 changed state), 0 mismatches
+world_erosion: 5 compared (5 changed state), 0 mismatches
+TOTAL mismatches: 0 (7469 ms)
+
+== sw_artifacts.SAV: OpenSMACX regression run: turn 74, 142 bases, 384 vehs, filter='baseprod diplotwo natlife diplonote protodesign b28main'
+pact_attacks: 42 compared (42 with a notice), 0 mismatches
+pact_unpact: 42 compared (42 with a notice), 0 mismatches
+pact_truce: 42 compared (42 with a notice), 0 mismatches
+pact_treaty: 42 compared (42 with a notice), 0 mismatches
+enemies_unpact: 210 compared (118 changed state, 138 with a notice), 0 mismatches
+enemies_team_up: 1050 compared (870 changed state, 30 with a notice), 0 mismatches
+break_treaty: 3528 compared (742 returned true, 1148 with a popup), 0 mismatches
+make_treaty: 126 compared (126 changed state), 0 mismatches
+pledge_truce: 84 compared (84 changed state, 42 with a dialog), 0 mismatches
+demands_withdrawal: 378 compared (378 with a call out), 0 mismatches
+renounce_pact: 168 compared (126 changed state), 0 mismatches
+dont_withdrawal: 210 compared (16 found a reason), 0 mismatches
+intervention: 252 compared (210 changed state, 120 with calls), 0 mismatches
+demand_withdrawal: 546 compared (answers by the original: 252 withdrew, 126 refused, 168 war; 532 changed state), 0 mismatches
+mention_prototypes: 252 compared (162 with calls), 0 mismatches
+buy_tech: 1008 compared (678 made an offer, 678 with calls), 0 mismatches
+pact_withdraw: 84 compared (4 units moved by the original, 1 with calls), 0 mismatches
+energy_trade: 420 compared (190 returned true, 378 changed state), 0 mismatches
+mon_winning: 112 compared (56 changed the table in the original), 0 mismatches
+energy_limit: 10 compared, 0 mismatches
+  fixup_landmarks variant 0: 41 tiles with a negative code, 0 entries zeroed by the original
+  fixup_landmarks variant 1: 101 tiles with a negative code, 21 entries zeroed by the original
+  fixup_landmarks variant 2: 161 tiles with a negative code, 25 entries zeroed by the original
+fixup_landmarks: 3 compared (46 entries zeroed in all), 0 mismatches
+delete_landmark: 1216 compared (240 on relief landmark tiles, 1092 changed the tile in the original, 1 views in use), 0 mismatches
+terrain_fixup: 13 compared (map area 12800), 0 mismatches
+mapwin_terrain_fixup: 11 views compared (4 rebuilt by the original), 0 mismatches
+base_init: 253 compared (by the original: 168 first bases, 84 at sea), 0 mismatches
+name_base: 308 compared (6 default names by the original), 0 mismatches
+battle_fight: 3740 compared (0 wrapped x), 0 mismatches
+compute_odds: 11000 compared (0 air attackers, 3888 at a base, 9376 changed the odds), 0 mismatches
+prune_protos: 1512 compared (original: 266 marks obsolete, 0 typed complete, 10 kept designs flagged, 0 marks removed, 4 queues changed, 0 questions, 0 network popups, 231 net calls), 0 mismatches
+consider_designs: 35 compared (original: 4 prototype slots changed in 4 runs, 7 suggestions recorded, 0 base queues changed), 0 mismatches
+base_change: 1218 compared (1048 with a call out, 1127 changed the game state), 0 mismatches
+base_reset: 476 compared (384 with a call out, 0 asked GOVPROJECT first, 450 changed the game state), 0 mismatches
+base_hurry: 994 compared (518 spent energy, 4 with a call out), 0 mismatches
+alien_fauna: 84 compared (by the original: 107 units born, 9 redraws, 20 popups, 0 redraws at the seeded junk stack values), 0 mismatches
+world_rivers: 4 compared (4 changed state), 0 mismatches
+world_climate: 4 compared (4 changed state), 0 mismatches
+world_erosion: 5 compared (5 changed state), 0 mismatches
+TOTAL mismatches: 0 (5375 ms)
+
+== sw_bugged.SAV: OpenSMACX regression run: turn 272, 291 bases, 1637 vehs, filter='baseprod diplotwo natlife diplonote protodesign b28main'
+pact_attacks: 42 compared (42 with a notice), 0 mismatches
+pact_unpact: 42 compared (42 with a notice), 0 mismatches
+pact_truce: 42 compared (42 with a notice), 0 mismatches
+pact_treaty: 42 compared (42 with a notice), 0 mismatches
+enemies_unpact: 210 compared (114 changed state, 168 with a notice), 0 mismatches
+enemies_team_up: 1050 compared (860 changed state, 68 with a notice), 0 mismatches
+break_treaty: 3528 compared (732 returned true, 1128 with a popup), 0 mismatches
+make_treaty: 126 compared (126 changed state), 0 mismatches
+pledge_truce: 84 compared (84 changed state, 42 with a dialog), 0 mismatches
+demands_withdrawal: 378 compared (378 with a call out), 0 mismatches
+renounce_pact: 168 compared (126 changed state), 0 mismatches
+dont_withdrawal: 210 compared (52 found a reason), 0 mismatches
+intervention: 252 compared (210 changed state, 120 with calls), 0 mismatches
+demand_withdrawal: 546 compared (answers by the original: 248 withdrew, 130 refused, 168 war; 529 changed state), 0 mismatches
+mention_prototypes: 252 compared (210 with calls), 0 mismatches
+buy_tech: 1008 compared (756 made an offer, 756 with calls), 0 mismatches
+pact_withdraw: 84 compared (228 units moved by the original, 10 with calls), 0 mismatches
+energy_trade: 420 compared (151 returned true, 378 changed state), 0 mismatches
+mon_winning: 112 compared (48 changed the table in the original), 0 mismatches
+energy_limit: 10 compared, 0 mismatches
+  fixup_landmarks variant 0: 780 tiles with a negative code, 0 entries zeroed by the original
+  fixup_landmarks variant 1: 835 tiles with a negative code, 20 entries zeroed by the original
+  fixup_landmarks variant 2: 908 tiles with a negative code, 25 entries zeroed by the original
+fixup_landmarks: 3 compared (45 entries zeroed in all), 0 mismatches
+delete_landmark: 879 compared (258 on relief landmark tiles, 691 changed the tile in the original, 1 views in use), 0 mismatches
+terrain_fixup: 13 compared (map area 8192), 0 mismatches
+mapwin_terrain_fixup: 11 views compared (4 rebuilt by the original), 0 mismatches
+base_init: 253 compared (by the original: 168 first bases, 84 at sea), 0 mismatches
+name_base: 308 compared (4 default names by the original), 0 mismatches
+battle_fight: 16252 compared (32 wrapped x), 0 mismatches
+compute_odds: 100200 compared (25464 air attackers, 33840 at a base, 93613 changed the odds), 0 mismatches
+prune_protos: 3884 compared (original: 33596 marks obsolete, 0 typed complete, 586 kept designs flagged, 0 marks removed, 3590 queues changed, 0 questions, 0 network popups, 105467 net calls), 0 mismatches
+consider_designs: 35 compared (original: 209 prototype slots changed in 23 runs, 7 suggestions recorded, 18 base queues changed), 0 mismatches
+base_change: 2478 compared (2178 with a call out, 2312 changed the game state), 0 mismatches
+base_reset: 970 compared (946 with a call out, 0 asked GOVPROJECT first, 970 changed the game state), 0 mismatches
+base_hurry: 2042 compared (964 spent energy, 0 with a call out), 0 mismatches
+alien_fauna: 84 compared (by the original: 194 units born, 374 redraws, 113 popups, 0 redraws at the seeded junk stack values), 0 mismatches
+world_rivers: 4 compared (3 changed state), 0 mismatches
+world_climate: 4 compared (4 changed state), 0 mismatches
+world_erosion: 5 compared (5 changed state), 0 mismatches
+TOTAL mismatches: 0 (8297 ms)
+
+== sw_cheese.SAV: OpenSMACX regression run: turn 71, 131 bases, 352 vehs, filter='baseprod diplotwo natlife diplonote protodesign b28main'
+pact_attacks: 42 compared (42 with a notice), 0 mismatches
+pact_unpact: 42 compared (42 with a notice), 0 mismatches
+pact_truce: 42 compared (42 with a notice), 0 mismatches
+pact_treaty: 42 compared (42 with a notice), 0 mismatches
+enemies_unpact: 210 compared (118 changed state, 138 with a notice), 0 mismatches
+enemies_team_up: 1050 compared (870 changed state, 30 with a notice), 0 mismatches
+break_treaty: 3528 compared (742 returned true, 1148 with a popup), 0 mismatches
+make_treaty: 126 compared (126 changed state), 0 mismatches
+pledge_truce: 84 compared (84 changed state, 42 with a dialog), 0 mismatches
+demands_withdrawal: 378 compared (378 with a call out), 0 mismatches
+renounce_pact: 168 compared (126 changed state), 0 mismatches
+dont_withdrawal: 210 compared (16 found a reason), 0 mismatches
+intervention: 252 compared (210 changed state, 120 with calls), 0 mismatches
+demand_withdrawal: 546 compared (answers by the original: 252 withdrew, 126 refused, 168 war; 532 changed state), 0 mismatches
+mention_prototypes: 252 compared (162 with calls), 0 mismatches
+buy_tech: 1008 compared (672 made an offer, 672 with calls), 0 mismatches
+pact_withdraw: 84 compared (6 units moved by the original, 1 with calls), 0 mismatches
+energy_trade: 420 compared (191 returned true, 378 changed state), 0 mismatches
+mon_winning: 112 compared (56 changed the table in the original), 0 mismatches
+energy_limit: 10 compared, 0 mismatches
+  fixup_landmarks variant 0: 41 tiles with a negative code, 0 entries zeroed by the original
+  fixup_landmarks variant 1: 101 tiles with a negative code, 21 entries zeroed by the original
+  fixup_landmarks variant 2: 161 tiles with a negative code, 25 entries zeroed by the original
+fixup_landmarks: 3 compared (46 entries zeroed in all), 0 mismatches
+delete_landmark: 1216 compared (240 on relief landmark tiles, 1092 changed the tile in the original, 1 views in use), 0 mismatches
+terrain_fixup: 13 compared (map area 12800), 0 mismatches
+mapwin_terrain_fixup: 11 views compared (4 rebuilt by the original), 0 mismatches
+base_init: 253 compared (by the original: 168 first bases, 84 at sea), 0 mismatches
+name_base: 308 compared (6 default names by the original), 0 mismatches
+battle_fight: 3604 compared (28 wrapped x), 0 mismatches
+compute_odds: 9816 compared (0 air attackers, 3344 at a base, 8132 changed the odds), 0 mismatches
+prune_protos: 1512 compared (original: 266 marks obsolete, 0 typed complete, 10 kept designs flagged, 0 marks removed, 0 queues changed, 0 questions, 0 network popups, 168 net calls), 0 mismatches
+consider_designs: 35 compared (original: 4 prototype slots changed in 4 runs, 7 suggestions recorded, 0 base queues changed), 0 mismatches
+base_change: 1134 compared (974 with a call out, 1049 changed the game state), 0 mismatches
+base_reset: 438 compared (306 with a call out, 0 asked GOVPROJECT first, 388 changed the game state), 0 mismatches
+base_hurry: 922 compared (513 spent energy, 0 with a call out), 0 mismatches
+alien_fauna: 84 compared (by the original: 116 units born, 12 redraws, 19 popups, 0 redraws at the seeded junk stack values), 0 mismatches
+world_rivers: 4 compared (4 changed state), 0 mismatches
+world_climate: 4 compared (4 changed state), 0 mismatches
+world_erosion: 5 compared (5 changed state), 0 mismatches
+TOTAL mismatches: 0 (5250 ms)
+
+== sw_morgan.SAV: OpenSMACX regression run: turn 48, 59 bases, 173 vehs, filter='baseprod diplotwo natlife diplonote protodesign b28main'
+pact_attacks: 42 compared (42 with a notice), 0 mismatches
+pact_unpact: 42 compared (42 with a notice), 0 mismatches
+pact_truce: 42 compared (42 with a notice), 0 mismatches
+pact_treaty: 42 compared (42 with a notice), 0 mismatches
+enemies_unpact: 210 compared (118 changed state, 138 with a notice), 0 mismatches
+enemies_team_up: 1050 compared (870 changed state, 30 with a notice), 0 mismatches
+break_treaty: 3528 compared (742 returned true, 1148 with a popup), 0 mismatches
+make_treaty: 126 compared (126 changed state), 0 mismatches
+pledge_truce: 84 compared (84 changed state, 42 with a dialog), 0 mismatches
+demands_withdrawal: 378 compared (378 with a call out), 0 mismatches
+renounce_pact: 168 compared (126 changed state), 0 mismatches
+dont_withdrawal: 210 compared (16 found a reason), 0 mismatches
+intervention: 252 compared (210 changed state, 120 with calls), 0 mismatches
+demand_withdrawal: 546 compared (answers by the original: 252 withdrew, 126 refused, 168 war; 532 changed state), 0 mismatches
+mention_prototypes: 252 compared (138 with calls), 0 mismatches
+buy_tech: 1008 compared (636 made an offer, 636 with calls), 0 mismatches
+pact_withdraw: 84 compared (4 units moved by the original, 1 with calls), 0 mismatches
+energy_trade: 420 compared (192 returned true, 378 changed state), 0 mismatches
+mon_winning: 112 compared (56 changed the table in the original), 0 mismatches
+energy_limit: 10 compared, 0 mismatches
+  fixup_landmarks variant 0: 20 tiles with a negative code, 0 entries zeroed by the original
+  fixup_landmarks variant 1: 80 tiles with a negative code, 21 entries zeroed by the original
+  fixup_landmarks variant 2: 140 tiles with a negative code, 25 entries zeroed by the original
+fixup_landmarks: 3 compared (46 entries zeroed in all), 0 mismatches
+delete_landmark: 1216 compared (240 on relief landmark tiles, 1094 changed the tile in the original, 1 views in use), 0 mismatches
+terrain_fixup: 13 compared (map area 12800), 0 mismatches
+mapwin_terrain_fixup: 11 views compared (4 rebuilt by the original), 0 mismatches
+base_init: 253 compared (by the original: 168 first bases, 84 at sea), 0 mismatches
+name_base: 308 compared (6 default names by the original), 0 mismatches
+battle_fight: 1700 compared (1 wrapped x), 0 mismatches
+compute_odds: 4752 compared (160 air attackers, 1280 at a base, 3928 changed the odds), 0 mismatches
+prune_protos: 1504 compared (original: 96 marks obsolete, 0 typed complete, 4 kept designs flagged, 0 marks removed, 0 queues changed, 0 questions, 0 network popups, 50 net calls), 0 mismatches
+consider_designs: 35 compared (original: 4 prototype slots changed in 4 runs, 7 suggestions recorded, 0 base queues changed), 0 mismatches
+base_change: 504 compared (350 with a call out, 424 changed the game state), 0 mismatches
+base_reset: 198 compared (152 with a call out, 0 asked GOVPROJECT first, 180 changed the game state), 0 mismatches
+base_hurry: 418 compared (268 spent energy, 0 with a call out), 0 mismatches
+alien_fauna: 84 compared (by the original: 128 units born, 6 redraws, 8 popups, 0 redraws at the seeded junk stack values), 0 mismatches
+world_rivers: 4 compared (4 changed state), 0 mismatches
+world_climate: 4 compared (4 changed state), 0 mismatches
+world_erosion: 5 compared (5 changed state), 0 mismatches
+TOTAL mismatches: 0 (4172 ms)
+
+== sw_quake.SAV: OpenSMACX regression run: turn 53, 71 bases, 204 vehs, filter='baseprod diplotwo natlife diplonote protodesign b28main'
+pact_attacks: 42 compared (42 with a notice), 0 mismatches
+pact_unpact: 42 compared (42 with a notice), 0 mismatches
+pact_truce: 42 compared (42 with a notice), 0 mismatches
+pact_treaty: 42 compared (42 with a notice), 0 mismatches
+enemies_unpact: 210 compared (118 changed state, 138 with a notice), 0 mismatches
+enemies_team_up: 1050 compared (870 changed state, 30 with a notice), 0 mismatches
+break_treaty: 3528 compared (742 returned true, 1148 with a popup), 0 mismatches
+make_treaty: 126 compared (126 changed state), 0 mismatches
+pledge_truce: 84 compared (84 changed state, 42 with a dialog), 0 mismatches
+demands_withdrawal: 378 compared (378 with a call out), 0 mismatches
+renounce_pact: 168 compared (126 changed state), 0 mismatches
+dont_withdrawal: 210 compared (16 found a reason), 0 mismatches
+intervention: 252 compared (210 changed state, 120 with calls), 0 mismatches
+demand_withdrawal: 546 compared (answers by the original: 252 withdrew, 126 refused, 168 war; 532 changed state), 0 mismatches
+mention_prototypes: 252 compared (138 with calls), 0 mismatches
+buy_tech: 1008 compared (642 made an offer, 642 with calls), 0 mismatches
+pact_withdraw: 84 compared (6 units moved by the original, 1 with calls), 0 mismatches
+energy_trade: 420 compared (190 returned true, 378 changed state), 0 mismatches
+mon_winning: 112 compared (56 changed the table in the original), 0 mismatches
+energy_limit: 10 compared, 0 mismatches
+  fixup_landmarks variant 0: 41 tiles with a negative code, 0 entries zeroed by the original
+  fixup_landmarks variant 1: 101 tiles with a negative code, 21 entries zeroed by the original
+  fixup_landmarks variant 2: 161 tiles with a negative code, 25 entries zeroed by the original
+fixup_landmarks: 3 compared (46 entries zeroed in all), 0 mismatches
+delete_landmark: 1216 compared (240 on relief landmark tiles, 1092 changed the tile in the original, 1 views in use), 0 mismatches
+terrain_fixup: 13 compared (map area 12800), 0 mismatches
+mapwin_terrain_fixup: 11 views compared (4 rebuilt by the original), 0 mismatches
+base_init: 253 compared (by the original: 168 first bases, 84 at sea), 0 mismatches
+name_base: 308 compared (6 default names by the original), 0 mismatches
+battle_fight: 2040 compared (0 wrapped x), 0 mismatches
+compute_odds: 6048 compared (168 air attackers, 1792 at a base, 5108 changed the odds), 0 mismatches
+prune_protos: 1504 compared (original: 96 marks obsolete, 0 typed complete, 4 kept designs flagged, 0 marks removed, 0 queues changed, 0 questions, 0 network popups, 50 net calls), 0 mismatches
+consider_designs: 35 compared (original: 4 prototype slots changed in 4 runs, 7 suggestions recorded, 0 base queues changed), 0 mismatches
+base_change: 630 compared (435 with a call out, 531 changed the game state), 0 mismatches
+base_reset: 238 compared (187 with a call out, 0 asked GOVPROJECT first, 222 changed the game state), 0 mismatches
+base_hurry: 502 compared (286 spent energy, 0 with a call out), 0 mismatches
+alien_fauna: 84 compared (by the original: 103 units born, 8 redraws, 10 popups, 0 redraws at the seeded junk stack values), 0 mismatches
+world_rivers: 4 compared (4 changed state), 0 mismatches
+world_climate: 4 compared (4 changed state), 0 mismatches
+world_erosion: 5 compared (5 changed state), 0 mismatches
+TOTAL mismatches: 0 (4406 ms)
+
+== sw_starcraft.SAV: OpenSMACX regression run: turn 75, 146 bases, 391 vehs, filter='baseprod diplotwo natlife diplonote protodesign b28main'
+pact_attacks: 42 compared (42 with a notice), 0 mismatches
+pact_unpact: 42 compared (42 with a notice), 0 mismatches
+pact_truce: 42 compared (42 with a notice), 0 mismatches
+pact_treaty: 42 compared (42 with a notice), 0 mismatches
+enemies_unpact: 210 compared (122 changed state, 138 with a notice), 0 mismatches
+enemies_team_up: 1050 compared (870 changed state, 30 with a notice), 0 mismatches
+break_treaty: 3528 compared (752 returned true, 1168 with a popup), 0 mismatches
+make_treaty: 126 compared (126 changed state), 0 mismatches
+pledge_truce: 84 compared (84 changed state, 42 with a dialog), 0 mismatches
+demands_withdrawal: 378 compared (378 with a call out), 0 mismatches
+renounce_pact: 168 compared (126 changed state), 0 mismatches
+dont_withdrawal: 210 compared (20 found a reason), 0 mismatches
+intervention: 252 compared (210 changed state, 120 with calls), 0 mismatches
+demand_withdrawal: 546 compared (answers by the original: 252 withdrew, 126 refused, 168 war; 528 changed state), 0 mismatches
+mention_prototypes: 252 compared (162 with calls), 0 mismatches
+buy_tech: 1008 compared (678 made an offer, 678 with calls), 0 mismatches
+pact_withdraw: 84 compared (6 units moved by the original, 1 with calls), 0 mismatches
+energy_trade: 420 compared (190 returned true, 378 changed state), 0 mismatches
+mon_winning: 112 compared (56 changed the table in the original), 0 mismatches
+energy_limit: 10 compared, 0 mismatches
+  fixup_landmarks variant 0: 41 tiles with a negative code, 0 entries zeroed by the original
+  fixup_landmarks variant 1: 101 tiles with a negative code, 21 entries zeroed by the original
+  fixup_landmarks variant 2: 161 tiles with a negative code, 25 entries zeroed by the original
+fixup_landmarks: 3 compared (46 entries zeroed in all), 0 mismatches
+delete_landmark: 1216 compared (240 on relief landmark tiles, 1092 changed the tile in the original, 1 views in use), 0 mismatches
+terrain_fixup: 13 compared (map area 12800), 0 mismatches
+mapwin_terrain_fixup: 11 views compared (4 rebuilt by the original), 0 mismatches
+base_init: 253 compared (by the original: 168 first bases, 84 at sea), 0 mismatches
+name_base: 308 compared (6 default names by the original), 0 mismatches
+battle_fight: 4148 compared (40 wrapped x), 0 mismatches
+compute_odds: 11176 compared (0 air attackers, 3920 at a base, 9338 changed the odds), 0 mismatches
+prune_protos: 1512 compared (original: 266 marks obsolete, 0 typed complete, 10 kept designs flagged, 0 marks removed, 4 queues changed, 0 questions, 0 network popups, 234 net calls), 0 mismatches
+consider_designs: 35 compared (original: 4 prototype slots changed in 4 runs, 7 suggestions recorded, 0 base queues changed), 0 mismatches
+base_change: 1260 compared (1100 with a call out, 1175 changed the game state), 0 mismatches
+base_reset: 488 compared (388 with a call out, 0 asked GOVPROJECT first, 460 changed the game state), 0 mismatches
+base_hurry: 1022 compared (492 spent energy, 0 with a call out), 0 mismatches
+alien_fauna: 84 compared (by the original: 106 units born, 11 redraws, 22 popups, 0 redraws at the seeded junk stack values), 0 mismatches
+world_rivers: 4 compared (4 changed state), 0 mismatches
+world_climate: 4 compared (4 changed state), 0 mismatches
+world_erosion: 5 compared (5 changed state), 0 mismatches
+TOTAL mismatches: 0 (5453 ms)
+
+== sw_steam1.SAV: OpenSMACX regression run: turn 32, 20 bases, 81 vehs, filter='baseprod diplotwo natlife diplonote protodesign b28main'
+pact_attacks: 42 compared (42 with a notice), 0 mismatches
+pact_unpact: 42 compared (42 with a notice), 0 mismatches
+pact_truce: 42 compared (42 with a notice), 0 mismatches
+pact_treaty: 42 compared (42 with a notice), 0 mismatches
+enemies_unpact: 210 compared (114 changed state, 138 with a notice), 0 mismatches
+enemies_team_up: 1050 compared (870 changed state, 30 with a notice), 0 mismatches
+break_treaty: 3528 compared (720 returned true, 1104 with a popup), 0 mismatches
+make_treaty: 126 compared (126 changed state), 0 mismatches
+pledge_truce: 84 compared (84 changed state, 42 with a dialog), 0 mismatches
+demands_withdrawal: 378 compared (378 with a call out), 0 mismatches
+renounce_pact: 168 compared (126 changed state), 0 mismatches
+dont_withdrawal: 210 compared (6 found a reason), 0 mismatches
+intervention: 252 compared (210 changed state, 120 with calls), 0 mismatches
+demand_withdrawal: 546 compared (answers by the original: 252 withdrew, 126 refused, 168 war; 544 changed state), 0 mismatches
+mention_prototypes: 252 compared (138 with calls), 0 mismatches
+buy_tech: 1008 compared (602 made an offer, 602 with calls), 0 mismatches
+pact_withdraw: 84 compared (10 units moved by the original, 2 with calls), 0 mismatches
+energy_trade: 420 compared (187 returned true, 378 changed state), 0 mismatches
+mon_winning: 112 compared (56 changed the table in the original), 0 mismatches
+energy_limit: 10 compared, 0 mismatches
+  fixup_landmarks variant 0: 3 tiles with a negative code, 0 entries zeroed by the original
+  fixup_landmarks variant 1: 64 tiles with a negative code, 23 entries zeroed by the original
+  fixup_landmarks variant 2: 123 tiles with a negative code, 25 entries zeroed by the original
+fixup_landmarks: 3 compared (48 entries zeroed in all), 0 mismatches
+delete_landmark: 862 compared (240 on relief landmark tiles, 742 changed the tile in the original, 1 views in use), 0 mismatches
+terrain_fixup: 13 compared (map area 8192), 0 mismatches
+mapwin_terrain_fixup: 11 views compared (4 rebuilt by the original), 0 mismatches
+base_init: 253 compared (by the original: 168 first bases, 84 at sea), 0 mismatches
+name_base: 308 compared (4 default names by the original), 0 mismatches
+battle_fight: 816 compared (1 wrapped x), 0 mismatches
+compute_odds: 2376 compared (80 air attackers, 560 at a base, 2160 changed the odds), 0 mismatches
+prune_protos: 1332 compared (original: 96 marks obsolete, 0 typed complete, 4 kept designs flagged, 0 marks removed, 0 queues changed, 0 questions, 0 network popups, 56 net calls), 0 mismatches
+consider_designs: 35 compared (original: 2 prototype slots changed in 2 runs, 7 suggestions recorded, 0 base queues changed), 0 mismatches
+base_change: 168 compared (115 with a call out, 139 changed the game state), 0 mismatches
+base_reset: 68 compared (22 with a call out, 0 asked GOVPROJECT first, 42 changed the game state), 0 mismatches
+base_hurry: 140 compared (70 spent energy, 0 with a call out), 0 mismatches
+alien_fauna: 84 compared (by the original: 100 units born, 1 redraws, 2 popups, 0 redraws at the seeded junk stack values), 0 mismatches
+world_rivers: 4 compared (4 changed state), 0 mismatches
+world_climate: 4 compared (4 changed state), 0 mismatches
+world_erosion: 5 compared (5 changed state), 0 mismatches
+TOTAL mismatches: 0 (2406 ms)
+
+== sw_steam20.SAV: OpenSMACX regression run: turn 20, 13 bases, 74 vehs, filter='baseprod diplotwo natlife diplonote protodesign b28main'
+pact_attacks: 42 compared (42 with a notice), 0 mismatches
+pact_unpact: 42 compared (42 with a notice), 0 mismatches
+pact_truce: 42 compared (42 with a notice), 0 mismatches
+pact_treaty: 42 compared (42 with a notice), 0 mismatches
+enemies_unpact: 210 compared (114 changed state, 138 with a notice), 0 mismatches
+enemies_team_up: 1050 compared (870 changed state, 30 with a notice), 0 mismatches
+break_treaty: 3528 compared (714 returned true, 1092 with a popup), 0 mismatches
+make_treaty: 126 compared (126 changed state), 0 mismatches
+pledge_truce: 84 compared (84 changed state, 42 with a dialog), 0 mismatches
+demands_withdrawal: 378 compared (378 with a call out), 0 mismatches
+renounce_pact: 168 compared (126 changed state), 0 mismatches
+dont_withdrawal: 210 compared (4 found a reason), 0 mismatches
+intervention: 252 compared (210 changed state, 120 with calls), 0 mismatches
+demand_withdrawal: 546 compared (answers by the original: 252 withdrew, 126 refused, 168 war; 546 changed state), 0 mismatches
+mention_prototypes: 252 compared (114 with calls), 0 mismatches
+buy_tech: 1008 compared (566 made an offer, 566 with calls), 0 mismatches
+pact_withdraw: 84 compared (4 units moved by the original, 1 with calls), 0 mismatches
+energy_trade: 420 compared (190 returned true, 378 changed state), 0 mismatches
+mon_winning: 112 compared (56 changed the table in the original), 0 mismatches
+energy_limit: 10 compared, 0 mismatches
+  fixup_landmarks variant 0: 0 tiles with a negative code, 0 entries zeroed by the original
+  fixup_landmarks variant 1: 61 tiles with a negative code, 23 entries zeroed by the original
+  fixup_landmarks variant 2: 120 tiles with a negative code, 25 entries zeroed by the original
+fixup_landmarks: 3 compared (48 entries zeroed in all), 0 mismatches
+delete_landmark: 862 compared (240 on relief landmark tiles, 742 changed the tile in the original, 1 views in use), 0 mismatches
+terrain_fixup: 13 compared (map area 8192), 0 mismatches
+mapwin_terrain_fixup: 11 views compared (4 rebuilt by the original), 0 mismatches
+base_init: 253 compared (by the original: 168 first bases, 84 at sea), 0 mismatches
+name_base: 308 compared (4 default names by the original), 0 mismatches
+battle_fight: 748 compared (1 wrapped x), 0 mismatches
+compute_odds: 1968 compared (80 air attackers, 352 at a base, 1788 changed the odds), 0 mismatches
+prune_protos: 1320 compared (original: 96 marks obsolete, 0 typed complete, 4 kept designs flagged, 0 marks removed, 0 queues changed, 0 questions, 0 network popups, 56 net calls), 0 mismatches
+consider_designs: 35 compared (original: 1 prototype slots changed in 1 runs, 7 suggestions recorded, 0 base queues changed), 0 mismatches
+base_change: 126 compared (90 with a call out, 108 changed the game state), 0 mismatches
+base_reset: 46 compared (17 with a call out, 0 asked GOVPROJECT first, 30 changed the game state), 0 mismatches
+base_hurry: 96 compared (44 spent energy, 0 with a call out), 0 mismatches
+alien_fauna: 84 compared (by the original: 80 units born, 0 redraws, 1 popups, 0 redraws at the seeded junk stack values), 0 mismatches
+world_rivers: 4 compared (4 changed state), 0 mismatches
+world_climate: 4 compared (4 changed state), 0 mismatches
+world_erosion: 5 compared (5 changed state), 0 mismatches
+TOTAL mismatches: 0 (2313 ms)
+
+== sw_urfl.SAV: OpenSMACX regression run: turn 1, 5 bases, 51 vehs, filter='baseprod diplotwo natlife diplonote protodesign b28main'
+pact_attacks: 42 compared (42 with a notice), 0 mismatches
+pact_unpact: 42 compared (42 with a notice), 0 mismatches
+pact_truce: 42 compared (42 with a notice), 0 mismatches
+pact_treaty: 42 compared (42 with a notice), 0 mismatches
+enemies_unpact: 210 compared (114 changed state, 138 with a notice), 0 mismatches
+enemies_team_up: 1050 compared (870 changed state, 30 with a notice), 0 mismatches
+break_treaty: 3528 compared (714 returned true, 1092 with a popup), 0 mismatches
+make_treaty: 126 compared (126 changed state), 0 mismatches
+pledge_truce: 84 compared (84 changed state, 42 with a dialog), 0 mismatches
+demands_withdrawal: 378 compared (378 with a call out), 0 mismatches
+renounce_pact: 168 compared (126 changed state), 0 mismatches
+dont_withdrawal: 210 compared (0 found a reason), 0 mismatches
+intervention: 252 compared (210 changed state, 120 with calls), 0 mismatches
+demand_withdrawal: 546 compared (answers by the original: 252 withdrew, 126 refused, 168 war; 546 changed state), 0 mismatches
+mention_prototypes: 252 compared (90 with calls), 0 mismatches
+buy_tech: 1008 compared (504 made an offer, 504 with calls), 0 mismatches
+pact_withdraw: 84 compared (0 units moved by the original, 0 with calls), 0 mismatches
+energy_trade: 420 compared (177 returned true, 378 changed state), 0 mismatches
+mon_winning: 112 compared (56 changed the table in the original), 0 mismatches
+energy_limit: 10 compared, 0 mismatches
+  fixup_landmarks variant 0: 0 tiles with a negative code, 0 entries zeroed by the original
+  fixup_landmarks variant 1: 60 tiles with a negative code, 21 entries zeroed by the original
+  fixup_landmarks variant 2: 120 tiles with a negative code, 25 entries zeroed by the original
+fixup_landmarks: 3 compared (46 entries zeroed in all), 0 mismatches
+delete_landmark: 1216 compared (240 on relief landmark tiles, 1096 changed the tile in the original, 1 views in use), 0 mismatches
+terrain_fixup: 13 compared (map area 12800), 0 mismatches
+mapwin_terrain_fixup: 11 views compared (4 rebuilt by the original), 0 mismatches
+base_init: 253 compared (by the original: 168 first bases, 84 at sea), 0 mismatches
+name_base: 308 compared (6 default names by the original), 0 mismatches
+battle_fight: 612 compared (3 wrapped x), 0 mismatches
+compute_odds: 848 compared (0 air attackers, 0 at a base, 828 changed the odds), 0 mismatches
+prune_protos: 1460 compared (original: 96 marks obsolete, 0 typed complete, 4 kept designs flagged, 0 marks removed, 0 queues changed, 0 questions, 0 network popups, 50 net calls), 0 mismatches
+consider_designs: 35 compared (original: 0 prototype slots changed in 0 runs, 7 suggestions recorded, 0 base queues changed), 0 mismatches
+base_change: 42 compared (30 with a call out, 36 changed the game state), 0 mismatches
+base_reset: 18 compared (16 with a call out, 0 asked GOVPROJECT first, 16 changed the game state), 0 mismatches
+base_hurry: 40 compared (21 spent energy, 0 with a call out), 0 mismatches
+alien_fauna: 84 compared (by the original: 79 units born, 0 redraws, 0 popups, 0 redraws at the seeded junk stack values), 0 mismatches
+world_rivers: 4 compared (4 changed state), 0 mismatches
+world_climate: 4 compared (4 changed state), 0 mismatches
+world_erosion: 5 compared (5 changed state), 0 mismatches
+TOTAL mismatches: 0 (3250 ms)
+

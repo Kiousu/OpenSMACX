@@ -113,9 +113,11 @@ enum VehPrototypeFlagBitfield {
     PROTO_ACTIVE = 0x1, // if this bit is zero, prototype has been retired
     PROTO_CUSTOM_NAME_SET = 0x2,
     PROTO_TYPED_COMPLETE = 0x4,
+    PROTO_UNK_8 = 0x8, // kept by a human (or proposed no better than a design it has); see prune_protos()
     PROTO_UNK_10 = 0x10, // keeps the design out of diplomacy offers; see scan_prototypes()
     PROTO_UNK_20 = 0x20, // keeps the design out of diplomacy offers, even for pact partners
     PROTO_UNK_100 = 0x100, // upgrade pending: set on a new design, cleared by upgrade_prototypes()
+    PROTO_UNK_200 = 0x200, // kept twice by a human: prune_protos() no longer offers to replace it
 };
 
 enum VehOrders {
@@ -565,12 +567,14 @@ DLLEXPORT int __cdecl pick_chassis(int faction_id, int triad_chk, int speed_chk)
 DLLEXPORT int __cdecl weapon_budget(int faction_id, int condition, BOOL check_mode);
 DLLEXPORT int __cdecl armor_budget(int faction_id, int max_cost);
 DLLEXPORT int __cdecl abil_index(int ability_id);
+DLLEXPORT void __cdecl consider_designs(int faction_id);
 DLLEXPORT void __cdecl add_abil(uint32_t *ability_flags, uint32_t ability, uint32_t faction_id);
 DLLEXPORT BOOL __cdecl is_bunged(uint32_t faction_id, uint32_t chassis_id, uint32_t weapon_id,
                                  uint32_t armor_id, int ability_flags, uint32_t reactor_id);
 DLLEXPORT void __cdecl clear_bunglist(uint32_t faction_id);
 DLLEXPORT void __cdecl bung_proto(uint32_t faction_id, int proto_id);
 DLLEXPORT void __cdecl retire_proto(int proto_id, int faction_id);
+DLLEXPORT void __cdecl prune_protos(int faction_id, int proto_id_kept, BOOL synch);
 DLLEXPORT void __cdecl name_proto(LPSTR name, int proto_id, int faction_id, uint32_t chassis_id,
                                   uint32_t weapon_id, uint32_t armor_id, uint32_t abilities,
                                   uint32_t reactor_id);
@@ -605,6 +609,7 @@ DLLEXPORT BOOL __cdecl valid_patrol(int veh_id, int x, int y);
 DLLEXPORT int __cdecl pick_top_veh(int veh_id);
 DLLEXPORT BOOL __cdecl can_convoy(int x, int y);
 DLLEXPORT void __cdecl promote(int veh_id);
+DLLEXPORT int __cdecl battle_fight(int veh_id, int offset, BOOL is_arty, int unk1, int unk2);
 DLLEXPORT BOOL __cdecl battle_kill(int veh_id, int *killed, int *captured, int *morale_bonus,
                                    int veh_id_atk, int faction_id_obj);
 DLLEXPORT void __cdecl battle_kill_stack(int veh_id, int *killed, int *captured, int *morale_bonus,

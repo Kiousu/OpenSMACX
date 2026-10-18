@@ -269,108 +269,96 @@ uint32_t  __cdecl best_specialist() {
 }
 
 /*
-Purpose: Generate a base name. Added some minor randomization for sea bases and ensuring offset gets
-         increased for default base name. TODO: Eventually improve base name shuffling.
+Purpose: Generate a base name. A sea base takes the next unused entry of the faction's #WATERBASES
+         list. Otherwise the name is the next entry of #BASES, picked in a shuffled order seeded
+         from the map seed and the faction (the first name stays first), continuing into the
+         #GENERIC list of basename.txt when #BASES runs out; the default "<faction noun> <n>" is
+         left when that runs out too or a list can't be opened. When final, the used-name counter
+         moves on only once a list name was taken.
 Original Offset: 004E4090
 Return Value: n/a
-Status: Complete
+Status: Complete (verified vs original: docs/regression-runs/2026-10-17-council-batch28.log)
 */
 void __cdecl name_base(uint32_t faction_id, LPSTR name_out, BOOL is_final, BOOL is_sea_base) {
     if (is_sea_base && !text_open(Players[faction_id].filename, "WATERBASES")) {
-        uint32_t offset_sea = PlayersData[faction_id].base_sea_name_offset + 1;
-        if (offset_sea > 1) {
-            uint32_t total;
-            for (total = 0; ; total++) {
-                text_get();
-                if (!strlen(*TextBufferGetPtr) || !_strnicmp(*TextBufferGetPtr, "#END", 4)) {
-                    break;
-                }
+        int offset_sea = (int)PlayersData[faction_id].base_sea_name_offset + 1;
+        int count = 0;
+        while (count < offset_sea) {
+            text_get();
+            if (!strlen(*TextBufferGetPtr) || !_strnicmp(*TextBufferGetPtr, "#END", 4)) {
+                break;
             }
-            if (offset_sea <= total) {
-                int seed = ((*MapRandSeed + faction_id) & 0xFE) | 1;
-                uint32_t loop = 1;
-                do {
-                    if (seed & 1) {
-                        seed ^= 0x170;
-                    }
-                    seed >>= 1;
-                } while (seed >= (int)total || ++loop != offset_sea);
-                offset_sea = seed + 1;
-            }
+            count++;
         }
-        if (!text_open(Players[faction_id].filename, "WATERBASES")) {
-            uint32_t count;
-            for (count = 0; count < offset_sea; count++) {
-                text_get();
-                if (!strlen(*TextBufferGetPtr) || !_strnicmp(*TextBufferGetPtr, "#END", 4)) {
-                    break;
-                }
+        if (count == offset_sea) {
+            strncpy(name_out, text_item(), 24);
+            name_out[23] = 0;
+            if (is_final) {
+                PlayersData[faction_id].base_sea_name_offset = offset_sea;
             }
-            if (count == offset_sea) {
-                // water base name available
-                strncpy_s(name_out, 25, text_item(), 24);
-                name_out[23] = 0;
-                if (is_final) {
-                    PlayersData[faction_id].base_sea_name_offset++;
-                }
-                text_close();
+            text_close();
+            return;
+        }
+        // the list ran out: on to the land names, with the file left open as in the original
+    }
+    int offset = (int)PlayersData[faction_id].base_name_offset + 1;
+    name_out[0] = 0;
+    strcat(name_out, get_noun(faction_id)); // unbounded, as in the original
+    strcat(name_out, " ");
+    char number[80];
+    _itoa(offset, number, 10);
+    strcat(name_out, number);
+    if (text_open(Players[faction_id].filename, "BASES")) {
+        return;
+    }
+    int total = 0;
+    for (;;) {
+        text_get();
+        if (!strlen(*TextBufferGetPtr) || !_strnicmp(*TextBufferGetPtr, "#END", 4)) {
+            break;
+        }
+        total++;
+    }
+    int pick = offset;
+    if (offset > 1 && offset <= total) {
+        int seed = ((*MapRandSeed + faction_id) & 0xFE) | 1;
+        int loop = 1;
+        do {
+            if (seed & 1) {
+                seed ^= 0x170;
+            }
+            seed >>= 1;
+        } while (seed >= total || ++loop != offset);
+        pick = seed + 1;
+    }
+    if (text_open(Players[faction_id].filename, "BASES")) {
+        return;
+    }
+    int count = 0;
+    while (count < pick) {
+        text_get();
+        if (!strlen(*TextBufferGetPtr) || !_strnicmp(*TextBufferGetPtr, "#END", 4)) {
+            break;
+        }
+        count++;
+    }
+    if (count != pick) {
+        if (text_open("BASENAME", "GENERIC")) {
+            return;
+        }
+        for (; count < pick; count++) {
+            text_get();
+            if (!strlen(*TextBufferGetPtr) || !_strnicmp(*TextBufferGetPtr, "#END", 4)) {
                 return;
             }
         }
-        text_close();
     }
-    // Land base names or generic
-    uint32_t offset = PlayersData[faction_id].base_name_offset + 1;
-    sprintf_s(name_out, 25, "%s %d", get_noun(faction_id), offset); // default if names exhausted
+    strncpy(name_out, text_item(), 24);
+    name_out[23] = 0;
     if (is_final) {
-        PlayersData[faction_id].base_name_offset++;
+        PlayersData[faction_id].base_name_offset = offset;
     }
-    if (!text_open(Players[faction_id].filename, "BASES")) {
-        if (offset > 1) {
-            uint32_t total;
-            for (total = 0; ; total++) {
-                text_get();
-                if (!strlen(*TextBufferGetPtr) || !_strnicmp(*TextBufferGetPtr, "#END", 4)) {
-                    break;
-                }
-            }
-            if (offset <= total) {
-                int seed = ((*MapRandSeed + faction_id) & 0xFE) | 1;
-                uint32_t loop = 1;
-                do {
-                    if (seed & 1) {
-                        seed ^= 0x170;
-                    }
-                    seed >>= 1;
-                } while (seed >= (int)total || ++loop != offset);
-                offset = seed + 1;
-            }
-        }
-        if (!text_open(Players[faction_id].filename, "BASES")) {
-            uint32_t count;
-            for (count = 0; count < offset; count++) {
-                text_get();
-                if (!strlen(*TextBufferGetPtr) || !_strnicmp(*TextBufferGetPtr, "#END", 4)) {
-                    break;
-                }
-            }
-            if (count != offset) {
-                if (text_open("BASENAME", "GENERIC")) {
-                    return;
-                }
-                while (count < offset) {
-                    text_get();
-                    if (!strlen(*TextBufferGetPtr) || !_strnicmp(*TextBufferGetPtr, "#END", 4)) {
-                        return;
-                    }
-                    count++;
-                }
-            }
-            strncpy_s(name_out, 25, text_item(), 24);
-            name_out[23] = 0;
-        }
-        text_close();
-    }
+    text_close();
 }
 
 /*
@@ -613,6 +601,522 @@ void __cdecl base_first(uint32_t base_id) {
         }
     }
     Bases[base_id].queue_production_id[0] = proto_id;
+}
+
+/*
+Purpose: Found a new base for the faction on the tile: claim the tile, count the base, add it to the
+         replay and fill in the base (name, size 3 with the Planetary Transit System or 1, first
+         production, starting minerals). A faction's first base gets its headquarters and, in a game
+         started late, a bigger size and more facilities; a sea base gets a pressure dome; faction
+         bonuses and technologies that give a facility everywhere add theirs. The base's figures
+         are then worked out and it becomes the current base.
+Original Offset: 004E4B80
+Return Value: The new base id, or -1 when the base table is full
+Status: Complete (verified vs original: docs/regression-runs/2026-10-17-council-batch28.log)
+*/
+int __cdecl base_init(uint32_t faction_id, int x, int y) {
+    if (*BaseCurrentCount >= MaxBaseNum) {
+        return -1;
+    }
+    uint32_t region = map_loc(x, y)->region;
+    bit_set(x, y, BIT_BASE_IN_TILE, true);
+    owner_set(x, y, faction_id);
+    synch_bit(x, y, faction_id);
+    int base_id = (*BaseCurrentCount)++;
+    PlayerData *p = &PlayersData[faction_id];
+    Player *player = &Players[faction_id];
+    p->current_num_bases++;
+    p->region_total_bases[region]++;
+    replay_base(0, x, y, faction_id);
+    Base *base = &Bases[base_id];
+    base->x = (int16_t)x;
+    base->y = (int16_t)y;
+    base->faction_id_former = (uint8_t)faction_id;
+    base->faction_id_current = (uint8_t)faction_id;
+    base->nerve_staple_turns_left = 0;
+    base->assimilation_turns_left = 0;
+    base->unk_1 = 0;
+    base->population_size = has_project(SP_PLANETARY_TRANS_SYS, faction_id) ? 3 : 1;
+    base->visibility = map_loc(x, y)->visibility | (uint8_t)(1 << faction_id);
+    base->name_string[0] = 0;
+    name_base(faction_id, base->name_string, true, is_ocean(x, y));
+    base->state = 0;
+    base->event = 0;
+    base->governor = p->base_governor_adv;
+    base->minerals_accumulated = 0;
+    base->nutrients_accumulated = 0;
+    base->nerve_staple_count = 0;
+    base->auto_forward_land_base_id = -1;
+    base->auto_forward_sea_base_id = -1;
+    base->auto_forward_air_base_id = -1;
+    base->queue_size = 0;
+    base_first(base_id);
+    if (!*TurnCurrentNum) {
+        int proto_id = has_tech(VehPrototypes[BSC_FORMERS].preq_tech, faction_id) ? BSC_FORMERS
+            : (p->diff_level > 1 ? BSC_SCOUT_PATROL : BSC_COLONY_POD);
+        base->queue_production_id[0] = proto_id;
+        base->minerals_accumulated = cost_factor(faction_id, 1, -1) * VehPrototypes[proto_id].cost / 2;
+    } else {
+        base->minerals_accumulated = (p->soc_effect_active.support < -1) ? 0 : Rules->retool_exemption;
+    }
+    base->resource_sqr_radius = 0;
+    base->specialist_total = 0;
+    base->specialist_unk_1 = 0;
+    base->eco_damage = 0;
+    base->unk_y = -1;
+    base->unk_x = -1;
+    memset(base->facilities_built, 0, 9); // the last three bytes are left as they were
+    base->random_event_turns = 0;
+    base->nerve_staple_count = 0;
+    base->unk_11 = 0;
+    base->unk_12 = 0;
+    if (p->current_num_bases == 1) {
+        set_fac(FAC_HEADQUARTERS, base_id, true);
+        if (*IsMultiplayerNet) {
+            base->population_size = 3;
+            if (player->rule_talent || p->soc_effect_base.planet > 0) {
+                base->population_size = 4;
+            }
+            if (player->rule_drone || player->rule_population) {
+                base->population_size--;
+            }
+            set_fac(FAC_RECYCLING_TANKS, base_id, true);
+            if (*DiffLevelCurrent >= 3) {
+                set_fac(FAC_RECREATION_COMMONS, base_id, true);
+            }
+            if (p->soc_effect_base.economy > 0) {
+                set_fac(FAC_ENERGY_BANK, base_id, true);
+            }
+        } else {
+            int size = (*TurnCurrentNum + 49) / 50;
+            base->population_size = (int8_t)(size < 1 ? 1 : (size > 5 ? 5 : size));
+            if (*TurnCurrentNum >= 75) {
+                set_fac(FAC_RECYCLING_TANKS, base_id, true);
+            }
+            if (*TurnCurrentNum >= 100) {
+                set_fac(FAC_RECREATION_COMMONS, base_id, true);
+            }
+            if (*TurnCurrentNum >= 150) {
+                set_fac(FAC_ENERGY_BANK, base_id, true);
+            }
+        }
+    }
+    if (is_ocean(x, y)) {
+        set_fac(FAC_PRESSURE_DOME, base_id, true);
+    }
+    for (uint32_t i = 0; i < MaxPlayerNum; i++) {
+        base->faction_pop_size_intel[i] = (i == faction_id || (base->visibility & (1 << i)))
+            ? base->population_size : 0;
+    }
+    for (int i = 0; i < player->faction_bonus_count; i++) {
+        if (player->faction_bonus_id[i] == RULE_FACILITY) {
+            int facility_id = player->faction_bonus_val1[i];
+            set_fac(facility_id < 1 ? 1 : (facility_id > FAC_STOCKPILE_ENERGY ? FAC_STOCKPILE_ENERGY
+                : facility_id), base_id, true);
+        }
+    }
+    for (int i = 0; i < player->faction_bonus_count; i++) {
+        int facility_id = player->faction_bonus_val1[i];
+        if (player->faction_bonus_id[i] == RULE_FREEFAC
+            && has_tech(Facility[facility_id].preq_tech, faction_id)) {
+            set_fac(facility_id < 1 ? 1 : (facility_id > FAC_STOCKPILE_ENERGY ? FAC_STOCKPILE_ENERGY
+                : facility_id), base_id, true);
+        }
+    }
+    for (int facility_id = 1; facility_id <= FAC_STOCKPILE_ENERGY; facility_id++) {
+        if (has_tech(Facility[facility_id].free_tech, faction_id)) {
+            set_fac(facility_id, base_id, true);
+        }
+    }
+    base->production_id_last = base->queue_production_id[0];
+    base->minerals_accumulated_2 = base->minerals_accumulated;
+    base->mineral_surplus_final = 0;
+    base_mark(base_id);
+    reset_territory();
+    *BaseIDCurrentSelected = base_id;
+    *BaseCurrent = base;
+    *BaseComputeID = base_id;
+    base_support();
+    base_yield();
+    base_nutrient();
+    base_minerals();
+    base_energy();
+    *UnkBitfield1 |= 2;
+    return base_id;
+}
+
+/*
+Purpose: Switch a base's production to production_id (99999 leaves it alone). The faction's count of
+         bases building each prototype is kept, and a human faction loses part of the minerals
+         above the retool exemption when the kind of item changes. When another faction than the
+         one at the controls starts a Secret Project nobody has built, or moves its work from one
+         to another, that player is told once per project (BEGINPROJECT/CHANGEPROJECT); the
+         faction's other bases on the old project follow the switch. Starting the Voice of Planet
+         also plays its interlude.
+Original Offset: 004E5A60
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-18-council-batch29.log)
+*/
+void __cdecl base_change(uint32_t base_id, int production_id) {
+    if (production_id == 99999) {
+        return;
+    }
+    Base *base = &Bases[base_id];
+    int production_old = base->queue_production_id[0];
+    base->queue_production_id[0] = production_id;
+    if (production_id == production_old) {
+        return;
+    }
+    uint32_t faction_id = base->faction_id_current;
+    PlayerData *p = &PlayersData[faction_id];
+    if (production_old >= 0) {
+        p->proto_id_queue[production_old]--;
+    }
+    if (production_id >= 0) {
+        p->proto_id_queue[production_id]++;
+    }
+    int penalty = 0; // retooling
+    if (Rules->retool_pct_pen_prod_chg && (*FactionsStatus & (uint8_t)(1 << faction_id))) {
+        int making_last = base_making(base->production_id_last, base_id);
+        int exempt = (int)Rules->retool_exemption;
+        if (base_making(base->queue_production_id[0], base_id) != making_last
+            && base->minerals_accumulated_2 > exempt) {
+            penalty = base->minerals_accumulated_2 - (base->minerals_accumulated_2 - exempt)
+                * (100 - (int)Rules->retool_pct_pen_prod_chg) / 100 - exempt;
+        }
+    }
+    base->minerals_accumulated = base->minerals_accumulated_2 - penalty;
+    draw_radius(base->x, base->y, 2, 2);
+    if (faction_id == (uint32_t)*FactionIDCurrent || *SkipTechScreenB) {
+        return;
+    }
+    int production = base->queue_production_id[0];
+    BOOL sp_new = production <= -FAC_HUMAN_GENOME_PROJ
+        && base_project(-production - FAC_HUMAN_GENOME_PROJ) == -1;
+    BOOL sp_old = production_old <= -FAC_HUMAN_GENOME_PROJ
+        && (sp_new || base_project(-production_old - FAC_HUMAN_GENOME_PROJ) == -1);
+    if (sp_old) {
+        int base_id_built = base_project(abs(production_old) - FAC_HUMAN_GENOME_PROJ);
+        if (base_id_built >= 0 && Bases[base_id_built].faction_id_current == faction_id) {
+            sp_old = false; // the faction itself built it
+        }
+    }
+    if ((!sp_new && !sp_old) || ((*GameState & STATE_UNK_1) && !(*GameState & STATE_UNK_8))) {
+        return;
+    }
+    int project_new = abs(production);
+    int sp_index = project_new - FAC_HUMAN_GENOME_PROJ;
+    uint32_t offset, mask;
+    bitmask(sp_new ? sp_index : abs(production_old) - FAC_HUMAN_GENOME_PROJ, &offset, &mask);
+    int bases_old = 0, bases_new = 0; // the faction's other bases on the old and the new item
+    for (int i = 0; i < *BaseCurrentCount; i++) {
+        if (Bases[i].faction_id_current == base->faction_id_current && i != (int)base_id) {
+            if (Bases[i].queue_production_id[0] == production_old) {
+                bases_old++;
+            }
+            if (Bases[i].queue_production_id[0] == base->queue_production_id[0]) {
+                bases_new++;
+            }
+        }
+    }
+    if (!sp_new || bases_new) {
+        return;
+    }
+    if (sp_old && (!bases_old || base_project(-production_old - FAC_HUMAN_GENOME_PROJ) != -1)) {
+        for (int i = 0; i < *BaseCurrentCount; i++) {
+            if (Bases[i].faction_id_current == faction_id
+                && Bases[i].queue_production_id[0] == production_old) {
+                Bases[i].queue_production_id[0] = base->queue_production_id[0];
+            }
+        }
+        if (*SunspotDuration > 0) {
+            return;
+        }
+        parse_says(0, Players[faction_id].adj_name_faction, -1, -1);
+        parse_say(1, (int)Facility[abs(production_old)].name, -1, -1);
+        *GenderDefault = Players[faction_id].noun_gender;
+        *PluralityDefault = Players[faction_id].is_noun_plural;
+        parse_says(2, Players[faction_id].noun_faction, -1, -1);
+        parse_say(3, (int)Facility[project_new].name, -1, -1);
+        popp(ScriptTxtID, "CHANGEPROJECT", 0, "secproj_sm.pcx", 0);
+        p->secret_project_intel[offset] |= mask;
+        bitmask(abs(production_old) - FAC_HUMAN_GENOME_PROJ, &offset, &mask);
+        p->secret_project_intel[offset] &= ~mask;
+        return;
+    }
+    if (!(p->secret_project_intel[offset] & mask)) {
+        if (*SunspotDuration > 0 && sp_index != SP_VOICE_OF_PLANET) {
+            return;
+        }
+        *PluralityDefault = false;
+        *GenderDefault = Players[faction_id].is_leader_female;
+        parse_says(0, Players[faction_id].title_leader, -1, -1);
+        *GenderDefault = Players[faction_id].is_leader_female;
+        *PluralityDefault = false;
+        parse_says(1, Players[faction_id].name_leader, -1, -1);
+        *GenderDefault = Players[faction_id].noun_gender;
+        *PluralityDefault = Players[faction_id].is_noun_plural;
+        parse_says(2, Players[faction_id].noun_faction, -1, -1);
+        parse_say(3, (int)Facility[project_new].name, -1, -1);
+        wave_it((PlayersData[*FactionIDCurrent].diplo_treaties[faction_id] & DTREATY_PACT) ? 0x24 : 0x26);
+        popp(ScriptTxtID, "BEGINPROJECT", 0, "secproj_sm.pcx", 0);
+        p->secret_project_intel[offset] |= mask;
+    }
+    if (sp_index == SP_VOICE_OF_PLANET) {
+        interlude(11, 0, 1, 0);
+        *GameInterludeState |= 0x400;
+    }
+}
+
+/*
+Purpose: Pick a base's next production with base_build() and switch to it. With the governor active
+         on a human base and governor_priorities set, the four governor priorities (explore,
+         discover, build, conquer) are tried one at a time first, for up to eight rounds until
+         they pick four different items; the picks and their values go to BaseGovPickID/Value,
+         which the final pick checks through base_claimed(). Otherwise, when a human base's
+         governor turns to a Secret Project, the player is asked (GOVPROJECT): keep it, pick again
+         without projects, or also stop the governor and the faction default from picking
+         projects.
+Original Offset: 004E5FE0
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-18-council-batch29.log)
+*/
+void __cdecl base_reset(uint32_t base_id, BOOL governor_priorities) {
+    int loop = 0;
+    Base *base = &Bases[base_id];
+    uint32_t faction_id = base->faction_id_current;
+    uint8_t faction_bit = (uint8_t)(1 << faction_id);
+    if ((*FactionsStatus & faction_bit) && (base->governor & GOV_ACTIVE) && governor_priorities) {
+        uint32_t governor = base->governor;
+        for (int i = 0; i < 4; i++) {
+            BaseGovPickID[i] = 0;
+            BaseGovPickValue[i] = 999999;
+        }
+        if (governor & (GOV_PRIORITY_EXPLORE | GOV_PRIORITY_DISCOVER | GOV_PRIORITY_BUILD
+            | GOV_PRIORITY_CONQUER)) {
+            for (;;) {
+                // each mask keeps the priority being set and clears the other three
+                base->governor = (base->governor & 0xF1FFFFFF) | GOV_PRIORITY_EXPLORE;
+                BaseGovPickID[0] = base_build(base_id, 0, 0, &BaseGovPickValue[0]);
+                base->governor = (base->governor & 0xF2FFFFFF) | GOV_PRIORITY_DISCOVER;
+                BaseGovPickID[1] = base_build(base_id, 0, 0, &BaseGovPickValue[1]);
+                if (BaseGovPickID[0] == BaseGovPickID[1] && ++loop < 8) {
+                    continue;
+                }
+                base->governor = (base->governor & 0xF4FFFFFF) | GOV_PRIORITY_BUILD;
+                BaseGovPickID[2] = base_build(base_id, 0, 0, &BaseGovPickValue[2]);
+                if ((BaseGovPickID[0] == BaseGovPickID[2] || BaseGovPickID[1] == BaseGovPickID[2])
+                    && ++loop < 8) {
+                    continue;
+                }
+                base->governor = (base->governor & 0xF8FFFFFF) | GOV_PRIORITY_CONQUER;
+                BaseGovPickID[3] = base_build(base_id, 0, 0, &BaseGovPickValue[3]);
+                if ((BaseGovPickID[0] == BaseGovPickID[3] || BaseGovPickID[1] == BaseGovPickID[3]
+                    || BaseGovPickID[2] == BaseGovPickID[3]) && ++loop < 8) {
+                    continue;
+                }
+                break;
+            }
+            base->governor = governor;
+        }
+        base_change(base_id, base_build(base_id, 0, 0, &loop)); // the value lands in the counter
+        return;
+    }
+    int production_old = base->queue_production_id[0];
+    base_change(base_id, base_build(base_id, 0, 0, 0));
+    if ((*FactionsStatus & faction_bit) && (base->governor & GOV_ACTIVE)
+        && production_old > -FAC_HUMAN_GENOME_PROJ
+        && base->queue_production_id[0] <= -FAC_HUMAN_GENOME_PROJ
+        && !*IsMultiplayerNet && !(*GameState & STATE_UNK_1)) {
+        int project_id = abs(base->queue_production_id[0]);
+        int choice;
+        for (;;) {
+            parse_says(0, base->name_string, -1, -1);
+            parse_say(1, (int)Facility[project_id].name, -1, -1);
+            choice = popp(ScriptTxtID, "GOVPROJECT", 0, "secproj_sm.pcx", 0);
+            if (choice != 3) {
+                break;
+            }
+            help_topic(11, project_id);
+        }
+        if (choice) {
+            base_change(base_id, base_build(-1 - (int)base_id, 0, 0, 0)); // without projects
+            if (choice > 1) {
+                (*BaseCurrent)->governor &= ~GOV_MAY_PROD_SP;
+                PlayersData[faction_id].base_governor_adv &= ~GOV_MAY_PROD_SP;
+            }
+        }
+    }
+}
+
+/*
+Purpose: Spend part of a faction's energy reserves on the current base's production: for computer
+         players, and for human bases whose governor is active and may hurry. The amount depends on
+         what is built: units more when they fit the region's plan (and the base isn't threatened,
+         else a tenth of the reserves), planet busters against a faction that used them first,
+         facilities more when the base riots or for the headquarters, perimeter defenses against
+         enemies, projects and the Psi Gate near the end; large reserves add a bonus. Morgan pays
+         less and the Peacekeepers more, the faction's hurry rule and the Voice of Planet adjust
+         it, and the minerals bought follow the remaining cost (squared, doubled for projects).
+         Computer players get part of the energy back by difficulty level. When another faction
+         than a human's can now finish a Secret Project nobody has built, the players are told
+         (DONEPROJECT).
+Original Offset: 004F3FE0
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-18-council-batch29.log)
+*/
+void __cdecl base_hurry() {
+    Base *base = *BaseCurrent;
+    uint32_t faction_id = base->faction_id_current;
+    uint8_t faction_bit = (uint8_t)(1 << faction_id);
+    PlayerData *p = &PlayersData[faction_id];
+    if ((*FactionsStatus & faction_bit)
+        && (!(base->governor & GOV_ACTIVE) || !(base->governor & GOV_MAY_HURRY_PRODUCTION))) {
+        return;
+    }
+    if (!base->minerals_accumulated) {
+        return;
+    }
+    int item = base->queue_production_id[0];
+    int project_id = item < 0 ? -item : 0; // any facility
+    int cost = project_id ? Facility[project_id].cost : (int)veh_cost(item, *BaseIDCurrentSelected, 0);
+    int cost_total = cost_factor(faction_id, 1, -1) * cost;
+    int x = base->x;
+    int y = base->y;
+    Map *tile = map_loc(x, y);
+    uint8_t region = tile->region;
+    int hurry = 0;
+    if (item >= 0) {
+        VehPrototype *proto = &VehPrototypes[item];
+        if (proto->plan == PLAN_COLONIZATION && base->population_size < 2) {
+            return;
+        }
+        if (!(tile->bit & BIT_VEH_IN_TILE) || (tile->val2 & 0xF) >= 8
+            || (base->state & BSTATE_COMBAT_LOSS_LAST_TURN) || at_goal(faction_id, 0x10, x, y)) {
+            hurry = p->energy_reserves / 10;
+        } else if (item < MaxVehProtoFactionNum || (proto->flags & PROTO_TYPED_COMPLETE)) {
+            uint8_t plan = proto->plan;
+            uint8_t region_plan = p->region_base_plan[region];
+            if (region_plan == plan || (plan == PLAN_TERRAFORMING && region_plan == PLAN_COLONIZATION)
+                || (plan == PLAN_COMBAT && region_plan <= PLAN_DEFENSIVE)) {
+                hurry = p->energy_reserves / ((p->ai_wealth + 2) * 25 - p->ai_power * 10);
+                if (region_plan == PLAN_COLONIZATION) {
+                    hurry = (p->ai_growth + 5) * hurry / 4;
+                    if (p->energy_reserves > *TurnCurrentNum) {
+                        hurry *= 2;
+                    }
+                }
+            }
+        } else {
+            hurry = p->energy_reserves / ((p->ai_wealth + 2) * 10);
+        }
+        if (planet_buster2(item) && !p->planet_busters) {
+            for (uint32_t i = 1; i < MaxPlayerNum; i++) {
+                if (i != faction_id && (p->diplo_treaties[i] & DTREATY_VENDETTA)
+                    && PlayersData[i].major_atrocities
+                    && p->major_atrocities <= PlayersData[i].major_atrocities) {
+                    hurry = p->energy_reserves / 10;
+                }
+            }
+        }
+    } else if ((base->state & BSTATE_DRONE_RIOTS_ACTIVE) && project_id) {
+        hurry = p->energy_reserves / ((p->ai_power + p->ai_wealth + 1) * 5);
+        if (base->drone_total > base->talent_total) {
+            uint32_t offset, mask;
+            bitmask(FAC_BROOD_PIT, &offset, &mask);
+            // the selected base, which is the current one when the governor or the AI hurries
+            int brood_pit = (Bases[*BaseIDCurrentSelected].facilities_built[offset] & (uint8_t)mask) != 0;
+            if (p->soc_effect_pending.police + brood_pit * 2 <= -2 && project_id < FAC_HUMAN_GENOME_PROJ) {
+                int limit = p->energy_reserves * 3 / 4;
+                hurry = (cost_total - base->minerals_accumulated) * ((*FactionsStatus & faction_bit) ? 2 : 0);
+                if (hurry < 0 || limit < 0) {
+                    hurry = 0;
+                } else if (hurry > limit) {
+                    hurry = limit;
+                }
+            }
+        }
+    } else if (project_id == FAC_HEADQUARTERS) {
+        hurry = p->energy_reserves / 10;
+    } else if (project_id == FAC_PERIMETER_DEFENSE || project_id == FAC_TACHYON_FIELD) {
+        hurry = p->energy_reserves / 50;
+        for (uint32_t i = 1; i < MaxPlayerNum; i++) {
+            // region_total_bases[i] of faction i itself, as in the original
+            if (i != faction_id && (p->diplo_treaties[i]
+                & (DTREATY_VENDETTA | DTREATY_WANT_REVENGE | DTREATY_ATROCITY_VICTIM))
+                && (PlayersData[i].region_total_bases[i] || (*FactionsStatus & (uint8_t)(1 << i)))) {
+                hurry = p->energy_reserves / 10;
+            }
+        }
+    } else if (project_id >= FAC_HUMAN_GENOME_PROJ) {
+        hurry = p->energy_reserves / 50;
+        if (p->energy_reserves >= 2000) {
+            hurry *= 4;
+        }
+        if (project_id == FAC_HUMAN_GENOME_PROJ + SP_ASCENT_TO_TRANSCENDENCE) {
+            hurry *= 4;
+        }
+    } else if (project_id == FAC_PSI_GATE) {
+        hurry = p->energy_reserves / 50;
+        if (at_climax(faction_id)) {
+            hurry *= 2;
+        }
+    }
+    int energy = p->energy_reserves;
+    if (energy >= 4800) {
+        hurry += energy / 25;
+    } else if (energy > 3200) {
+        hurry += energy / 100;
+    } else if (energy > 2000) {
+        hurry += energy / 250;
+    }
+    if (hurry < 0 || energy < 0) {
+        hurry = 0;
+    } else if (hurry > energy) {
+        hurry = energy;
+    }
+    int remaining = cost_total - base->minerals_accumulated;
+    if (hurry >= 0 && remaining >= 0) {
+        if (hurry > remaining) {
+            hurry = remaining;
+        }
+        if (hurry) {
+            if (SecretProject->voice_of_planet >= 0) {
+                hurry /= 2;
+            } else if (!strcmp(Players[faction_id].filename, "MORGAN")) {
+                hurry = hurry * 2 / 3;
+            } else if (!strcmp(Players[faction_id].filename, "PEACE")) {
+                hurry = hurry * 3 / 2;
+            }
+            int rule_hurry = Players[faction_id].rule_hurry;
+            if (rule_hurry != 100 && hurry < p->energy_reserves / 10) {
+                hurry = hurry * 100 / rule_hurry;
+            }
+            int minerals = base->minerals_accumulated;
+            remaining = cost_total - minerals;
+            int divisor = remaining * remaining / 20 + remaining * 2;
+            if (base->queue_production_id[0] <= -FAC_HUMAN_GENOME_PROJ) {
+                divisor *= 2;
+            }
+            if (SecretProject->voice_of_planet >= 0) {
+                divisor *= 2;
+            }
+            int bought = divisor ? remaining * hurry / divisor : 0;
+            base->minerals_accumulated = bought * 100 / rule_hurry + minerals;
+            int rebate = (*FactionsStatus & faction_bit) ? 0 : *DiffLevelCurrent * hurry
+                / ((8 - (int)PlayersData[*RankingFactionIDUnk1].ranking) * 10);
+            p->energy_reserves += rebate - hurry;
+        }
+    }
+    if (!(*FactionsStatus & faction_bit) && project_id >= FAC_HUMAN_GENOME_PROJ
+        && base_project(project_id - FAC_HUMAN_GENOME_PROJ) == -1 && *SunspotDuration <= 0
+        && !(*GameState & STATE_UNK_1)
+        && cost_factor((*BaseCurrent)->faction_id_current, 1, -1) * Facility[project_id].cost
+            <= (*BaseCurrent)->mineral_surplus + (*BaseCurrent)->minerals_accumulated) {
+        parse_says(0, Players[(*BaseCurrent)->faction_id_current].adj_name_faction, -1, -1);
+        parse_say(1, (int)Facility[project_id].name, -1, -1);
+        popp(ScriptTxtID, "DONEPROJECT", 0, "secproj_sm.pcx", 0);
+    }
 }
 
 /*

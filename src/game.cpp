@@ -37,6 +37,7 @@ int *EnergyReportFacilities = (int *)0x00749AEC; // [70] facility counts
 int *EnergyReportCommerce = (int *)0x00749C04; // loan payments in and out
 int *EnergyReportNet = (int *)0x00749C0C;
 uint32_t *GamePreferences = (uint32_t *)0x009A6490;
+BOOL *GameHalted = (BOOL *)0x0068F21C; // Thinker's name; set while no game is running
 uint32_t *GameMorePreferences = (uint32_t *)0x009A6494;
 uint32_t *GameWarnings = (uint32_t *)0x009A6498;
 uint32_t *GameRules = (uint32_t *)0x009A649C;
@@ -56,6 +57,7 @@ uint32_t *StartingMissionYear = (uint32_t *)0x0094B4D0;
 uint32_t *EndingMissionYear = (uint32_t *)0x0094B4D4;
 uint32_t *TectonicDetonationCount = (uint32_t *)0x00946138; // [8]; value for each faction
 int *SunspotDuration = (int *)0x009A6800;
+uint32_t *GameInterludeState = (uint32_t *)0x009A64A4; // Thinker's name; bit 0x400: Voice of Planet begun
 uint32_t *MountPlanetX = (uint32_t *)0x009A6804;
 uint32_t *MountPlanetY = (uint32_t *)0x009A6808;
 int *DustCloudDuration = (int *)0x009A680C;
@@ -471,6 +473,347 @@ void __cdecl mon_killed_faction(int faction_id, int faction_id_killed) {
 }
 
 /*
+Purpose: Record a winning end of game in a non-alien faction's monument (once). The data field
+         holds -1 for the winner itself, or the winner for a faction sharing the win.
+Original Offset: 00477940 (unify), 004779D0 (trans)
+Return Value: n/a
+Status: Complete
+*/
+static void monument_winning(int faction_id, int record_id, int faction_id_winner) {
+    uint32_t year = game_year(*TurnCurrentNum);
+    MonumentRecord *record = &Monuments[faction_id].records[record_id];
+    if ((Players[faction_id].rule_flags & RFLAG_ALIEN) || record->achieved) {
+        return;
+    }
+    record->year = year;
+    record->faction_id_first = faction_id;
+    record->faction_count = 1;
+    record->achieved = true;
+    record->data = faction_id_winner;
+    monument_latest(faction_id, record_id);
+}
+
+/*
+Purpose: Record a non-alien faction's part in a victory in its monument; called by the end of game
+         code for the winner (-1) and for the player at the controls when sharing the win.
+Original Offset: 00477940
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-17-council-batch28.log)
+*/
+void __cdecl mon_winning_unify(int faction_id, int faction_id_winner) {
+    monument_winning(faction_id, MONUMENT_WINNING_UNIFY, faction_id_winner);
+}
+
+/*
+Purpose: Record a non-alien faction's part in the Ascent to Transcendence in its monument: the
+         ascending faction with -1, then its pact partners with the ascending faction's id.
+Original Offset: 004779D0
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-17-council-batch28.log)
+*/
+void __cdecl mon_winning_trans(int faction_id, int faction_id_winner) {
+    monument_winning(faction_id, MONUMENT_WINNING_TRANS, faction_id_winner);
+}
+
+/*
+Purpose: Pick a random map coordinate pair the way alien_fauna() does: a column and a row, then the
+         column moved onto the row's parity. Either is 0 on a map one tile wide or high.
+Original Offset: n/a (inlined three times in alien_fauna())
+Return Value: n/a
+Status: Complete
+*/
+static void fauna_random_tile(int *x, int *y) {
+    int x_rand = (*MapLongitudeBounds - 1 > 0) ? _rand() % *MapLongitudeBounds : 0;
+    int y_rand = (*MapLatitudeBounds - 1 > 0) ? _rand() % *MapLatitudeBounds : 0;
+    *x = (y_rand & 1) - (x_rand & 1) + x_rand;
+    *y = y_rand;
+}
+
+/*
+Purpose: Whether the player at the controls gets to see a native unit alien_fauna() just created:
+         it is theirs and not both invisible and a lurker, or they can see it.
+Original Offset: n/a (inlined in alien_fauna())
+Return Value: Redraw its tile? true/false
+Status: Complete
+*/
+static BOOL fauna_seen(int veh_id) {
+    Veh *veh = &Vehs[veh_id];
+    return (veh->faction_id == *FactionIDCurrent
+        && (veh->flags & (VFLAG_INVISIBLE | VFLAG_LURKER)) != (VFLAG_INVISIBLE | VFLAG_LURKER))
+        || (veh->visibility & (1 << *FactionIDCurrent));
+}
+
+/*
+Purpose: Native life upkeep for a turn, in three parts:
+         - Forests and kelp spread: random tiles are tried (fewer as the game goes on); a forest
+           (land) or kelp farm (sea) tile grows into its best neighbour of the same kind (wetter and
+           flatter scores higher), which loses any fungus. Factions that see the source tile see
+           the growth; the player at the controls gets a popup when it is near one of their bases.
+         - Unless native life is off for the scenario, the Voice of Planet exists or the unit table
+           is nearly full, every few turns (more often with abundant native life) native life is
+           born on a random fungus tile or a sea tile of a large region: a Sealurk (SMACX, on an odd
+           clock) or an Isle of the Deep carrying mind worms and spore launchers, then Locusts of
+           Chiron once any faction has either of their technologies.
+         - A few random land fungus tiles without a base are tried: next to a faction's unit
+           standing there a mind worm or spore launcher appears two tiles away, on a land tile the
+           faction neither sees nor has the map of; with no unit there and a base 2 to 5 tiles
+           away, it appears on the tile itself unless it holds a supply pod.
+         slots holds the original's stack slots [ebp-4] and [ebp-0xc]: the redraw after a native is
+         born on the fungus tile itself takes its coordinates from them (and from the original's
+         ebx, loaded from [ebp-0xc]) although they last held another loop's tile, possibly from
+         before the call; see alien_fauna(). The original also has code for a mind worm cluster
+         next to a base (with the XMINDWORMS message) after the third part's loop; it can never run
+         (the loop only ends when its counter reaches the limit, which skips it) and is left out.
+Original Offset: 00522180
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-18-council-batch29.log)
+*/
+static void __cdecl alien_fauna_body(int *slots) {
+    BOOL early_game = false;
+    // forests and kelp spread
+    for (int i = 0; i < (int)*MapArea / (*TurnCurrentNum / 4 + 32); i++) {
+        int x, y;
+        fauna_random_tile(&x, &y);
+        if (y < 0 || y >= *MapLatitudeBounds || x < 0 || x >= *MapLongitudeBounds) {
+            continue;
+        }
+        Map *tile = map_loc(x, y);
+        BOOL is_sea = (tile->climate & 0xE0) < 0x60;
+        if (!(tile->bit & (is_sea ? BIT_FARM : BIT_FOREST))) {
+            continue;
+        }
+        int best = 0;
+        int x_best = -1;
+        int y_best = 0;
+        BOOL is_flat = *MapIsFlat & 1;
+        for (int j = 0; j < 8; j++) {
+            int x_near = x + RadiusBaseX[j];
+            if (!is_flat) {
+                if (x_near < 0) {
+                    x_near += *MapLongitudeBounds;
+                } else if (x_near >= *MapLongitudeBounds) {
+                    x_near -= *MapLongitudeBounds;
+                }
+            }
+            int y_near = y + RadiusBaseY[j];
+            slots[1] = x_near;
+            slots[0] = y_near;
+            if (y_near < 0 || y_near >= *MapLatitudeBounds || x_near < 0
+                || x_near >= *MapLongitudeBounds) {
+                continue;
+            }
+            Map *near_tile = map_loc(x_near, y_near);
+            uint32_t climate = near_tile->climate;
+            uint32_t alt = climate >> 5;
+            if (((climate & 0xE0) < 0x60) != is_sea || alt < 2 || (alt > 4 && !(climate & 0x18))
+                || (near_tile->bit2 & (BIT2_VOLCANO | BIT2_UNK_80000000)) == BIT2_VOLCANO
+                || (near_tile->bit2 & (BIT2_DUNES | BIT2_UNK_80000000)) == BIT2_DUNES) {
+                continue;
+            }
+            int value = (3 - (int)((climate >> 3) & 3)) * 4 - (near_tile->val3 >> 6);
+            if ((near_tile->val3 & 0xC0) > 0x40 || (near_tile->bit & (BIT_FOREST | BIT_FARM
+                | BIT_SOLAR_TIDAL | BIT_MINE | BIT_BASE_IN_TILE))) {
+                continue;
+            }
+            if (value > best) {
+                best = value;
+                x_best = x_near;
+                y_best = y_near;
+            }
+        }
+        if (x_best < 0) {
+            continue;
+        }
+        Map *grow_tile = map_loc(x_best, y_best);
+        uint32_t growth = is_sea ? BIT_FARM : BIT_FOREST;
+        if (grow_tile->bit & growth) {
+            continue;
+        }
+        grow_tile->bit = (grow_tile->bit | growth) & ~BIT_FUNGUS;
+        for (uint32_t faction_id = 1; faction_id < MaxPlayerNum; faction_id++) {
+            Map *source = map_loc(x, y); // the original checks the source tile, not the new one
+            if ((!(PlayersData[faction_id].flags & PFLAG_MAP_REVEALED)
+                && !(source->visibility & (1 << faction_id)))
+                || !(source->bit_visible[faction_id - 1] & growth)) {
+                continue;
+            }
+            grow_tile->bit_visible[faction_id - 1] = (grow_tile->bit_visible[faction_id - 1] | growth)
+                & ~BIT_FUNGUS;
+            if (faction_id != (uint32_t)*FactionIDCurrent) {
+                continue;
+            }
+            int base_id = base_find(x, y, -1, -1, -1, *FactionIDCurrent);
+            if (base_id >= 0 && Bases[base_id].faction_id_current == *FactionIDCurrent
+                && (*BaseFindDist <= 3
+                    || whose_territory(*FactionIDCurrent, x, y, 0, 0) == *FactionIDCurrent)) {
+                if (!MapWin_focus(MapWinList[0], 0, x, y)) {
+                    draw_tiles(x, y, 2);
+                }
+                parse_says(0, Bases[base_id].name_string, -1, -1);
+                if (is_sea) {
+                    POP2("KELPGROWS", "kelp_sm.pcx", -1);
+                } else {
+                    POP2("FORESTGROWS", "forgr_sm.pcx", -1);
+                }
+            } else {
+                draw_tiles(x, y, 2);
+            }
+        }
+    }
+    if (*GameRules & RULES_SCN_NO_NATIVE_LIFE) {
+        return;
+    }
+    int native = (int)*MapNativeLifeForms;
+    if (*TurnCurrentNum < ((3 - native) * 10 - *DiffLevelCurrent) * 2) {
+        early_game = true;
+    }
+    if (SecretProject->voice_of_planet != -1 || *VehCurrentCount >= 0x700) {
+        return;
+    }
+    // native life is born
+    if (!(*TurnCurrentNum % ((5 - native) * 2))) {
+        int tries = 0;
+        int x, y;
+        for (;;) {
+            fauna_random_tile(&x, &y);
+            Map *tile = map_loc(x, y);
+            uint32_t region = tile->region;
+            if (++tries >= 1000) {
+                break;
+            }
+            if ((tile->bit & BIT_FUNGUS) && (tile->climate & 0xE0) >= 0x40) {
+                break;
+            }
+            if ((tile->climate & 0xE0) >= 0x60
+                || ((tile->bit & (BIT_BASE_IN_TILE | BIT_VEH_IN_TILE)) && (tile->val2 & 0xF) < 8)
+                || (region & 0x3F) == 0x3F || !(region & 0x3F) || Continents[region].tile_count < 50) {
+                continue;
+            }
+            break;
+        }
+        if (tries < 1000) {
+            int count = (((*GameState & STATE_PERIHELION_ACTIVE) ? 2 : 1) * *TurnCurrentNum)
+                / (((8 - native) * 4 - *DiffLevelCurrent) * 4) + native + 1;
+            if (early_game) {
+                count = 1;
+            }
+            int veh_id;
+            if (*ExpansionEnabled && (timeGetTime() & 1)) {
+                veh_id = veh_init(BSC_SEALURK, 0, x, y);
+                if (veh_id >= 0) {
+                    veh_promote(veh_id);
+                }
+            } else {
+                veh_id = veh_init(BSC_ISLE_OF_THE_DEEP, 0, x, y);
+                if (veh_id >= 0) {
+                    if (count >= (int)veh_cargo(veh_id)) {
+                        count = veh_cargo(veh_id);
+                    }
+                    for (; count > 0; count--) {
+                        sleep(veh_init((!(_rand() % 5) && *ExpansionEnabled) ? BSC_SPORE_LAUNCHER
+                            : BSC_MIND_WORMS, 0, x, y));
+                    }
+                    veh_promote(veh_id);
+                }
+            }
+            if (veh_id >= 0 && (GameTechAchieved[TECH_CENTPSI] || GameTechAchieved[TECH_QUANTUM])) {
+                veh_init(BSC_LOCUSTS_OF_CHIRON, 0, x, y);
+            }
+        }
+    }
+    // mind worms and spore launchers on fungus
+    int x_draw = slots[1]; // the original's ebx
+    for (int tries = 0; tries < native * 2 + 2; tries++) {
+        int x, y;
+        fauna_random_tile(&x, &y);
+        slots[1] = y;
+        Map *tile = map_loc(x, y);
+        uint32_t alt = tile->climate & 0xE0;
+        uint32_t region = tile->region;
+        if (alt < 0x60 || !(tile->bit & BIT_FUNGUS) || alt < 0x40 || (region & 0x3F) == 0x3F
+            || !(region & 0x3F) || ((tile->bit & BIT_BASE_IN_TILE) && (tile->val2 & 0xF) < 8)) {
+            continue;
+        }
+        int base_id = base_find(x, y, -1, region, -1, -1);
+        tile = map_loc(x, y);
+        if (tile->bit & BIT_VEH_IN_TILE) {
+            int owner = tile->val2 & 0xF;
+            if (owner < 8) {
+                if (owner > 0 && (base_id < 0 || *BaseFindDist > 2)) {
+                    for (int i = 9; i < 25; i++) { // the ring two tiles out
+                        int x_near = x + RadiusOffsetX[i];
+                        if (!(*MapIsFlat & 1)) {
+                            if (x_near < 0) {
+                                x_near += *MapLongitudeBounds;
+                            } else if (x_near >= *MapLongitudeBounds) {
+                                x_near -= *MapLongitudeBounds;
+                            }
+                        }
+                        x_draw = x_near;
+                        int y_near = y + RadiusOffsetY[i];
+                        slots[0] = y_near;
+                        if (y_near < 0 || y_near >= *MapLatitudeBounds || x_near < 0
+                            || x_near >= *MapLongitudeBounds) {
+                            continue;
+                        }
+                        Map *near_tile = map_loc(x_near, y_near);
+                        if ((near_tile->climate & 0xE0) < 0x60
+                            || (PlayersData[owner].flags & PFLAG_MAP_REVEALED)
+                            || (near_tile->visibility & (1 << owner))
+                            || ((near_tile->bit & (BIT_BASE_IN_TILE | BIT_VEH_IN_TILE))
+                                && (near_tile->val2 & 0xF) < 8)
+                            || zoc_any(x_near, y_near, 0)) {
+                            continue;
+                        }
+                        int veh_id = veh_init((!(_rand() % 5) && *ExpansionEnabled)
+                            ? BSC_SPORE_LAUNCHER : BSC_MIND_WORMS, 0, x_near, y_near);
+                        if (veh_id >= 0 && fauna_seen(veh_id)) {
+                            draw_tile(x_near, y_near, 2);
+                        }
+                        break;
+                    }
+                }
+                continue;
+            }
+        }
+        if (*BaseFindDist > 1 && *BaseFindDist < 6) {
+            tile = map_loc(x, y);
+            if ((tile->bit & BIT_FUNGUS) && (tile->climate & 0xE0) >= 0x40 && !goody_at(x, y)) {
+                int veh_id = veh_init((!(_rand() % 5) && *ExpansionEnabled)
+                    ? BSC_SPORE_LAUNCHER : BSC_MIND_WORMS, 0, x, y);
+                if (veh_id >= 0 && fauna_seen(veh_id)) {
+                    draw_tile(x_draw, slots[0], 2); // a stale tile, as in the original
+                }
+            }
+        }
+    }
+}
+
+/*
+Purpose: Entry for alien_fauna_body(): hands it the two stack slots the original can read before
+         writing them ([ebp-0xc] = esp_entry - 0x10, [ebp-4] = esp_entry - 8) and writes back the
+         values it leaves there, so the stale redraw coordinates come out as in the original.
+Original Offset: 00522180
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-18-council-batch29.log)
+*/
+__declspec(naked) void __cdecl alien_fauna() {
+    __asm {
+        mov eax, [esp - 0x10]       // the original's [ebp-0xc]
+        sub esp, 8                  // [esp] is esp_entry - 8, the original's [ebp-4], left in place
+        mov [esp + 4], eax
+        mov eax, esp
+        push eax
+        call alien_fauna_body
+        add esp, 4
+        mov eax, [esp + 4]
+        mov [esp - 8], eax          // back to esp_entry - 0x10
+        add esp, 8
+        ret
+    }
+}
+
+/*
 Purpose: Let every fungal tower spread fungus: the tower's own tile and, one turn in five, a random
          neighbour turn to fungus, losing any roads, mines, farms and the like, and every faction
          sees the change. Towers are marked as having moved, get their morale refreshed and
@@ -678,6 +1021,17 @@ void __cdecl repair_phase(uint32_t faction_id) {
         }
     }
     do_all_draws();
+}
+
+/*
+Purpose: The largest share, in tenths, a faction may allocate to economy or labs (allocate_energy()
+         caps both with it). The faction is ignored.
+Original Offset: 00445440
+Return Value: Always 10
+Status: Complete (verified vs original: docs/regression-runs/2026-10-17-council-batch28.log)
+*/
+int __cdecl energy_limit(int UNUSED(faction_id)) {
+    return 10;
 }
 
 /*

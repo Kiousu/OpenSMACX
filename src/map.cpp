@@ -28,6 +28,7 @@
 #include "technology.h"
 #include "terraforming.h"
 #include "veh.h"
+#include "log.h"
 
 int *MapLongitudeBounds = (int *)0x00949870;
 int *MapLatitudeBounds = (int *)0x00949874;
@@ -39,6 +40,22 @@ uint32_t *MapAreaSqRoot = (uint32_t *)0x00949888;
 BOOL *MapIsFlat = (BOOL *)0x0094988C;
 int *MapLandmarkCount = (int *)0x00949890;
 Landmark *MapLandmark = (Landmark *)0x00949894; // [64]
+MapWin **MapWinList = (MapWin **)0x007D3C3C;
+MapWin *MapWinUnk = (MapWin *)0x008EB48C;
+MapWin *MapWinUnk2 = (MapWin *)0x006C5C9C;
+MapWin *BaseMapWin = (MapWin *)0x007D4060;
+uint8_t *LandmarkAltIndex = (uint8_t *)0x00685684;
+uint8_t *LandmarkAltCrater = (uint8_t *)0x007F65D0;
+uint8_t *LandmarkAltVolcano = (uint8_t *)0x007D3B74;
+uint8_t *LandmarkAltCanyon = (uint8_t *)0x007F655C;
+uint8_t *LandmarkAltMesa = (uint8_t *)0x007D3A78;
+uint8_t *LandmarkAltRidge = (uint8_t *)0x007F64E8;
+uint8_t *LandmarkAltCraterDefault = (uint8_t *)0x006857F0;
+uint8_t *LandmarkAltVolcanoDefault = (uint8_t *)0x0068577C;
+uint8_t *LandmarkAltCanyonDefault = (uint8_t *)0x0068593C;
+uint8_t *LandmarkAltMesaDefault = (uint8_t *)0x00685864;
+uint8_t *LandmarkAltRidgeDefault = (uint8_t *)0x006859B0;
+static_assert(offsetof(MapWin, draw_toggle_a) == 0x1DD74, "MapWin layout");
 uint32_t *MapAbstractLongBounds = (uint32_t *)0x0094A294;
 uint32_t *MapAbstractLatBounds = (uint32_t *)0x0094A298;
 uint32_t *MapAbstractArea = (uint32_t *)0x0094A29C;
@@ -1443,6 +1460,146 @@ void __cdecl kill_landmark(int x, int y) {
 }
 
 /*
+Purpose: Zero the five corner height entries a landmark tile code selects in one of the landmark
+         tables.
+Original Offset: n/a (inlined in delete_landmark() and fixup_landmarks())
+Return Value: n/a
+Status: Complete
+*/
+static void landmark_alt_clear(uint8_t *table, int code) {
+    for (int i = 0; i < 5; i++) {
+        table[LandmarkAltIndex[code * 5 + i]] = 0;
+    }
+}
+
+/*
+Purpose: Take the landmark relief off the specified tile: its entries in the landmark corner height
+         tables are zeroed and its tile code is stored as -1 - code to mark the landmark as deleted,
+         then every map view in use drops the cached heights around the tile. The bit 0x80
+         (BIT2_FRESH) is cleared first even when the code is already negative. Ridges zero the
+         mesa table, as in the original (the map view reads ridges from LandmarkAltRidge).
+Original Offset: 005927D0
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-17-council-batch28.log)
+*/
+void __cdecl delete_landmark(int x, int y) {
+    Map *tile = map_loc(x, y);
+    uint32_t bit2 = tile->bit2;
+    if (!bit2) {
+        return;
+    }
+    tile->bit2 = bit2 & ~BIT2_FRESH;
+    int code = (int)tile->bit2 >> 24;
+    if (code < 0) {
+        return;
+    }
+    if (bit2 & BIT2_CRATER) {
+        landmark_alt_clear(LandmarkAltCrater, code);
+    }
+    if (bit2 & BIT2_VOLCANO) {
+        landmark_alt_clear(LandmarkAltVolcano, code);
+    }
+    if (bit2 & BIT2_CANYON) {
+        landmark_alt_clear(LandmarkAltCanyon, code);
+    }
+    if (bit2 & BIT2_MESA) {
+        landmark_alt_clear(LandmarkAltMesa, code);
+    }
+    if (bit2 & BIT2_RIDGE) {
+        landmark_alt_clear(LandmarkAltMesa, code);
+    }
+    tile->bit2 = ((uint32_t)(-1 - code) << 24) | (tile->bit2 & 0xFFFFFF);
+    *UnkBitfield1 |= 4;
+    for (int i = 0; i < MaxMapWinNum; i++) {
+        MapWin *win = MapWinList[i];
+        if (win->draw_toggle_a) {
+            win->unk_1 = 9999999;
+            MapWin_clear_alt(win, 0, x, y, 1);
+        }
+    }
+}
+
+/*
+Purpose: Put the landmark corner height tables back to their defaults, then zero the entries of the
+         crater and volcano tiles whose landmark was deleted (negative tile code). Runs after a map
+         is read or built.
+Original Offset: 00592940
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-17-council-batch28.log)
+*/
+void __cdecl fixup_landmarks() {
+    memcpy(LandmarkAltRidge, LandmarkAltRidgeDefault, LandmarkAltSize);
+    memcpy(LandmarkAltMesa, LandmarkAltMesaDefault, LandmarkAltSize);
+    memcpy(LandmarkAltCanyon, LandmarkAltCanyonDefault, LandmarkAltSize);
+    memcpy(LandmarkAltVolcano, LandmarkAltVolcanoDefault, LandmarkAltSize);
+    memcpy(LandmarkAltCrater, LandmarkAltCraterDefault, LandmarkAltSize);
+    for (int y = 0; y < *MapLatitudeBounds; y++) {
+        for (int x = y & 1; x < *MapLongitudeBounds; x += 2) {
+            uint32_t bit2 = map_loc(x, y)->bit2;
+            int code = (int)bit2 >> 24;
+            if (bit2 && code < 0) {
+                code = -1 - code;
+                if (bit2 & BIT2_VOLCANO) {
+                    landmark_alt_clear(LandmarkAltVolcano, code);
+                }
+                if (bit2 & BIT2_CRATER) {
+                    landmark_alt_clear(LandmarkAltCrater, code);
+                }
+            }
+        }
+    }
+}
+
+/*
+Purpose: Give a map view a fresh drawing cache for the whole map: 12 bytes per tile, the eight
+         height bytes (0 to 8) set to 0xFF to be worked out again and byte 9 holding the bits 0xD0
+         of the first map tile's climate byte, for every entry (as in the original). The old
+         cache is freed. Bytes 10 and 11 are left as allocated.
+Original Offset: 004711A0
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-17-council-batch28.log)
+*/
+void __cdecl terrain_fixup(MapWin *win) {
+    if (!win) {
+        return;
+    }
+    if (win->tile_cache) {
+        _free(win->tile_cache);
+        win->tile_cache = 0;
+    }
+    win->tile_cache = (uint8_t *)mem_get_old(*MapArea * 12);
+    for (int i = 0; i < (int)*MapArea; i++) {
+        uint8_t *entry = &win->tile_cache[i * 12];
+        for (int j = 0; j < 4; j++) {
+            entry[j] = 0xFF;
+        }
+        for (int j = 4; j < 9; j++) {
+            entry[j] = 0xFF;
+        }
+        entry[9] = 0;
+        entry[9] |= (*MapTiles)->climate & 0xD0;
+    }
+}
+
+/*
+Purpose: Rebuild the drawing caches of the map views after a new map is set up: the main map, the
+         other listed views in use, and the three views outside the list.
+Original Offset: 00471240
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-17-council-batch28.log)
+*/
+void __cdecl mapwin_terrain_fixup() {
+    for (int i = 0; i < MaxMapWinNum; i++) {
+        if (!i || MapWinList[i]->draw_toggle_a) {
+            terrain_fixup(MapWinList[i]);
+        }
+    }
+    terrain_fixup(MapWinUnk);
+    terrain_fixup(MapWinUnk2);
+    terrain_fixup(BaseMapWin);
+}
+
+/*
 Purpose: Check if coordinates are considered near or on coast. Radius (excludes actual coordinates)
          can either be all the squares directly around the coordinates or same as Base '+' radius.
 Original Offset: 004E49D0
@@ -2361,6 +2518,174 @@ struct WorldNoise {
 };
 
 /*
+Purpose: Erode the contours in two passes over the map (sea and shelf tiles first, then the land,
+         after the shorelines are redone), mixing each tile's contour with a value from the
+         random lattice and the world builder rules: deep sea sinks, the shelf rises when crowded
+         by water and is pushed up near a big landmass or between two, low land (altitude 3) is
+         raised by the plains rule and, below its contour, by the hills rule (more when few
+         neighbours are water and when another landmass is two tiles away), and higher land by the
+         hills and peaks rules. Without erosive forces the result is capped at 74. The plains and
+         beach terms scale with the map size when the land coverage is 1. The continents are
+         recounted before each pass.
+Original Offset: 005C2CB0
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-18-council-batch29.log)
+*/
+void __cdecl world_erosion() {
+    WorldNoise noise;
+    noise.init();
+    int root_base, root_area;
+    if (*MapLandCoverage == 1) {
+        root_base = quick_root(3200);
+        root_area = quick_root(*MapArea);
+    } else {
+        root_area = 1;
+        root_base = 1;
+    }
+    const int erosive = (int)*MapErosiveForces;
+    for (int pass = 0; pass < 2; pass++) {
+        if (pass) {
+            world_shorelines();
+        }
+        Paths->continents();
+        for (int y = 0; y < *MapLatitudeBounds; y++) {
+            for (int x = y & 1; x < *MapLongitudeBounds; x += 2) {
+                Map *tile = map_loc(x, y);
+                int alt = tile->climate >> 5;
+                int contour = tile->contour;
+                int value = (noise.at(x << 4, y << 4) * 5 + noise.at(x << 7, y << 7) * 2) * 7 >> 8;
+                value = value < 0 ? 0 : (value > 100 ? 100 : value);
+                if (pass ? alt <= 2 : alt > 2) {
+                    continue;
+                }
+                int water = 0; // neighbours at altitude 2 or below
+                int landmass = 0; // a large landmass next to the shelf, or land of another region
+                if (alt == 2 || alt == 3) {
+                    BOOL is_flat = *MapIsFlat & 1;
+                    for (int i = 0; i < 8; i++) {
+                        int x_near = x + RadiusBaseX[i];
+                        if (!is_flat) {
+                            if (x_near < 0) {
+                                x_near += *MapLongitudeBounds;
+                            } else if (x_near >= *MapLongitudeBounds) {
+                                x_near -= *MapLongitudeBounds;
+                            }
+                        }
+                        int y_near = y + RadiusBaseY[i];
+                        if (y_near >= 0 && y_near < *MapLatitudeBounds && x_near >= 0
+                            && x_near < *MapLongitudeBounds
+                            && (map_loc(x_near, y_near)->climate & 0xE0) <= 0x40) {
+                            water++;
+                        }
+                    }
+                    if (alt == 3) {
+                        uint32_t region = tile->region;
+                        for (int i = 9; i < 25; i++) { // the ring two tiles out
+                            int x_near = x + RadiusOffsetX[i];
+                            if (!is_flat) {
+                                if (x_near < 0) {
+                                    x_near += *MapLongitudeBounds;
+                                } else if (x_near >= *MapLongitudeBounds) {
+                                    x_near -= *MapLongitudeBounds;
+                                }
+                            }
+                            int y_near = y + RadiusOffsetY[i];
+                            if (y_near < 0 || y_near >= *MapLatitudeBounds || x_near < 0
+                                || x_near >= *MapLongitudeBounds) {
+                                continue;
+                            }
+                            Map *near_tile = map_loc(x_near, y_near);
+                            if ((near_tile->climate & 0xE0) > 0x40 && near_tile->region < 0x40
+                                && near_tile->region != region) {
+                                landmass++;
+                            }
+                        }
+                    } else {
+                        int region_best = -1;
+                        for (int i = 0; i < 8; i++) {
+                            int x_near = x + RadiusBaseX[i];
+                            if (!is_flat) {
+                                if (x_near < 0) {
+                                    x_near += *MapLongitudeBounds;
+                                } else if (x_near >= *MapLongitudeBounds) {
+                                    x_near -= *MapLongitudeBounds;
+                                }
+                            }
+                            int y_near = y + RadiusBaseY[i];
+                            if (y_near < 0 || y_near >= *MapLatitudeBounds || x_near < 0
+                                || x_near >= *MapLongitudeBounds) {
+                                continue;
+                            }
+                            Map *near_tile = map_loc(x_near, y_near);
+                            if ((near_tile->climate & 0xE0) <= 0x40) {
+                                continue;
+                            }
+                            int region = near_tile->region;
+                            if (region_best < 0) {
+                                region_best = region;
+                            } else if (region_best != region) {
+                                int size = (int)Continents[region].tile_count;
+                                int size_best = (int)Continents[region_best].tile_count;
+                                if (size_best + size >= (int)*MapArea * 50 / 3200) {
+                                    landmass = 1;
+                                }
+                                if (size > size_best) {
+                                    region_best = region;
+                                }
+                            }
+                        }
+                    }
+                }
+                int result = value;
+                if (alt <= 1) {
+                    result = value - WorldBuilder->deep_water;
+                } else if (alt == 2) {
+                    if (landmass) {
+                        water += 4;
+                        water = water < 0 ? 0 : (water > 8 ? 8 : water);
+                    }
+                    if (value < contour) {
+                        result = WorldBuilder->shelf + value;
+                    }
+                    if (result >= (int)AltNatural[alt + 1]) {
+                        result += -((water - 3) * WorldBuilder->shelf / 4);
+                    }
+                } else if (alt == 3) {
+                    if (landmass) {
+                        water += 4;
+                        water = water < 0 ? 0 : (water > 8 ? 8 : water);
+                    }
+                    result = (8 - water) * WorldBuilder->plains * root_area / (root_base * 8) + value;
+                    int coverage = (int)*MapOceanCoverage;
+                    coverage = coverage < 1 ? 1 : (coverage > 2 ? 2 : coverage);
+                    if (result < contour) {
+                        result += ((((int)WorldBuilder->hills * erosive) / 2) * (8 - water)
+                            / (coverage * 8) + WorldBuilder->beach) * root_area / root_base;
+                    } else {
+                        int water_capped = water < 0 ? 0 : (water > 8 ? 8 : water);
+                        result = (result - contour) * (8 - water_capped) * erosive / (coverage * 8)
+                            + contour;
+                    }
+                } else if (alt == 4) {
+                    if (value > contour) {
+                        result = value * 2 - contour;
+                    }
+                    result += (int)WorldBuilder->hills * erosive + WorldBuilder->peaks;
+                } else {
+                    result = (int)WorldBuilder->hills * erosive + value;
+                }
+                result = (result + contour + 1) / 2;
+                if (!erosive && result > 74) {
+                    result = 74;
+                }
+                alt_put_detail(x, y, (uint8_t)result);
+            }
+            do_all_non_input();
+        }
+    }
+}
+
+/*
 Purpose: Set the rockiness of every tile from its mineral value and scatter the energy and mineral
          resource markers: ocean tiles (and tiles that keep fresh water) get energy, land gets
          energy on half the jungle tiles, minerals on high or rainy land, nothing elsewhere.
@@ -2503,6 +2828,239 @@ void __cdecl world_riverbeds() {
                 riverbed_count++;
             }
         }
+    }
+}
+
+// The four diagonal steps a river takes (0x66EF28, 0x66EF3C); direction d ^ 2 goes back.
+static const int RiverStepX[] = { 1, 1, -1, -1 };
+static const int RiverStepY[] = { -1, 1, 1, -1 };
+
+/*
+Purpose: Wrap a column on a round map the way world_rivers() does.
+Original Offset: n/a (inlined in world_rivers())
+Return Value: Column
+Status: Complete
+*/
+static int river_wrap(int x, BOOL is_flat) {
+    if (!is_flat) {
+        if (x < 0) {
+            x += *MapLongitudeBounds;
+        } else if (x >= *MapLongitudeBounds) {
+            x -= *MapLongitudeBounds;
+        }
+    }
+    return x;
+}
+
+/*
+Purpose: Lay the rivers. Every land tile marked as a river source (BIT_RIVERBED) starts one, with
+         its own random stream (seeded from the tile) and a random first direction. The river
+         walks diagonally downhill or level, never back the way it came, choosing among the steps
+         by weight: lower contour weighs more, the direction it was heading (with a random swing)
+         gets a bonus, an uphill step is only allowed to the lowest contour seen so far, a step
+         next to the sea is halved early in a level run, and a step touching its own course is
+         cut to an eighth (allowed once). It stops when it reaches an existing river, a source with
+         another source beside it, a thermal bore, a dead end or after 1000 steps; where it ends on
+         land without joining a river or a thermal bore, the last tile becomes a lake (unless a
+         unit or base of a faction is there). Contours raised along the way are lowered to the
+         course. The tiles of the course get BIT_RIVER; BIT2_UNK_800000 marks the course while it
+         is traced.
+Original Offset: 005C38B0
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-18-council-batch29.log)
+*/
+void __cdecl world_rivers() {
+    for (uint32_t i = 0; i < *MapArea; i++) {
+        (*MapTiles)[i].bit &= ~(BIT_RIVER | BIT_RIVER_LAKE);
+    }
+    for (int y = 0; y < *MapLatitudeBounds; y++) {
+        for (int x = y & 1; x < *MapLongitudeBounds; x += 2) {
+            Map *source = map_loc(x, y);
+            if (!(source->bit & BIT_RIVERBED) || (source->climate & 0xE0) < 0x60) {
+                continue;
+            }
+            for (uint32_t i = 0; i < *MapArea; i++) {
+                (*MapTiles)[i].bit2 &= ~BIT2_UNK_800000;
+            }
+            random_reseed(y * 47 + x * 31);
+            int dir = random(0, 4);
+            int x_cur = x;
+            int y_cur = y;
+            int alt_cur = source->climate >> 5;
+            source->bit2 |= BIT2_UNK_800000;
+            int contour_cur = source->contour;
+            int steps = 0;
+            BOOL on_course = false; // the step taken touches the river's own course
+            BOOL lake = true;
+            int step_count = 1;
+            int run = 1; // steps at the same altitude
+            for (;;) {
+                if (map_loc(x_cur, y_cur)->bit & BIT_THERMAL_BORE) {
+                    lake = false;
+                    break;
+                }
+                int swing = random(0, 2);
+                int dir_preferred = (swing + (dir - (step_count & 1))) & 3;
+                int dir_back = dir ^ 2;
+                int choices = 0;
+                int weight_total = 0;
+                int contour_up = 9999; // lowest contour of an uphill step so far
+                int weight_up = 8;
+                int weights[3], courses[3], dirs[3];
+                BOOL joined = false;
+                for (int d = 0; d < 4; d++) {
+                    if (d == dir_back) {
+                        continue;
+                    }
+                    BOOL is_flat = *MapIsFlat & 1;
+                    int x_step = river_wrap(x_cur + RiverStepX[d], is_flat);
+                    int y_step = y_cur + RiverStepY[d];
+                    if (y_step < 0 || y_step >= *MapLatitudeBounds || x_step < 0
+                        || x_step >= *MapLongitudeBounds) {
+                        continue;
+                    }
+                    Map *step = map_loc(x_step, y_step);
+                    if (step->bit & BIT_RIVER) {
+                        joined = true;
+                        break;
+                    }
+                    if (step->bit & BIT_RIVERBED) {
+                        int sources = 0;
+                        for (int e = 0; e < 4; e++) {
+                            int x_near = river_wrap(x_step + RiverStepX[e], is_flat);
+                            int y_near = y_step + RiverStepY[e];
+                            if (y_near >= 0 && y_near < *MapLatitudeBounds && x_near >= 0
+                                && x_near < *MapLongitudeBounds
+                                && (map_loc(x_near, y_near)->bit & BIT_RIVERBED)) {
+                                sources++;
+                            }
+                        }
+                        if (sources > 1) {
+                            joined = true;
+                            break;
+                        }
+                    }
+                    uint32_t climate = step->climate;
+                    if ((int)(climate >> 5) > alt_cur) {
+                        continue;
+                    }
+                    int contour = step->contour;
+                    int weight = contour_cur - contour + 2;
+                    weight = (weight < 1 ? 1 : (weight > 9999 ? 9999 : weight)) * 32;
+                    if (d == dir_preferred) {
+                        weight += 31;
+                    }
+                    if (contour > contour_cur) {
+                        if (contour > contour_up) {
+                            continue;
+                        }
+                        contour_up = contour;
+                        weight = weight_up++;
+                    }
+                    BOOL course = false;
+                    int higher = 0;
+                    BOOL skip = false;
+                    for (int e = 0; e < 4 && !skip; e++) {
+                        if (e == (d ^ 2)) {
+                            continue;
+                        }
+                        int x_near = river_wrap(x_step + RiverStepX[e], is_flat);
+                        int y_near = y_step + RiverStepY[e];
+                        if (y_near < 0 || y_near >= *MapLatitudeBounds || x_near < 0
+                            || x_near >= *MapLongitudeBounds) {
+                            continue;
+                        }
+                        Map *near_tile = map_loc(x_near, y_near);
+                        uint32_t alt_near = near_tile->climate & 0xE0;
+                        if (alt_near < 0x60 && (climate & 0xE0) >= 0x60 && run < 5) {
+                            weight /= 2;
+                        }
+                        if (near_tile->contour > contour) {
+                            higher++;
+                            if (near_tile->bit & BIT_RIVER) {
+                                skip = true;
+                                continue;
+                            }
+                        }
+                        if (near_tile->bit2 & BIT2_UNK_800000) {
+                            if (on_course || alt_near < 0x60) {
+                                skip = true;
+                                continue;
+                            }
+                            course = true;
+                            weight /= 8;
+                        }
+                    }
+                    if (skip || !weight) {
+                        continue;
+                    }
+                    if (higher == 3) {
+                        weight = 1;
+                    }
+                    weight_total += weight;
+                    weights[choices] = weight;
+                    courses[choices] = course;
+                    dirs[choices] = d;
+                    choices++;
+                }
+                if (joined) {
+                    lake = false;
+                    break;
+                }
+                if (!choices) {
+                    break;
+                }
+                int pick = random(0, weight_total);
+                dir = 0; // as in the original, when no choice is picked
+                for (int i = 0; i < choices; i++) {
+                    if (pick < weights[i]) {
+                        on_course = courses[i];
+                        dir = dirs[i];
+                        break;
+                    }
+                    pick -= weights[i];
+                }
+                x_cur = river_wrap(x_cur + RiverStepX[dir], *MapIsFlat & 1);
+                y_cur += RiverStepY[dir];
+                Map *tile = map_loc(x_cur, y_cur);
+                int alt = tile->climate >> 5;
+                if (alt != alt_cur) {
+                    run = 0;
+                }
+                alt_cur = alt;
+                int contour = tile->contour;
+                if (contour > contour_cur) {
+                    contour = (int)ElevDetail[alt];
+                    if (contour_cur - 1 > contour) {
+                        contour = contour_cur - 1;
+                    }
+                    alt_put_detail(x_cur, y_cur, (uint8_t)contour);
+                }
+                contour_cur = contour;
+                if (++steps >= 1000) {
+                    break;
+                }
+                map_loc(x_cur, y_cur)->bit2 |= BIT2_UNK_800000;
+                step_count++;
+                run++;
+            }
+            if (alt_cur >= 3) {
+                Map *tile = map_loc(x_cur, y_cur);
+                if (!(tile->bit & BIT_RIVER) && lake && (!(tile->bit & (BIT_BASE_IN_TILE | BIT_VEH_IN_TILE))
+                    || (tile->val2 & 0xF) >= 8)) {
+                    tile->bit |= BIT_RIVER_LAKE;
+                }
+            }
+            for (uint32_t i = 0; i < *MapArea; i++) {
+                if ((*MapTiles)[i].bit2 & BIT2_UNK_800000) {
+                    (*MapTiles)[i].bit |= BIT_RIVER;
+                }
+            }
+        }
+        do_all_non_input();
+    }
+    for (uint32_t i = 0; i < *MapArea; i++) {
+        (*MapTiles)[i].bit2 &= ~BIT2_UNK_800000;
     }
 }
 
@@ -3169,6 +3727,40 @@ void __cdecl world_polar_caps() {
         world_alt_put_detail(rnd(*MapLongitude, NULL) * 2 + 1, *MapLatitudeBounds - 1);
         world_alt_put_detail(rnd(*MapLongitude, NULL) * 2, *MapLatitudeBounds - 2);
     }
+}
+
+/*
+Purpose: Redo the climate after the land changed: shorelines, temperature, rivers and rainfall, the
+         continents and the world analysis, the territory (not during world building), then a
+         fresh random seed from the clock; the map views redraw their terrain unless the game is
+         halted. Network checksums are logged before and after.
+Original Offset: 005C5A30
+Return Value: n/a
+Status: Complete (verified vs original: docs/regression-runs/2026-10-18-council-batch29.log)
+*/
+void __cdecl world_climate() {
+    do_checksums(2);
+    log_say("-- ADJUSTING WORLD CLIMATE --", 0, 0, 0);
+    world_shorelines();
+    world_temperature();
+    world_rivers();
+    world_rainfall();
+    Paths->continents();
+    world_analysis();
+    if (!*WorldBuildUnk2) {
+        reset_territory();
+    }
+    random_reseed(timeGetTime());
+    if (!*GameHalted) {
+        for (int i = 0; i < MaxMapWinNum; i++) {
+            if (MapWinList[i]->draw_toggle_a) {
+                MapWin_clear_terrain(MapWinList[i], 0);
+            }
+        }
+        WorldWin_clear_terrain(WorldWinVar, 0);
+    }
+    log_say("-- WORLD CLIMATE COMPLETE --", 0, 0, 0);
+    do_checksums(3);
 }
 
 /*

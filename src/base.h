@@ -545,6 +545,10 @@ DLLEXPORT void __cdecl set_fac(uint32_t facility_id, uint32_t base_id, BOOL set)
 DLLEXPORT BOOL __cdecl has_fac_announced(uint32_t faction_id, uint32_t facility_id);
 DLLEXPORT void __cdecl set_fac_announced(uint32_t faction_id, uint32_t facility_id, BOOL set);
 DLLEXPORT void __cdecl base_first(uint32_t base_id);
+DLLEXPORT int __cdecl base_init(uint32_t faction_id, int x, int y);
+DLLEXPORT void __cdecl base_change(uint32_t base_id, int production_id);
+DLLEXPORT void __cdecl base_reset(uint32_t base_id, BOOL governor_priorities);
+DLLEXPORT void __cdecl base_hurry();
 DLLEXPORT uint32_t __cdecl morale_mod(uint32_t base_id, uint32_t faction_id, uint32_t triad);
 DLLEXPORT uint32_t __cdecl breed_mod(uint32_t base_id, uint32_t faction_id);
 DLLEXPORT uint32_t __cdecl worm_mod(uint32_t base_id, uint32_t faction_id);

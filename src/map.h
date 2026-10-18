@@ -112,6 +112,7 @@ enum TerrainLandmarkBit2 {
     BIT2_UNK_400000 = 0x400000, // set by spot_base()/spot_stack() when the faction at the
                                 // controls first sees the tile; see UnkBitfield1
     //
+    BIT2_UNK_800000 = 0x800000, // the course of the river world_rivers() is tracing
     BIT2_UNK_80000000 = 0x80000000,
 };
 
@@ -189,11 +190,24 @@ struct RulesNatural {
     LPSTR name_short;
 };
 
+// The start of a map view window (Thinker: Console); only the fields the DLL uses.
+struct MapWin {
+    void *vtable;
+    uint8_t *tile_cache; // 12 bytes per tile of drawing data (Thinker: paTilePos); terrain_fixup()
+    int unk_1; // set to 9999999 by delete_landmark() (Thinker: field_8)
+    uint8_t unk_2[0x1DD60];
+    int zoom_x2; // Thinker: iZoomX2
+    int draw_flags; // Thinker: iWhatToDrawFlags
+    BOOL draw_toggle_a; // tested as "view in use" (Thinker: iDrawToggleA)
+};
+
 constexpr int MaxNaturalNum = 16;
 constexpr int MaxLandmarkNum = 64;
 constexpr int RegionBounds = 63;
 constexpr int MaxContinentNum = 128;
 constexpr int MaxRegionLandNum = 64;
+constexpr int MaxMapWinNum = 8;
+constexpr int LandmarkAltSize = 113; // entries in each landmark corner height table
 
 const int RadiusRange[] = { 1, 9, 25, 49, 81, 121, 169, 225, 289 };
 const int RadiusBaseX[] = {  1, 2, 1, 0, -1, -2, -1,  0, 0 };
@@ -242,6 +256,24 @@ extern uint32_t *MapAreaSqRoot;
 extern BOOL *MapIsFlat;
 extern int *MapLandmarkCount;
 extern Landmark *MapLandmark;
+extern MapWin **MapWinList; // [8] map views, the first is the main map (Thinker: MapWinPtr)
+extern MapWin *MapWinUnk; // a map view outside the list (Thinker: UnkWin_8EB48C)
+extern MapWin *MapWinUnk2; // another map view outside the list
+extern MapWin *BaseMapWin; // base screen terrain view (Thinker: BaseMapWin)
+// Corner height offsets the map view adds for landmark tiles (read at 0x46FF27); the landmark's
+// tile code picks five entries through LandmarkAltIndex. The *Default tables are the constants
+// fixup_landmarks() copies back.
+extern uint8_t *LandmarkAltIndex; // [code][5]
+extern uint8_t *LandmarkAltCrater;
+extern uint8_t *LandmarkAltVolcano;
+extern uint8_t *LandmarkAltCanyon;
+extern uint8_t *LandmarkAltMesa;
+extern uint8_t *LandmarkAltRidge;
+extern uint8_t *LandmarkAltCraterDefault;
+extern uint8_t *LandmarkAltVolcanoDefault;
+extern uint8_t *LandmarkAltCanyonDefault;
+extern uint8_t *LandmarkAltMesaDefault;
+extern uint8_t *LandmarkAltRidgeDefault;
 extern uint32_t *MapAbstractLongBounds; // abstract x
 extern uint32_t *MapAbstractLatBounds; // abstract y
 extern uint32_t *MapAbstractArea;
@@ -342,6 +374,10 @@ DLLEXPORT int __cdecl find_landmark(int x, int y, uint32_t radius_range_offset);
 DLLEXPORT int __cdecl new_landmark(int x, int y, LPCSTR name);
 DLLEXPORT BOOL __cdecl valid_landmark(uint32_t x, uint32_t y, int faction_id);
 DLLEXPORT void __cdecl kill_landmark(int x, int y);
+DLLEXPORT void __cdecl delete_landmark(int x, int y);
+DLLEXPORT void __cdecl fixup_landmarks();
+DLLEXPORT void __cdecl terrain_fixup(MapWin *win);
+DLLEXPORT void __cdecl mapwin_terrain_fixup();
 DLLEXPORT BOOL __cdecl is_coast(int x, int y, BOOL is_base_radius);
 DLLEXPORT BOOL __cdecl is_ocean(uint32_t x, uint32_t y);
 DLLEXPORT int __cdecl veh_who(uint32_t x, uint32_t y);
@@ -375,11 +411,14 @@ DLLEXPORT void __cdecl build_hills(int altitude);
 DLLEXPORT void __cdecl world_riverbeds();
 DLLEXPORT BOOL __cdecl world_validate();
 DLLEXPORT void __cdecl world_temperature();
+DLLEXPORT void __cdecl world_erosion();
 DLLEXPORT void __cdecl world_rocky();
 DLLEXPORT void __cdecl world_fungus();
+DLLEXPORT void __cdecl world_rivers();
 DLLEXPORT void __cdecl world_shorelines();
 DLLEXPORT void __cdecl world_rainfall();
 DLLEXPORT void __cdecl world_analysis();
+DLLEXPORT void __cdecl world_climate();
 DLLEXPORT void __cdecl world_alt_put_detail(uint32_t x, uint32_t y);
 DLLEXPORT void __cdecl world_polar_caps();
 DLLEXPORT void __cdecl world_linearize_contours();

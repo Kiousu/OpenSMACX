@@ -18,6 +18,7 @@
 #include "stdafx.h"
 #include "temp.h"
 #include "alpha.h"
+#include "window.h"
 #include "base.h"
 #include "council.h"
 #include "game.h"
@@ -33,6 +34,7 @@
 
 LPCSTR AlphaxFileID = "ALPHAX";
 LPCSTR ScriptTxtID = "SCRIPT";
+LPCSTR TutorTxtID = "TUTOR";
 LPSTR *Compass = (LPSTR *)0x00945D48;
 LPSTR *Difficulty = (LPSTR *)0x0096C85C;
 Label *Labels = (Label *)0x009B90F8;
@@ -1295,6 +1297,10 @@ Return Value: Key's integer value from the ini or default if not set
 Status: Complete
 */
 int __cdecl prefs_get(LPCSTR key_name, int default_value, BOOL use_default) {
+    if (WindowedMode && !strcmp(key_name, "DirectDraw")) {
+        window_hook_imports();
+        return 0; // OpenSMACX windowed mode (window.h) draws without DirectDraw
+    }
     _itoa_s(default_value, stringTemp->str, 256, 10);
     if (use_default) {
         strcpy_s(*TextBufferGetPtr, 256, stringTemp->str);

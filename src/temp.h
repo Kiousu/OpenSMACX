@@ -67,8 +67,6 @@ extern func6 *X_pop;
 typedef int func7(LPCSTR, LPCSTR, int, LPCSTR, int(__cdecl *)());
 extern func7 *popp;
 typedef void *func9(void);
-extern func9 *fixup_landmarks;
-extern func9 *mapwin_terrain_fixup;
 typedef BOOL func11(int, int, int);
 extern func11 *wants_to_attack_;
 typedef int func14(int, int);
@@ -78,7 +76,7 @@ extern func15 *save_daemon;
 typedef uint32_t func16(LPCSTR, BOOL);
 extern func16 *load_daemon;
 typedef void func19(uint32_t);
-extern func19 *consider_designs;
+extern func19 *consider_designs_OG;
 typedef int func20(LPCSTR, int, int, LPCSTR, Sprite *);
 extern func20 *popb;
 typedef void func21(int, int, int, int);
@@ -281,7 +279,6 @@ extern func_assemble *assemble_passengers_OG;
 // batch 18
 extern func5 *repair_phase_OG;
 extern func5 *allocate_energy_OG;
-extern func_i *energy_limit; // energy_limit(faction_id): always 10 in this build
 extern func5 *social_select; // social_select(faction_id): the social engineering screen
 // batch 19
 extern func_xy *spot_all; // spot_all(veh_id, radius): reveal around a unit
@@ -317,7 +314,7 @@ typedef int func_propose_proto(uint32_t, uint32_t, uint32_t, uint32_t, uint32_t,
     LPCSTR);
 extern func_propose_proto *propose_proto_OG;
 typedef void func_prune_protos(int, int, int);
-extern func_prune_protos *prune_protos; // prune_protos(faction_id, proto_id_kept, unk)
+extern func_prune_protos *prune_protos_OG;
 // batch 24
 typedef int func_can_terraform(int, int, int, BOOL, int);
 extern func_can_terraform *can_terraform_OG;
@@ -409,6 +406,11 @@ extern func_net_await *NetDaemon_await_diplo; // NetDaemon::await_diplo()
 typedef int __fastcall func_net_this_only(void *This, void *edx_unused);
 extern func_net_this_only *NetDaemon_add_global; // NetDaemon::add_global()
 extern func_net_this_only *NetDaemon_unlock; // NetDaemon::unlock()
+typedef int __fastcall func_net_lock_base(void *This, void *edx_unused, int base_id, int lock_flags,
+    int unk1, int unk2);
+extern func_net_lock_base *NetDaemon_lock_base; // NetDaemon::lock_base(): non-zero if not locked
+typedef void __fastcall func_net_unlock_base(void *This, void *edx_unused, int base_id);
+extern func_net_unlock_base *NetDaemon_unlock_base; // NetDaemon::unlock_base()
 typedef void __fastcall func_console_update(void *This, void *edx_unused, int unk);
 extern func_console_update *Console_update_data; // Console::update_data()
 extern void *ConsoleVar; // global Console instance
@@ -428,6 +430,13 @@ extern func_draw3 *draw_tiles; // draw_tiles(x, y, mode)
 typedef void func_draw4(int, int, int, int);
 extern func_draw4 *draw_tile_fixup; // draw_tile_fixup(x, y, unk, mode)
 extern func_draw3 *draw_tile; // draw_tile(x, y, mode)
+typedef int __fastcall func_mapwin_focus(void *This, void *edx_unused, int x, int y);
+extern func_mapwin_focus *MapWin_focus; // MapWin::focus(x, y): centre a map view on the tile; callers
+                                        // redraw the tile themselves when it returns 0
+typedef int func_pop2(LPCSTR, LPCSTR, int);
+extern func_pop2 *POP2; // POP2(label, pcx_file, unk): message popup with a picture
+extern func5 *do_checksums; // do_checksums(when): logs the network game checksums when logging is on
+extern func_win_redraw *WorldWin_clear_terrain; // WorldWin::clear_terrain() on WorldWinVar
 typedef void __fastcall func_fx_play(void *This, void *edx_unused, int fx_id);
 extern func_fx_play *FX_play; // FX::play()
 extern void *FXVar; // global FX instance
@@ -449,13 +458,23 @@ extern BOOL *MapWinUnitNotViewMode; // Console field after the owner (Thinker: f
 extern int *MapWinUnkFlag; // Console field +0x23BE4, checked by pick_top_veh()
 extern int *VehUpgradeUnk; // zeroed by upgrade_any_prototypes(), set by upgrade_prototype()
 extern func_win_redraw *MapWin_clear_terrain; // MapWin::clear_terrain() on ConsoleVar
+typedef void __fastcall func_mapwin_clear_alt(void *This, void *edx_unused, int x, int y, int radius);
+extern func_mapwin_clear_alt *MapWin_clear_alt; // MapWin::clear_alt(): resets cached heights within
+                                               // the radius (index into RadiusRange)
+typedef void func_replay_base(int, int, int, int);
+extern func_replay_base *replay_base; // replay_base(event, x, y, faction_id): 8 byte replay record entry
+typedef int func_battle_fight_2(int, int, int, int, BOOL, int, int);
+extern func_battle_fight_2 *battle_fight_2; // battle_fight_2(veh_id, offset, x, y, is_arty, unk1, unk2)
 extern func_i *tech_selection; // tech_selection(faction_id): pick the next research goal (dialog for humans)
 typedef int func_tech_pick(int, int, int, LPCSTR);
 extern func_tech_pick *tech_pick; // tech_pick(faction_id, unk, faction_id_from, label)
 extern int *SkipTechScreenA; // Thinker's names: non-zero skips the tech popups
 extern int *SkipTechScreenB;
 extern int *NetUpkeepState; // 1 while a network game runs its upkeep
-extern func_xy *base_reset; // base_reset(base_id, unk): governor production choice
+typedef int func_base_build(int, int, int, int *);
+extern func_base_build *base_build; // base_build(base_id, unk1, unk2, value_out): AI production
+                                    // pick; -1 - base_id leaves Secret Projects out
+extern func_xy *help_topic; // help_topic(topic, id): the Datalinks entry
 extern func5 *monument; // monument(unk): the monument screen
 typedef void func_interlude(int, LPCSTR, int, int);
 extern func_interlude *interlude; // interlude(event_id, text, unk1, unk2)
@@ -471,6 +490,22 @@ extern int *NetMsgSequence; // incremented for each message sent by NetDaemon
 extern int *NetMsgSendDepth; // non-zero while a message is being sent
 extern BOOL *NetPopWaitActive; // set while pop_wait()/pop_expire() spin in wait_loop()
 extern int *ControlTurnA; // name from Thinker; non-zero aborts network waits
+// commlink_attempter(faction_id, faction_id_with): non-zero when contact can't be made now
+extern func_diplo2r *commlink_attempter;
+// wants_to_speak(faction_id, faction_id_with): builds a Popup on the stack (left in the exe)
+extern func_diplo2r *wants_to_speak;
+extern func_console_update *Console_set_move; // Console::set_move() on ConsoleVar
+extern uint32_t *InfoWinUnk; // Thinker: dword_7AD330 (InfoWin); cleared after a tech sale
+extern func_xyi *diplomacy_check; // diplomacy_check(faction_id, faction_id_with, unk)
+// diplomacy_caption(faction_id, faction_id_with): the mood caption, into parse slot 7
+extern func_diplo2 *diplomacy_caption;
+// tut_check2(flag): true once per flag while tutorial messages are on
+extern func_i *tut_check2;
+typedef int func_x_pops_11(LPCSTR, int, Sprite *, int(__cdecl *)());
+extern func_x_pops_11 *X_pops_11; // X_pops_11(label, flags, picture, wait_callback)
+typedef int func_x_pop_2(LPCSTR, LPCSTR, int(__cdecl *)());
+extern func_x_pop_2 *X_pop_2; // X_pop_2(file, label, callback)
+extern Sprite **FactionPortraits; // [8] Thinker's name
 
 DLLEXPORT BOOL __cdecl do_non_input();
 DLLEXPORT void __cdecl do_all_non_input();
