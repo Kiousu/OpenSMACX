@@ -82,6 +82,7 @@ DLLEXPORT void __cdecl wipe_undo();
 DLLEXPORT void __cdecl auto_undo();
 DLLEXPORT void __cdecl header_check(LPSTR header, FILE *file);
 DLLEXPORT void __cdecl header_write(LPCSTR header, FILE *file);
+DLLEXPORT int __cdecl game_data(FILE *file, BOOL is_save);
 DLLEXPORT void __cdecl sort(uint32_t count, int *id, int *value);
 DLLEXPORT void __cdecl sort_descending(uint32_t count, int *id, int *value);
 

@@ -1,0 +1,36 @@
+== save_slot probe, Council.SAV, 680-redirect exe + regress DLL (20:27)
+OpenSMACX regression run: turn 289, 281 bases, 1741 vehs, filter='save_slot'
+save_slot: header_write DLL, env_open_old DLL: 16 saves, 0 failed, slot: 6582575 6582575 6582575 6582575 6582575 6582575 6582575 6582575 6582575 6582575 6582575 6582575 6582575 6582575 6582575 6582575 (0 below 11)
+save_slot: header_write exe, env_open_old DLL: 16 saves, 0 failed, slot: -2 -2 -2 -2 -2 -2 -2 -2 -2 -2 -2 -2 -2 -2 -2 -2 (16 below 11)
+save_slot: header_write DLL, env_open_old exe: 16 saves, 0 failed, slot: 6582575 6582575 6582575 6582575 6582575 6582575 6582575 6582575 6582575 6582575 6582575 6582575 6582575 6582575 6582575 6582575 (0 below 11)
+save_slot: header_write exe, env_open_old exe: 16 saves, 0 failed, slot: -2 -2 -2 -2 -2 -2 -2 -2 -2 -2 -2 -2 -2 -2 -2 -2 (16 below 11)
+TOTAL mismatches: 0 (156 ms)
+== save_header, 681-redirect exe + regress DLL (20:38); _header_check.SAV = the save the previous run made through the new entry
+-- Council.SAV
+OpenSMACX regression run: turn 289, 281 bases, 1741 vehs, filter='save_header'
+save_header: control, two saves through the DLL entry: 0 bytes differ (first at 0xFFFFFFFF)
+save_header: 686926 bytes, header block at 0xC: 0 bytes not as Thinker's (zeros, version 12), exe entry's header 337 non-zero bytes; rest of the file: 0 bytes differ (first at 0xFFFFFFFF)
+TOTAL mismatches: 0 (16 ms)
+-- _header_check.SAV
+OpenSMACX regression run: turn 32, 20 bases, 81 vehs, filter='save_header'
+save_header: control, two saves through the DLL entry: 0 bytes differ (first at 0xFFFFFFFF)
+save_header: 515618 bytes, header block at 0xC: 0 bytes not as Thinker's (zeros, version 12), exe entry's header 359 non-zero bytes; rest of the file: 0 bytes differ (first at 0xFFFFFFFF)
+TOTAL mismatches: 0 (0 ms)
+-- sw_steam1.SAV
+OpenSMACX regression run: turn 32, 20 bases, 81 vehs, filter='save_header'
+save_header: control, two saves through the DLL entry: 0 bytes differ (first at 0xFFFFFFFF)
+save_header: 515618 bytes, header block at 0xC: 0 bytes not as Thinker's (zeros, version 12), exe entry's header 359 non-zero bytes; rest of the file: 0 bytes differ (first at 0xFFFFFFFF)
+TOTAL mismatches: 0 (16 ms)
+== UI save (Ctrl+S from the game, then Ctrl+L), 681-redirect exe + release DLL
+[20:42:08] launched terranx_opensmacx.exe pid 36148
+[20:42:28] loaded Council.SAV
+[20:42:38] saved G:\SMACX-opensmacx-test\saves\_ui_save.SAV, 686926 bytes
+[20:42:50] after reload alive=True
+[20:42:50] done
+_ui_save.SAV header block: one non-zero byte, +0x304 = 12
+== boot test, 681-redirect exe + release DLL
+[20:40:11] launched terranx_opensmacx.exe pid 39312
+[20:40:33] loaded Council.SAV, turn counter 289
+[20:41:21] turn advanced 289 -> 290 after 34 s, game alive=True
+[20:41:24] alive at exit: True
+[20:41:24] done

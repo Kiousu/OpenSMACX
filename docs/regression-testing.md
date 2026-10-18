@@ -1179,3 +1179,53 @@ copied stack junk into the game: year 2100, a junk Secret Project table, a crash
 Logs: `regression-runs/2026-10-17-council-wta-stack.log` and
 `regression-runs/2026-10-17-sweep-wta-stack.log`. Boot test with the release DLL: Council.SAV
 advanced the turn 289 -> 290 (34 s, the AI calling the new entry) with the game alive.
+
+## Save header, 2026-10-17 (deliberate change from the v2.1 exe, chosen by Kiousu)
+
+Saving from the game crashed on 2026-10-17 (in the old-save conversion loop at 0x5A7E82, after
+writing an 83 MB file). The cause is in the exe's own `game_data` (0x5A6AC0), which saves and loads
+the game state: it starts with a 0x31C-byte header buffer on its stack (`[ebp-0x374]`) that it
+writes to the file in save mode without ever filling it, and then reads the buffer's version field
+(+0x304, `[ebp-0x70]`). Below 11 it takes the game for an old save, copies the buffer over the game
+state at 0x9A6490 (turn counter, Secret Projects, ...) and converts it: the game is corrupted and
+usually crashes. Whether a save works therefore depends on what the code before `game_data` left
+on the stack, in effect a hash of everything that ran before at that depth, Windows' own code
+included.
+
+Measured with the `save_slot` probe (hooks `game_data`'s entry, records the field and sets it to
+11, then `save_daemon` 16 times per variant; `OriginalEntry` switches between the DLL's and the
+exe's `env_open_old` and `header_write`, which run inside `save_daemon` before `game_data`):
+
+| header_write | env_open_old | field on all 16 saves |
+|---|---|---|
+| DLL | DLL or exe | 6,582,575 (0x64712F, a return address in the exe's CRT), safe |
+| exe | DLL or exe | -2, below 11 on every save |
+
+So with the exe's own code on this machine (Windows 11) every save would take the old-save path;
+the DLL's `header_write` happened to leave a safe value, which is why OpenSMACX saves mostly
+worked, and every save an OpenSMACX build ever wrote has stack junk in its header (363 non-zero
+bytes in that day's autosave). Kiousu's own game never crashed on save: it runs with Thinker
+(`thinker.dll` holds the addresses of `game_data`, `save_daemon` and `header_write`; PRACX's DLLs
+none of them), and every save in the live game folder has a header of zeros with version 12. The
+exe's `game_data` is byte for byte the same in both exes, so the fix is Thinker's, made at run time.
+
+Kiousu chose to match Kiousu's game. `game_data` (general.cpp) is now a naked entry redirected from
+0x5A6AC0 (681 redirects): it zero-fills the buffer, sets the version to 12 and runs the exe's
+`game_data` from its prologue. In load mode the buffer is read from the file right after, so only
+saves change, and their header is Thinker's.
+
+Trigger name `save_header` (only when named: it writes files in the test saves folder): a save
+through the new entry, a save through the exe's own entry (with the probe, so it stays >= 11) and
+a second save through the new entry as a control. The new header must be zeros with version 12 and
+the rest of the file equal to the exe-entry save. Council.SAV, sw_steam1.SAV and `_header_check.SAV`
+loaded back (the save the previous run wrote): header as Thinker's, rest of the file identical,
+control identical. One earlier run had 1 byte different in the last 4 bytes of the file (the tail
+of globals after the bases), not seen again in 4 runs with the control. From the game itself:
+Council.SAV saved with Ctrl+S (header: one non-zero byte, the version) and loaded back with Ctrl+L
+(year 2389, alive); boot test turn 289 -> 290 alive. Log: `regression-runs/2026-10-17-save-header.log`.
+
+Test saves: every save copied from the live game stores the path it was saved under (file offset
+0x561, game state 0x9A66C9), and after a load the game saves there by default, so saves from the
+test folder landed in the live folder. The stored path of the 326 such saves in
+`G:\SMACX-opensmacx-test\saves` now points to that folder (same name, same file size); the
+originals are in `G:\SMACX-opensmacx-test\saves_backup_20261017`.

@@ -716,3 +716,5 @@
 # --- batch 27: unit creation, alien start
 0x001C03D0	?veh_init@@YAHHIHH@Z
 0x00188F90	?alien_start@@YAXXZ
+# --- save header: game_data entry fills the header the exe leaves uninitialized (as Thinker does)
+0x001A6AC0	?game_data@@YAHPAU_iobuf@@H@Z

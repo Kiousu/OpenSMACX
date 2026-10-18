@@ -1182,6 +1182,42 @@ void __cdecl header_write(LPCSTR header, FILE *file) {
 }
 
 /*
+Purpose: Entry of the exe's game_data(), which saves or loads the game state block. The original
+         starts with a 0x31C-byte header buffer on its stack ([ebp-0x374]) that it writes to the
+         file in save mode without filling it, and then reads the version field (+0x304) back out
+         of it: below 11 it treats the game as an old save and copies the buffer over the game
+         state (turn counter, Secret Projects, ...) and converts it, which corrupts the game and
+         usually crashes. So whether a save works depends on what the code before it left on the
+         stack: with the exe's own env_open_old/header_write on Windows 11 the field is -2 on
+         every save; the DLL's header_write happened to leave 6582575 there, but a manual save
+         on 2026-10-17 still crashed in the conversion loop (0x5A7E82) and wrote an 83 MB file.
+         Kiousu's game runs with Thinker (thinker.dll references game_data, save_daemon and
+         header_write), and every save it writes has a header of zeros with version 12; Kiousu
+         chose to match that (2026-10-17). This entry zero-fills the buffer and sets the version
+         to 12, then runs the exe's game_data from its prologue. In load mode the buffer is read
+         from the file right after, so only saves change: their header matches Thinker's.
+Original Offset: 005A6AC0 (entry only; the body stays in the exe)
+Return Value: 0 on success, non-zero on failure (the exe's game_data)
+Status: Complete (docs/regression-testing.md, "Save header")
+*/
+__declspec(naked) int __cdecl game_data(FILE *UNUSED(file), BOOL UNUSED(is_save)) {
+    __asm {
+        push edi
+        lea edi, [esp + 4 - 0x378]          // the original's [ebp-0x374], ebp = esp_entry - 4
+        mov ecx, 0x31C / 4
+        xor eax, eax
+        rep stosd
+        pop edi
+        mov dword ptr [esp - 0x74], 12      // version field, [ebp-0x70]
+        push ebp                            // the original's prologue, replaced by the redirect
+        mov ebp, esp
+        sub esp, 0x374
+        mov eax, 0x005A6AC9
+        jmp eax
+    }
+}
+
+/*
 Purpose: For the count, sort both id and value arrays by the least to greatest value (ascending).
 Original Offset: 005B5690
 Return Value: n/a

@@ -7262,6 +7262,162 @@ static int test_wants_to_attack() {
     return mismatches;
 }
 
+// ---------------------------------------------------------------- save header version slot
+// game_data() in save mode writes a 0x31C-byte header buffer it never fills and then reads its
+// version field ([ebp-0x70]): below 11 it copies the buffer into the game state as an old save.
+// The probe records that slot at game_data's entry and sets it to 11 so a probe save cannot
+// corrupt the game, while save_daemon() runs with the DLL's or the exe's env_open_old and
+// header_write (both run inside save_daemon before game_data).
+static int GameDataSlots[64];
+static int GameDataSlotCount;
+
+static __declspec(naked) void game_data_probe() {
+    __asm {
+        mov eax, [esp - 0x74]               // [ebp-0x70] of game_data's frame
+        mov ecx, GameDataSlotCount
+        cmp ecx, 64
+        jae probe_full
+        mov GameDataSlots[ecx * 4], eax
+        inc ecx
+        mov GameDataSlotCount, ecx
+    probe_full:
+        mov dword ptr [esp - 0x74], 11
+        push ebp                            // game_data's prologue, replaced by the jump here
+        mov ebp, esp
+        sub esp, 0x374
+        mov eax, 0x005A6AC9
+        jmp eax
+    }
+}
+
+static int test_save_slot() {
+    static const uint8_t header_write_entry[6] = { 0x55, 0x8B, 0xEC, 0x53, 0x56, 0x8B };
+    static const uint8_t env_open_old_entry[6] = { 0x56, 0x8B, 0x74, 0x24, 0x08, 0x56 };
+    static const char *probe = "G:\\SMACX-opensmacx-test\\saves\\_slot_probe";
+    JmpStub hook(0x005A6AC0, game_data_probe);
+    if (!hook.ok) {
+        return 1;
+    }
+    for (int variant = 0; variant < 4; variant++) {
+        OriginalEntry *exe_header = (variant & 1) ? new OriginalEntry(0x0057D240, header_write_entry) : NULL;
+        OriginalEntry *exe_open = (variant & 2) ? new OriginalEntry(0x00634BB0, env_open_old_entry) : NULL;
+        GameDataSlotCount = 0;
+        int failed = 0, low = 0;
+        for (int i = 0; i < 16; i++) {
+            if (save_daemon(probe)) {
+                failed++;
+            }
+        }
+        delete exe_header;
+        delete exe_open;
+        char line[1024];
+        int len = sprintf_s(line, "save_slot: header_write %s, env_open_old %s: %d saves, %d failed, slot:",
+            (variant & 1) ? "exe" : "DLL", (variant & 2) ? "exe" : "DLL", GameDataSlotCount, failed);
+        for (int i = 0; i < GameDataSlotCount && len < (int)sizeof(line) - 16; i++) {
+            len += sprintf_s(line + len, sizeof(line) - len, " %d", GameDataSlots[i]);
+            if (GameDataSlots[i] < 11) {
+                low++;
+            }
+        }
+        logf("%s (%d below 11)", line, low);
+    }
+    DeleteFileA("G:\\SMACX-opensmacx-test\\saves\\_slot_probe.SAV");
+    return 0;
+}
+
+static int read_whole_file(const char *path, uint8_t **data) {
+    FILE *file = fopen(path, "rb");
+    if (!file) {
+        return -1;
+    }
+    fseek(file, 0, SEEK_END);
+    int size = ftell(file);
+    fseek(file, 0, SEEK_SET);
+    *data = (uint8_t *)malloc(size);
+    int got = (int)fread(*data, 1, size, file);
+    fclose(file);
+    return got == size ? size : -1;
+}
+
+// The game_data() entry (general.cpp) fills the save header the exe leaves uninitialized: a save
+// through it must have a header of zeros with version 12 and otherwise match, byte for byte, a
+// save through the exe's own entry (taken with the probe, which keeps that save's version >= 11).
+// _header_check.SAV is kept for the sweep to load back.
+static int test_save_header() {
+    static const char *path_dll = "G:\\SMACX-opensmacx-test\\saves\\_header_check";
+    static const char *path_exe = "G:\\SMACX-opensmacx-test\\saves\\_header_exe";
+    if (save_daemon(path_dll)) {
+        logf("save_header: the save through the DLL entry failed");
+        return 1;
+    }
+    {
+        JmpStub hook(0x005A6AC0, game_data_probe);
+        if (!hook.ok || save_daemon(path_exe)) {
+            logf("save_header: the save through the exe's entry failed");
+            return 1;
+        }
+    }
+    // control: a second save through the DLL entry, after the exe's
+    if (save_daemon("G:\\SMACX-opensmacx-test\\saves\\_header_again")) {
+        logf("save_header: the second save through the DLL entry failed");
+        return 1;
+    }
+    uint8_t *dll = NULL, *exe = NULL, *again = NULL;
+    int size_dll = read_whole_file("G:\\SMACX-opensmacx-test\\saves\\_header_check.SAV", &dll);
+    int size_exe = read_whole_file("G:\\SMACX-opensmacx-test\\saves\\_header_exe.SAV", &exe);
+    int size_again = read_whole_file("G:\\SMACX-opensmacx-test\\saves\\_header_again.SAV", &again);
+    DeleteFileA("G:\\SMACX-opensmacx-test\\saves\\_header_exe.SAV");
+    DeleteFileA("G:\\SMACX-opensmacx-test\\saves\\_header_again.SAV");
+    if (size_again == size_dll) {
+        int same_entry_diff = 0, first = -1;
+        for (int i = 0; i < size_dll; i++) {
+            if (dll[i] != again[i]) {
+                if (first < 0) {
+                    first = i;
+                }
+                same_entry_diff++;
+            }
+        }
+        logf("save_header: control, two saves through the DLL entry: %d bytes differ (first at 0x%X)",
+            same_entry_diff, first);
+    }
+    free(again);
+    int mismatches = 0;
+    if (size_dll < 0 || size_dll != size_exe) {
+        logf("save_header: sizes %d / %d", size_dll, size_exe);
+        mismatches++;
+    } else {
+        // header text, 0x1A, 4-byte magic, then the 0x31C-byte header block
+        uint8_t *text_end = (uint8_t *)memchr(dll, 0x1A, size_dll);
+        int block = text_end ? (int)(text_end - dll) + 5 : -1;
+        int header_bad = 0, body_diff = 0, first_diff = -1;
+        for (int i = 0; block >= 0 && i < 0x31C; i++) {
+            if (dll[block + i] != (i == 0x304 ? 12 : 0)) {
+                header_bad++;
+            }
+        }
+        for (int i = 0; i < size_dll; i++) {
+            if ((i < block || i >= block + 0x31C) && dll[i] != exe[i]) {
+                if (first_diff < 0) {
+                    first_diff = i;
+                }
+                body_diff++;
+            }
+        }
+        int exe_junk = 0;
+        for (int i = 0; block >= 0 && i < 0x31C; i++) {
+            exe_junk += (exe[block + i] != 0);
+        }
+        logf("save_header: %d bytes, header block at 0x%X: %d bytes not as Thinker's (zeros, version 12), "
+            "exe entry's header %d non-zero bytes; rest of the file: %d bytes differ (first at 0x%X)",
+            size_dll, block, header_bad, exe_junk, body_diff, first_diff);
+        mismatches += (block < 0) + header_bad + body_diff;
+    }
+    free(dll);
+    free(exe);
+    return mismatches;
+}
+
 static DWORD WINAPI regress_watcher(LPVOID) {
     for (;;) {
         Sleep(1000);
@@ -7303,6 +7459,9 @@ void regress_run() {
     if (test_enabled("best_defender")) total += run_guarded("best_defender", test_best_defender);
     if (test_enabled("battle_compute")) total += run_guarded("battle_compute", test_battle_compute);
     if (test_enabled("wants_to_attack")) total += run_guarded("wants_to_attack", test_wants_to_attack);
+    // writes save files: only when named
+    if (regress_filter[0] && strstr(regress_filter, "save_slot")) total += run_guarded("save_slot", test_save_slot);
+    if (regress_filter[0] && strstr(regress_filter, "save_header")) total += run_guarded("save_header", test_save_header);
     if (test_enabled("world_validate")) total += run_guarded("world_validate", test_world_validate);
     if (test_enabled("treaty_on")) total += run_guarded("treaty_on", test_treaty_on);
     if (test_enabled("treaty_off")) total += run_guarded("treaty_off", test_treaty_off);
