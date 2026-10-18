@@ -58,6 +58,8 @@
         <Unit filename="src/buffer.h" />
         <Unit filename="src/buttongroup.cpp" />
         <Unit filename="src/buttongroup.h" />
+        <Unit filename="src/clickpass.cpp" />
+        <Unit filename="src/clickpass.h" />
         <Unit filename="src/council.cpp" />
         <Unit filename="src/council.h" />
         <Unit filename="src/dialog.cpp" />
@@ -81,6 +83,8 @@
         <Unit filename="src/graphicwin.h" />
         <Unit filename="src/heap.cpp" />
         <Unit filename="src/heap.h" />
+        <Unit filename="src/iat.cpp" />
+        <Unit filename="src/iat.h" />
         <Unit filename="src/log.cpp" />
         <Unit filename="src/log.h" />
         <Unit filename="src/maininterface.cpp" />

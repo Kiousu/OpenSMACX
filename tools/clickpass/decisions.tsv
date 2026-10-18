@@ -1,0 +1,7 @@
+# What was decided for a function's differences in a case (case and function may be *): Kiousu's decisions
+# on leftover reads and deliberate departures from the v2.1 exe. The report shows the decision as what's
+# being done and doesn't raise the case for a decision again while every culprit row is covered here.
+case	function	decision	date	why
+*	wants_to_attack	start the region counts at zero (the intended design)	2026-10-18	Kiousu: replicate the original's intent, not the shipped uninitialized buffer
+*	drone_riot	REVOLT slots start at -1; take = round(100*(1 - prod(1 - c/100))), pick when time%100 < take; nearest-faction distance uses each base's own owner's treaty (the intended design)	2026-10-18	Kiousu: the documented REVOLT 75%; fix the slips
+*	hex_cost	Sealurks pay the normal sea cost entering fungus on the ocean shelf, as Isle of the Deep does (upstream's fix, kept)	2026-10-18	Kiousu: keep the fix

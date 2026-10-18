@@ -1,0 +1,18 @@
+# Click pass inventory (tools/clickpass/report.py makes the report's Coverage section from it): every screen,
+# control and action the pass knows of. status: covered (pressed by the case(s) named), not-reachable or
+# skipped (the note says why). Stage 1 lists only what its cases press; nothing else is listed yet.
+screen	control	case	status	note
+Main map	F1 Datalinks	reports, reports_aki2120, reports_steam1	covered	Escape closes it
+Main map	F2 Laboratories Status	reports, reports_aki2120, reports_steam1	covered	Escape closes it
+Main map	F3 Energy Banks	reports, reports_aki2120, reports_steam1	covered	Escape closes it
+Main map	F4 Base Operations Status	reports, reports_aki2120, reports_steam1	covered	Escape closes it
+Main map	F5 Secret Project Data	reports, reports_aki2120, reports_steam1	covered	Escape closes it
+Main map	F6 Orbital and Space Status	reports, reports_aki2120, reports_steam1	covered	Escape closes it
+Main map	F7 Military Command Nexus	reports, reports_aki2120, reports_steam1	covered	Escape closes it
+Main map	F8 Alpha Centauri Score	reports, reports_aki2120, reports_steam1	covered	Escape closes it
+Main map	F9 View Monuments	reports, reports_aki2120, reports_steam1	covered	Escape closes it
+Main map	F10 View Hall of Fame	reports, reports_aki2120, reports_steam1	covered	Escape closes it
+Main map	F11 Switch To Detailed/Simple Menus	reports, reports_aki2120, reports_steam1	covered	opens the MENUSIMPLE popup (the dump's PopupLabel); Escape closes it
+Main map	F12 Communications and Protocol	reports, reports_aki2120, reports_steam1	covered	a faction and Council panel on the map that doesn't take the keys; F12 again hides it
+Main map	Ctrl+S Save Game	save_game	covered	saved as _cp_save in the test folder's saves: the dialog's file name field, the name, OK; the saved file is compared byte by byte (tools/clickpass/file_masks.tsv)
+Main map	TURN COMPLETE	end_turn, end_turn_aki2120, end_turn_steam1	covered	the Operations Director's question, then the popups and base screens of the other factions' moves until the turn moves on

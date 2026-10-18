@@ -1,0 +1,29 @@
+# The main map's F-key screens, one at a time: each key, then Escape to close what it opened.
+# F12 is different: it shows the faction and Council panel on the map without taking the keys,
+# so F12 again hides it (Escape there would open "Do you really want to quit?"). The case ends on
+# the map with no popup open.
+save Council.SAV
+keys {F1}
+keys {ESC}
+keys {F2}
+keys {ESC}
+keys {F3}
+keys {ESC}
+keys {F4}
+keys {ESC}
+keys {F5}
+keys {ESC}
+keys {F6}
+keys {ESC}
+keys {F7}
+keys {ESC}
+keys {F8}
+keys {ESC}
+keys {F9}
+keys {ESC}
+keys {F10}
+keys {ESC}
+keys {F11}
+keys {ESC}
+keys {F12}
+keys {F12}

@@ -1,0 +1,2 @@
+section	field	reason
+GameState	save_path	the stored save path (0x9A66C9, R13) holds each game's own folder; the same path is compared with the folder named instead, as the SavePath section

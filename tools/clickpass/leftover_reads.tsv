@@ -1,0 +1,6 @@
+# Replaced functions whose original reads memory it never wrote, so that its result depends on what ran
+# before (see "Leftover-memory differences" in docs/superpowers/specs/2026-10-18-click-pass-design.md).
+# A failure with one of them as culprit goes to the report's "Needs Kiousu's decision", not the fix loop.
+# offset: the function's address in terranx.exe.
+function	offset	reads	note
+alien_fauna	0x522180	two stack slots holding the coordinates of a tile to redraw	stale draw coordinates left there by an earlier loop, possibly from before the call; only the redraw after a native is born on the fungus tile itself uses them (see "Native life and world", batch 29, docs/regression-testing.md)

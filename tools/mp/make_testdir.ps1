@@ -12,4 +12,14 @@ robocopy $From $To /E /NFL /NDL /NJH /NJS /NP /XD "$From\movies" "$From\saves" "
 Copy-Item "$From\terranx_opensmacx.exe" "$To\terranx_opensmacx.exe" -Force
 New-Item -ItemType Directory -Force "$To\saves" | Out-Null
 foreach ($s in $sweep) { Copy-Item "$From\saves\$s" "$To\saves\$s" -Force }
+# The copied ini still names the source folder (e.g. "Latest Save=G:\SMACX-opensmacx-test\saves\...",
+# the save dialog's default): point every value that starts with it at the copy instead, so a game in
+# the copy never writes into the source folder.
+$ini = "$To\Alpha Centauri.ini"
+if (Test-Path $ini) {
+    $text = [IO.File]::ReadAllText($ini, [Text.Encoding]::Default)
+    $pattern = '(?im)^([^=\r\n]*=[ \t]*)' + [regex]::Escape($From.TrimEnd('\')) + '(?=[\\/]|[ \t]*\r?$)'
+    $text = [regex]::Replace($text, $pattern, { param($m) $m.Groups[1].Value + $To.TrimEnd('\') })
+    [IO.File]::WriteAllText($ini, $text, [Text.Encoding]::Default)
+}
 "{0}: {1:N0} MB" -f $To, ((Get-ChildItem $To -Recurse -File | Measure-Object Length -Sum).Sum / 1MB)

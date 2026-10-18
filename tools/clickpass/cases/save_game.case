@@ -1,0 +1,10 @@
+# Save Game (Ctrl+S) under the name _cp_save in the test folder's saves folder, as
+# tools/mp/autosave.ps1 does: the dialog's filename field, the name, OK. The driver removes
+# saves\_cp_* before each case, so the dialog never finds the file there already. The dialog opens
+# in the game folder's saves because the harness sets the game's save path there after the load
+# (src/clickpass.cpp, set_save_path).
+save Council.SAV
+keys ^s
+click 520 494
+keys {END}{BACKSPACE 60}_cp_save
+click 445 521

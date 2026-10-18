@@ -1,0 +1,7 @@
+# Bytes of the files a case's game writes that are not compared between the two games (tools/clickpass/files.py).
+# offset: a number, or after:<text> (right after the first <text> in the file); length: a number, or eol (to the
+# end of that line). Every row needs its reason; a row that hides a real difference is a false pass.
+pattern	offset	length	reason
+*.SAV	0x561	256	the stored save path (game state 0x9A66C9, R13): each game's own folder; the dump compares the same path with the folder named instead (SavePath)
+*.SAV	0x144C0	8	*MapTiles (0x94A30C) and *MapAbstract (0x94A310): the heap addresses of the tile and abstract map arrays, saved with the map block (0x949870, file offset 0x13A24) and replaced on load; two runs of the reference differ there too
+game\Alpha Centauri.ini	after:Latest Save=	eol	the path of the last save (or load) in each game's own folder (R13); the dump compares the save path with the folder named instead (SavePath)

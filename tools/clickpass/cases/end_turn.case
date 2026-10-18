@@ -1,0 +1,4 @@
+# End the turn: TURN COMPLETE, the Operations Director's question, then the popups and base
+# screens of the other factions' moves until the turn counter moves on; one dump at the end.
+save Council.SAV
+endturn

@@ -29,6 +29,8 @@
 #include "probe.h"
 #include "alpha.h"
 #include "net.h"
+#include "iat.h"
+#include "clickpass.h"
 #include "regress.h"
 
 #ifdef OPENSMACX_REGRESS
@@ -1008,45 +1010,6 @@ static void sample_tile(int k, int n, int *x, int *y) {
 // timeGetTime are pointed at a stub that returns a value chosen per sample.
 static DWORD FixedTimeValue = 0;
 static DWORD WINAPI fixed_time_get_time() { return FixedTimeValue; }
-
-static void **iat_slot(HMODULE module, const char *dll_name, const char *func_name) {
-    uint8_t *base = (uint8_t *)module;
-    IMAGE_NT_HEADERS *nt = (IMAGE_NT_HEADERS *)(base + ((IMAGE_DOS_HEADER *)base)->e_lfanew);
-    IMAGE_DATA_DIRECTORY *dir = &nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
-    if (!dir->VirtualAddress) {
-        return NULL;
-    }
-    for (IMAGE_IMPORT_DESCRIPTOR *desc = (IMAGE_IMPORT_DESCRIPTOR *)(base + dir->VirtualAddress);
-        desc->Name; desc++) {
-        if (_stricmp((const char *)(base + desc->Name), dll_name) != 0) {
-            continue;
-        }
-        IMAGE_THUNK_DATA *names = (IMAGE_THUNK_DATA *)(base + desc->OriginalFirstThunk);
-        IMAGE_THUNK_DATA *slots = (IMAGE_THUNK_DATA *)(base + desc->FirstThunk);
-        for (; names->u1.AddressOfData; names++, slots++) {
-            if (names->u1.Ordinal & IMAGE_ORDINAL_FLAG) {
-                continue;
-            }
-            IMAGE_IMPORT_BY_NAME *imp = (IMAGE_IMPORT_BY_NAME *)(base + names->u1.AddressOfData);
-            if (strcmp((const char *)imp->Name, func_name) == 0) {
-                return (void **)&slots->u1.Function;
-            }
-        }
-    }
-    return NULL;
-}
-
-static void *iat_patch(void **slot, void *replacement) {
-    if (!slot) {
-        return NULL;
-    }
-    DWORD old_protect;
-    VirtualProtect(slot, sizeof(void *), PAGE_READWRITE, &old_protect);
-    void *previous = *slot;
-    *slot = replacement;
-    VirtualProtect(slot, sizeof(void *), old_protect, &old_protect);
-    return previous;
-}
 
 struct TimeGetTimePin {
     void **exe_slot, **dll_slot;
@@ -8246,6 +8209,78 @@ static uint32_t wta_seed_rand() {
     WtaSeedState ^= WtaSeedState >> 17;
     WtaSeedState ^= WtaSeedState << 5;
     return WtaSeedState;
+}
+
+typedef int __cdecl func_hex_cost(int, int, uint32_t, uint32_t, uint32_t, uint32_t, BOOL);
+
+// hex_cost keeps upstream's fix (Kiousu, 2026-10-18): a Sealurk entering fungus on the ocean shelf
+// pays the normal sea cost, as Isle of the Deep does, where the v2.1 exe charges it triple. Every
+// other answer must be the exe's.
+static int test_hex_cost() {
+    // run the exe's own hex_cost, not the jump into the DLL
+    static const uint8_t hex_cost_entry[6] = { 0x55, 0x8B, 0xEC, 0x51, 0x8B, 0x0D };
+    OriginalEntry vanilla(0x00593510, hex_cost_entry);
+    if (!vanilla.ok) {
+        return 1;
+    }
+    func_hex_cost *hex_cost_orig = (func_hex_cost *)0x00593510;
+    // the basic units and every active prototype
+    static int protos[MaxVehProtoNum];
+    int proto_count = 0;
+    for (int p = 0; p < MaxVehProtoNum; p++) {
+        if (p <= BSC_UNITY_GUNSHIP || VehPrototypes[p].flags & PROTO_ACTIVE) {
+            protos[proto_count++] = p;
+        }
+    }
+    int move = Rules->move_rate_roads;
+    int compared = 0, mismatches = 0, shelf_tiles = 0, sealurk_fixed = 0;
+    for (uint32_t i = 0; i < *MapArea; i++) {
+        uint32_t y_dst = i / *MapLongitude, x_dst = (i % *MapLongitude) * 2 + (y_dst & 1);
+        BOOL shelf = is_ocean(x_dst, y_dst) && bit_at(x_dst, y_dst) & BIT_FUNGUS
+            && altitude_at(x_dst, y_dst) == ALT_BIT_OCEAN_SHELF;
+        shelf_tiles += shelf;
+        // every shelf fungus tile with every prototype, every 5th other tile with every 8th
+        if (!shelf && i % 5) {
+            continue;
+        }
+        for (int n = 1; n < 9; n++) {
+            int x_src = x_dst + RadiusOffsetX[n], y_src = y_dst + RadiusOffsetY[n];
+            if (!(*MapIsFlat & 1)) {
+                x_src = x_src < 0 ? x_src + *MapLongitudeBounds
+                    : (x_src >= (int)*MapLongitudeBounds ? x_src - *MapLongitudeBounds : x_src);
+            }
+            if (y_src < 0 || y_src >= (int)*MapLatitudeBounds || x_src < 0
+                || x_src >= (int)*MapLongitudeBounds) {
+                continue;
+            }
+            for (int k = shelf ? 0 : (int)(i + n) % 8; k < proto_count; k += shelf ? 1 : 8) {
+                int p = protos[k];
+                for (uint32_t f = 0; f < MaxPlayerNum; f++) {
+                    BOOL fix = shelf && p == BSC_SEALURK && get_proto_triad(p) == TRIAD_SEA
+                        && !has_project(SP_XENOEMPATYH_DOME, f);
+                    for (BOOL tgl = 0; tgl <= 1; tgl++) {
+                        REGRESS_CTX("hex_cost(%d, %u, %d, %d, %u, %u, %d)", p, f, x_src, y_src, x_dst, y_dst, tgl);
+                        int b = hex_cost_orig(p, f, x_src, y_src, x_dst, y_dst, tgl);
+                        int a = hex_cost(p, f, x_src, y_src, x_dst, y_dst, tgl);
+                        compared++;
+                        if (fix ? !(b == move * 3 && a == move) : a != b) {
+                            if (mismatches < MAX_DETAIL) {
+                                logf("  hex_cost(%d, %u, %d, %d, %u, %u, %d): new=%d orig=%d%s", p, f,
+                                    x_src, y_src, x_dst, y_dst, tgl, a, b, fix ? " (Sealurk fix expected)" : "");
+                            }
+                            mismatches++;
+                        } else if (fix) {
+                            sealurk_fixed++;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    logf("hex_cost: %d compared (%d prototypes, %d shelf fungus tiles), %d mismatches; %d Sealurk moves "
+        "onto shelf fungus at the normal sea cost (the kept fix; the exe charges triple)",
+        compared, proto_count, shelf_tiles, mismatches, sealurk_fixed);
+    return mismatches;
 }
 
 static int test_wants_to_attack() {
@@ -15536,10 +15571,15 @@ static DWORD WINAPI regress_watcher(LPVOID) {
 // "load <save file>" makes the harness load that save in place of the main menu (as Thinker's
 // command line load does), run the tests named on the other lines once the game is under way
 // (from a timer, so no map click is needed) and, with a line "exit", end the game afterwards; a
-// line "notests" only loads the save.
+// line "notests" only loads the save, and with "clickpass" as well starts the click-pass mode
+// (clickpass.h) once the game is under way; "outside <folder>" lets it write there too and
+// "guardprobe [<folder>]" then tests its write guard.
 static char AutoLoadPath[MAX_PATH];
 static BOOL AutoExit = false;
 static BOOL AutoNoTests = false; // a line "notests": only load the save (for boot tests)
+static BOOL AutoGuardProbe = false; // a line "guardprobe": clickpass_guard_probe() after the start
+static char AutoGuardProbeFolder[MAX_PATH]; // "guardprobe <folder>"
+static char AutoOutsideFolder[MAX_PATH]; // a line "outside <folder>"
 static int AutoHangSeconds = 600; // a line "hang <seconds>": the watchdog's limit per test
 
 // Every 30 s of one test the watchdog logs a heartbeat with the test's last announced input (a
@@ -15599,6 +15639,12 @@ static void CALLBACK regress_auto_timer(HWND, UINT, UINT_PTR, DWORD) {
     KillTimer(NULL, AutoTimer);
     AutoTimer = 0;
     if (AutoNoTests) {
+        if (ClickpassMode) {
+            clickpass_start(AutoLoadPath); // first, so clickpass\ready is there when the trigger is gone
+            if (AutoGuardProbe) {
+                clickpass_guard_probe(AutoGuardProbeFolder); // likewise logged by then
+            }
+        }
         DeleteFileA(TRIGGER_FILE);
         return;
     }
@@ -15653,6 +15699,7 @@ static LRESULT CALLBACK input_hook(int code, WPARAM wparam, LPARAM lparam) {
             VirtualCursor.y = (int16_t)HIWORD(msg->lParam);
             VirtualCursorWindow = msg->hwnd;
         }
+        clickpass_on_message(msg); // the click pass's state dumps
     }
     return CallNextHookEx(InputHook, code, wparam, lparam);
 }
@@ -15749,11 +15796,23 @@ void regress_init() {
                 AutoExit = true;
             } else if (!strcmp(line, "notests")) {
                 AutoNoTests = true;
+            } else if (!strcmp(line, "clickpass")) {
+                ClickpassMode = true;
+            } else if (!strcmp(line, "guardprobe")) {
+                AutoGuardProbe = true;
+            } else if (!strncmp(line, "guardprobe ", 11)) {
+                AutoGuardProbe = true;
+                strcpy_s(AutoGuardProbeFolder, line + 11);
+            } else if (!strncmp(line, "outside ", 8)) {
+                strcpy_s(AutoOutsideFolder, line + 8);
             } else if (!strncmp(line, "hang ", 5) && atoi(line + 5) > 0) {
                 AutoHangSeconds = atoi(line + 5);
             }
         }
         fclose(trig);
+    }
+    if (ClickpassMode) {
+        clickpass_guard_install(AutoOutsideFolder); // before the game itself runs
     }
     if (AutoLoadPath[0]) {
         AutoMenuStub = new JmpStub(0x0058E360, (void *)regress_auto_top_menu);
@@ -15773,7 +15832,8 @@ void regress_run() {
         char line[MAX_PATH + 8];
         while (fgets(line, sizeof(line), trig)) { // skip the input-free run's "load" and "exit"
             if (strncmp(line, "load ", 5) && strncmp(line, "exit", 4) && strncmp(line, "notests", 7)
-                && strncmp(line, "hang ", 5)) {
+                && strncmp(line, "hang ", 5) && strncmp(line, "clickpass", 9)
+                && strncmp(line, "guardprobe", 10) && strncmp(line, "outside ", 8)) {
                 strncat_s(regress_filter, line, _TRUNCATE);
             }
         }
@@ -15797,6 +15857,7 @@ void regress_run() {
     if (test_enabled("best_defender")) total += run_guarded("best_defender", test_best_defender);
     if (test_enabled("battle_compute")) total += run_guarded("battle_compute", test_battle_compute);
     if (test_enabled("wants_to_attack")) total += run_guarded("wants_to_attack", test_wants_to_attack);
+    if (test_enabled("hex_cost")) total += run_guarded("hex_cost", test_hex_cost);
     // writes save files: only when named
     if (regress_filter[0] && strstr(regress_filter, "save_slot")) total += run_guarded("save_slot", test_save_slot);
     if (regress_filter[0] && strstr(regress_filter, "save_header")) total += run_guarded("save_header", test_save_header);

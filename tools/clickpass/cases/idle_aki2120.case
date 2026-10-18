@@ -1,0 +1,3 @@
+# idle.case on sw_aki2120.SAV (a case takes its save from its first step).
+# No input: the state right after the load, once the click pass is ready (dump 0 only).
+save sw_aki2120.SAV

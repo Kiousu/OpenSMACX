@@ -1,0 +1,5 @@
+# end_turn.case on sw_steam1.SAV (a case takes its save from its first step).
+# End the turn: TURN COMPLETE, the Operations Director's question, then the popups and base
+# screens of the other factions' moves until the turn counter moves on; one dump at the end.
+save sw_steam1.SAV
+endturn

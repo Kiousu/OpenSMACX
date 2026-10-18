@@ -286,7 +286,7 @@
 0x000E4700	?base_making@@YAHHI@Z
 0x0008BEE0	?xrange@@YAHH@Z
 0x000F8090	?vector_dist@@YAHHH@Z
-0x00193510	?hex_cost@@YAHHHIIIIH@Z
+0x00193510	?hex_cost@@YAHHHIIIIH@Z	approved
 0x000E4020	?best_specialist@@YAIXZ
 0x001FD4C0	?text_set_get_ptr@@YAXXZ
 0x001FD4D0	?text_set_item_ptr@@YAXXZ
@@ -557,9 +557,9 @@
 # --- BASE: psych (talent/drone/super drone totals + social_ai talent table) ---
 0x000EA540	?base_psych@@YAXXZ
 # --- VEH/FACTION: combat (battle_compute, best_defender, wants_to_attack) ---
-0x00101DA0	?battle_compute@@YAXHHPAH0H@Z
-0x001044D0	?best_defender@@YAIIHH@Z
-0x0015BC80	?wants_to_attack@@YAHIIH@Z
+0x00101DA0	?battle_compute@@YAXHHPAH0H@Z	approved
+0x001044D0	?best_defender@@YAIIHH@Z	approved
+0x0015BC80	?wants_to_attack@@YAHIIH@Z	approved
 # --- VEH: design bunglist, add_abil, stack/visibility helpers, selection predicates, veh_find ---
 0x0017DF00	?clear_bunglist@@YAXI@Z
 0x0017DFC0	?is_bunged@@YAHIIIIHI@Z
@@ -717,7 +717,7 @@
 0x001C03D0	?veh_init@@YAHHIHH@Z
 0x00188F90	?alien_start@@YAXXZ
 # --- save header: game_data entry fills the header the exe leaves uninitialized (as Thinker does)
-0x001A6AC0	?game_data@@YAHPAU_iobuf@@H@Z
+0x001A6AC0	?game_data@@YAHPAU_iobuf@@H@Z	approved
 # --- batch 28: landmark relief tables, map view caches, winning monuments
 0x00077940	?mon_winning_unify@@YAXHH@Z
 0x000779D0	?mon_winning_trans@@YAXHH@Z
@@ -801,7 +801,7 @@
 0x00127290	?faction_upkeep@@YAXI@Z
 0x001ACBE0	?compute_score@@YAXIPAH0H@Z
 # --- batch 31: base turn
-0x000F4FB0	?drone_riot@@YAXXZ
+0x000F4FB0	?drone_riot@@YAXXZ	approved
 0x000F67F0	?base_ecology@@YAXXZ
 0x000F79C0	?base_upkeep@@YAHI@Z
 0x00126E70	?production_phase@@YAXI@Z

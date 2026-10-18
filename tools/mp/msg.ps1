@@ -158,14 +158,23 @@ function PopupOpen($p) { $w = KeyWindow $p; return ($w -ne 0 -and $w -ne 0x93944
 # Launch the game and let the harness DLL load $Save in place of the main menu (no tests run).
 # -Background: start minimized (never takes the focus), then once loaded show the window again
 # without activating it, behind the other windows. A minimized game ignores clicks and spins a
-# CPU core, so UI scripts must not leave it minimized.
-function Start-Game([string]$Save, [string]$Exe = "terranx_opensmacx.exe", [switch]$Background) {
+# CPU core, so UI scripts must not leave it minimized. -Extra: more trigger lines (e.g. "clickpass").
+# A game that ends during the load is returned as it is (check $p.HasExited). -PidFile: a file that
+# gets "<pid> <start time as a UTC FILETIME>" right after the launch (tools/clickpass/case.ps1).
+function Start-Game([string]$Save, [string]$Exe = "terranx_opensmacx.exe", [switch]$Background,
+    [string[]]$Extra = @(), [string]$PidFile = "") {
     if (GameRunningIn $script:GameDir) { throw "a game from $($script:GameDir) is already running" }
-    Set-Content "$script:GameDir\opensmacx_regress.txt" @("load saves\$Save", "notests") -Encoding ASCII
+    Set-Content "$script:GameDir\opensmacx_regress.txt" (@("load saves\$Save", "notests") + $Extra) -Encoding ASCII
     $style = if ($Background) { "Minimized" } else { "Normal" }
     $p = Start-Process -FilePath "$script:GameDir\$Exe" -WorkingDirectory $script:GameDir -PassThru -WindowStyle $style
-    for ($i = 0; $i -lt 60 -and (Test-Path "$script:GameDir\opensmacx_regress.txt"); $i++) { Start-Sleep 1 }  # deleted once loaded
-    if ($Background) {
+    if ($PidFile) {   # "<pid> <start time, UTC FILETIME>" at once, for whoever must stop this game if the caller can't
+        try { [IO.File]::WriteAllText($PidFile, ("{0} {1}`r`n" -f $p.Id, $p.StartTime.ToFileTimeUtc())) }
+        catch { Write-Host "Start-Game: $PidFile not written: $_" }
+    }
+    for ($i = 0; $i -lt 60 -and -not $p.HasExited -and (Test-Path "$script:GameDir\opensmacx_regress.txt"); $i++) {
+        Start-Sleep 1                                                          # deleted once loaded
+    }
+    if ($Background -and -not $p.HasExited) {
         $h = Hwnd $p
         [GM]::ShowWindow($h, 4) | Out-Null                                     # SW_SHOWNOACTIVATE
         [GM]::SetWindowPos($h, [IntPtr]1, 0, 0, 0, 0, 0x13) | Out-Null        # HWND_BOTTOM, no move/size/activate

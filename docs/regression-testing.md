@@ -1914,3 +1914,221 @@ defections where both agree, with the original's roll pinned off) and checks the
 REVOLT 75 alone takes the base on 75 of the 100 clock values (600 of 800 on Council.SAV), no REVOLT
 faction on none, two REVOLT factions at 30/50 on 65 per base with every pick following the weights,
 and the treaty fix on 126 Council.SAV bases (66 of which the slip would have sent elsewhere).
+
+## hex_cost Sealurks, 2026-10-18 (deliberate change from the v2.1 exe, chosen by Kiousu)
+
+A sea unit entering fungus on the ocean shelf pays triple movement in the v2.1 exe unless it is the
+Isle of the Deep or its faction has the Xenoempathy Dome. Upstream's `hex_cost` also spares the
+Sealurk (`proto_id != BSC_SEALURK // Bug fix`): like the Isle of the Deep it is native life, which
+the game text describes as haunting the fungal patches. The click pass found the difference (a
+Sealurk on sw_steam1.SAV moving two tiles further in one turn) and bisection named `hex_cost`;
+Kiousu kept the fix ("Keep fix"), and its row is an approved row, so the click pass's reference
+plays it too.
+
+`hex_cost` had no function test; `test_hex_cost` (trigger `hex_cost`) now runs the exe's own code
+(its entry bytes put back while the test runs) against the DLL's for every shelf fungus tile with
+every prototype and every 5th other tile with every 8th prototype, from all 8 neighbours, for all
+8 factions and both values of `toggle`. Only the Sealurk entering shelf fungus without the Dome
+may differ, and there the exe must charge triple and the DLL the normal cost. On Council.SAV and
+the 13 sweep saves (`regression-runs/2026-10-18-sweep-hex_cost.log`): 0 mismatches on every save,
+3.7 to 34.4 million calls each (Council.SAV: 34,410,112 with 352 prototypes and 578 shelf fungus
+tiles, 64,316 of them the Sealurk fix), which also shows the test reached the exe's code.
+
+## Click pass, stage 1, 2026-10-18
+
+The click pass (design: `docs/superpowers/specs/2026-10-18-click-pass-design.md`) plays short
+scripted UI cases in the unmodified game and in OpenSMACX from the same save and compares their
+whole game state after every step. Stage 1 is the plumbing and four cases on the existing saves.
+
+Folders. `G:\SMACX-opensmacx-test-clickref` is the reference: the pristine exe patched with only
+the approved rows of `tools/redirects.tsv` (tagged `approved`; no tool ever removes them): the
+changes from the v2.1 exe that Kiousu chose, so the reference plays the intended rules and the pass
+judges OpenSMACX against them. They are `game_data` (the save header), `battle_compute` and
+`best_defender` (no read of `Vehs[-1]`), and since 2026-10-18 `hex_cost` (the Sealurk fix),
+`wants_to_attack` (zero-start counts) and `drone_riot` (the intended defection). The reference
+runs these whole functions from the DLL, so the pass doesn't compare the rest of them with the
+exe; their function tests do, with only the chosen change allowed: `hex_cost`, `wants_to_attack`,
+`drone_riot` and `save_header` run the exe's own code on any build, `battle_compute` and
+`best_defender` only on an exe patched without their rows (see How to run). `G:\SMACX-opensmacx-test-clickosx` is OpenSMACX: the exe
+patched from the whole table. Both are `make_testdir.ps1` copies with the harness DLL
+(`/DOPENSMACX_REGRESS`), `Windowed=1` and `DirectDraw=0`. Each game may also write to
+`G:\SMACX-clickpass-outside\<its folder name>` (for "save elsewhere"), which the driver empties
+before each case. The reference folder keeps its own harness DLL and it is replaced only when the
+harness plumbing changes (clickpass/regress/window code, the dump format); batches update only the
+OpenSMACX folder, so the recorded references survive them (ruling R19). `clickpass.py reference`
+builds the reference folder: it patches the pristine exe with only the approved rows (in a temp
+folder, with `opensmacx_patch.py`), installs that exe and the harness DLL given (default
+`build\regress\OpenSMACX.dll`) and checks both by sha256; it refuses the live folder, a folder a
+game runs from and one with a bisect's note. Before every pass `run` repeats that patch with the
+reference folder's own DLL and refuses to start when the folder's exe differs, so the reference is
+never anything but the unmodified game plus the approved rows.
+
+How to run (Python from `build\venv`: the standard library, plus `pefile`, which `run`'s exe checks,
+`reference` and `bisect` need through `tools\opensmacx_patch.py`):
+
+    python tools\clickpass\clickpass.py run [--cases idle,reports,...]   (default: every case)
+    python tools\clickpass\clickpass.py reference [--dll build\regress\OpenSMACX.dll]
+    python tools\clickpass\clickpass.py bisect <case> [--run <pass folder>]
+    python tools\clickpass\clickpass.py bisect --recover
+    python tools\clickpass\clickpass.py report [--run <pass folder>]
+
+`run`, `bisect` and `report` refuse an `--out-root`, `--ref-dir`, `--osx-dir` or `--run` that is,
+is in or holds `G:\Sid Meier's Alpha Centauri` before they make anything.
+
+A case file (`tools/clickpass/cases/*.case`) starts with `save <file.SAV>` and has one step per
+line (`keys <SendKeys spec>`, `click x y`, `rclick x y`, `wait ms`, `endturn`); a case on another
+save is a copy with another first line (`reports_aki2120.case`). `tools/clickpass/case.ps1` plays
+it in one folder: an input-free load (trigger lines `load`, `notests`, `clickpass`, `outside`), keys
+and clicks posted to the background window through `tools/mp/msg.ps1`, and after every step a
+state dump from the harness and the list of files the game has written. In click-pass mode the
+harness pins `timeGetTime` on the game thread from start-up (DllMain) on to a clock that advances 16
+per call, so the load sees it too (end_turn was not repeatable before the pin); at `ready` it
+reseeds `rand()` and the game's random object and points the stored save path at the folder's own
+saves. The case driver keeps a copy of the folder's `Alpha Centauri.ini` and puts it back after
+each case, so `Latest Save` doesn't drift from case to case, and empties `saves\auto\` before each
+case: the game names and rotates its end-of-turn autosaves by what is already there, which made
+end_turn_steam1's two reference runs write different files.
+
+What a step's dump holds (`src/clickpass.cpp`, read by `tools/clickpass/dump.py`): PlayersData,
+Players, Bases, Vehs, the map tiles, Landmarks, Continents, the Random object; the game state block
+the save stores first (0x9A6490, 0x398 bytes, laid out as `ClickpassGameState` in
+`src/clickpass.h`: preferences, rules, game state, turn, Secret Projects, Council counts, the techs'
+factions (GameTechAchieved), climate, sunspots and the rest of it); the prototypes (VehPrototypes),
+the monument table, the path finder (Path's members and its map table, as GameSnapshot keeps them),
+the submerged-base counts; and globals: turn, game state, the selected unit (MapWinVehIDSelected)
+and base (BaseIDCurrentSelected), the CRT `rand()` state, and which screen is up: the window with
+the focus (its address, 1 for one on the heap) and its vtable (which tells heap windows apart), the
+F2-F8 report screen shown (2..8), the label of the popup with the focus (`REALLYQUIT`,
+`MENUSIMPLE`, noted by a hook on the exe's BasePop::start() that only records it), and whether the
+base screen is open. The stored save path is compared without the folder (`SavePath`:
+`<game folder>\saves\Council`); its raw copy in the block is left out by `ignore.tsv` (R13).
+
+The files a step has written: after every dump the driver lists each file under the game folder
+and the outside folder that is new, changed or gone since just before the launch (not the
+harness's own `clickpass\`, its logs, the trigger and a bisect's files), by name, size and sha256,
+and keeps a copy (`files_<step>.json`, `files\<sha256>` in the run's folder and the reference
+cache). The runner compares the two games' lists by name and the contents byte by byte
+(`files[game\saves\_cp_save.SAV]+0x1A2B: 1f vs 20`), except the bytes `tools/clickpass/file_masks.tsv`
+masks, each with its reason: in `.SAV` files the stored save path (0x561, 256 bytes, R13) and the
+two heap addresses saved with the map block (`*MapTiles` 0x94A30C and `*MapAbstract` 0x94A310, file
+offset 0x144C0, which two runs of the reference don't agree on either), and the `Latest Save=` line
+of the ini (each game's own folder). Not compared: the rest of the map block (planet parameters,
+bounds), the path finder's x/y queues, the other exe globals, the screen's pixels, anything outside
+the two folders (the guard refuses writes there), and the masked and ignored bytes above. `run` writes
+`build/clickpass/<YYYY-MM-DD-HHMM>/` (a folder per case, `result.json`, `report.md`) and exits 1
+when a case fails. The reference side is recorded once, with the self-check (played twice, both
+runs compared), in `build/clickpass/reference/<case>/<key>/`: the key covers the reference exe and
+DLL, the save and the case file, and an entry recorded with another `ignore.tsv` or case driver
+(`case.ps1`, `folders.ps1`, `msg.ps1`) or file masks is recorded again. A run after a batch
+therefore plays only the OpenSMACX side. `run` warns when the OpenSMACX exe is not the table's patch
+and refuses to start while a bisect's note (`clickpass_bisect_swap.json`) is in a folder. An
+unexpected error in one case (a file that can't be written, PowerShell missing) makes that case
+setup-failed and the pass goes on.
+
+| status | meaning |
+|---|---|
+| pass | every step's dump and written files equal the reference's |
+| fail | a step differs; the report gives that step's first differences in readable form, unmodified game first (`Vehs[412].dmg_incurred: 3 vs 2`, `files[game\saves\_cp_save.SAV]: written (686926 bytes) vs not written`) |
+| crash, hang, blocked-write | the OpenSMACX game ended (with its exit code), a dump or the next turn never came, or it tried to write outside its folders, at that step |
+| setup-failed | the OpenSMACX side could not be played (driver error, a save that differs between the folders, a bisect's note) |
+| nondeterministic | the reference's own two runs differ: not compared, listed apart |
+| reference-broken | the reference side did not complete, or its cached dump can't be read (recorded again next time) |
+
+Guard. The harness wraps the file-writing imports of the exe and the DLL (the A and W versions)
+and refuses, and logs to `clickpass\guard.log`, every write outside the game's own folder and its
+outside folder; the driver ends the case there as blocked-write, so a test game can't write into
+`G:\Sid Meier's Alpha Centauri` through them.
+
+Bisection. `bisect <case>` plays the failing case in the pass's OpenSMACX folder with exes patched
+(`opensmacx_patch.py -t`) from halves of the table, the approved rows in every one, and names the
+row (or the smallest set) that reproduces the failure: for one culprit among the 752 candidate rows
+of the 755-row table, two runs to check the ends and about ten searching (the first real
+bisection, on the 736-row table, took 12 in all). Copying an exe over one that is still held for a moment (a game that
+has just ended, a virus scan of the new file) is tried again for up to 10 s. The folder's
+exe is swapped meanwhile and put back however the bisection ends, checked by sha256; if a bisect
+was killed, the next one (or `bisect --recover`) puts it back. "Not clean" means that neither half
+of the named set reproduces alone: rows that act together, or a read of leftover memory.
+
+Report. `report.md` (rewritten by `bisect` and by `report`) has, in this order: Summary (counts per
+status, every case with its save and step), Failures (step, first differences, the culprit and
+its row, what's being done: "held back" when the row is out of the table, a recorded decision, or
+"open"), Needs Kiousu's decision, Nondeterministic cases, and Coverage from
+`tools/clickpass/inventory.tsv` (screen, control, case, status `covered` / `not-reachable` /
+`skipped`, note; stage 1 lists the map's F1-F12, Ctrl+S and TURN COMPLETE, nothing else yet).
+
+Fix loop (from the spec): the culprit's row comes out of `tools/redirects.tsv` at once, so the game
+uses the exe's code; a worker in its own worktree and test folder and an independent reviewer fix
+it as in the batches; the failing case and then the whole pass are rerun before the row goes back.
+
+Decision loop: a failure whose culprit is in `tools/clickpass/leftover_reads.tsv` (functions whose
+original reads memory it never wrote, so the result depends on what ran before; today
+`alien_fauna` 0x522180, the stale draw coordinates) or whose bisection is not clean goes under
+"Needs Kiousu's decision" with what each game had and why, not into the fix loop. Kiousu decides
+(do what the code evidently means, match the original's leftovers, or accept the difference); the
+decision goes into `tools/clickpass/decisions.tsv` (`case` or `*`, `function`, `decision`,
+`date`, `why`), and the case is not raised again while every culprit row is covered there; it stays
+under Failures with the decision as what's being done. Recorded on 2026-10-18: `wants_to_attack`
+starts its region counts at zero, and `drone_riot`'s REVOLT slots start at -1 with
+take = round(100 * (1 - prod(1 - c/100))), picked when time % 100 < take, the nearest-faction
+distance using each base's own owner's treaty (the intended design in both); `hex_cost` keeps
+upstream's Sealurk fix (Kiousu: "Keep fix").
+
+### First results
+
+Run on 2026-10-18 with the click-pass worktree's build in the OpenSMACX folder (736 rows, 3 of
+them approved; its exe is the table's patch). First `run --cases idle,reports,save_game,end_turn` on
+Council.SAV: 4 pass (167 s). Then the first full pass, the four Council cases and copies of idle,
+reports and end_turn on sw_aki2120.SAV and sw_steam1.SAV, in about 5 minutes (report:
+`regression-runs/2026-10-18-clickpass-stage1.md`):
+
+| case | Council.SAV | sw_aki2120.SAV | sw_steam1.SAV |
+|---|---|---|---|
+| idle | pass | pass | pass |
+| reports (25 steps) | pass | pass | pass |
+| save_game (5 steps) | pass | | |
+| end_turn | pass (turn 289 -> 290) | pass (20 -> 21) | **fail** at step 1 (32 -> 33) |
+
+Every reference recorded agreed with its self-check run (no nondeterministic case), and nothing
+was blocked or written in the live game folder. end_turn on sw_steam1: a native Sealurk (unit 79)
+moves from (35,59) to (33,57) in the unmodified game and to (31,55) in OpenSMACX; its counters, the
+visibility of the tiles it passes and the `rand()` state follow. Bisection (12 runs, 158 s, clean):
+`hex_cost` (0x593510) alone. The reason is in the code: upstream's `hex_cost` has a "Bug fix",
+`proto_id != BSC_SEALURK`, that spares Sealurks the triple cost the v2.1 exe charges sea units
+entering fungus on the ocean shelf. Kiousu kept the fix (2026-10-18), and its row is now an
+approved row (below).
+
+Rerun after the final review's fixes (same day, pass `2026-10-18-0700`, the report in
+`regression-runs/2026-10-18-clickpass-stage1.md`): the bigger dumps, the written files compared and
+the clock pinned from start-up. Every reference was recorded again with its self-check, and every
+self-check agreed: 9 pass, 1 fail, the same end_turn_steam1 Sealurk difference, which now also shows
+in the autosave the turn writes (`saves\auto\Alpha Centauri Autosave 1.SAV`). In save_game the saved
+file and the ini are compared: unmasked they differ only in the stored save path (file 0x57E-0x580,
+`ref` vs `osx`), the two map pointers (0x144C0-0x144C7) and the ini's `Latest Save`; masked, not at
+all. The pass before it (`2026-10-18-0642`) had marked end_turn_steam1 nondeterministic: its two
+reference runs wrote different autosaves, because `saves\auto\` still held earlier runs' autosaves
+(the driver now empties it). In that pass one OpenSMACX run of end_turn on Council.SAV also left two
+faction-2 units at (104,102) without their hold order; eight reference and six OpenSMACX runs since
+have all agreed, so it is a rare variation of the OpenSMACX side (a timing race in the endturn step,
+or memory a function reads before writing), not understood yet. The self-check plays only the
+reference twice, so such a variation on the OpenSMACX side shows up as a fail.
+
+### On desktop-msvc-net, 755 rows
+
+After the merge into `desktop-msvc-net` (batches 30 and 31, the zero-start `wants_to_attack` and
+the intended `drone_riot` defection included), `clickpass.py reference` reinstalled the reference
+folder with the merged harness DLL (the exe is unchanged, be1c508a) and the OpenSMACX folder got
+the 755-row exe (9bb81af4, the batch 31 sweep's exe) and the same DLL. Pass `2026-10-18-0923`
+(report: `regression-runs/2026-10-18-clickpass-755.md`; its paths are on the local disk): every
+reference recorded again with its self-check, 9 pass, 1 fail. end_turn on Council.SAV passes (no
+repeat of the hold-order variation), and so do end_turn_aki2120, the idle and reports cases and
+save_game with its saved file. end_turn_steam1 fails at step 1 with the same Sealurk (unit 79 at
+(31,55) instead of (33,57), 39 differences), and bisection over the 752 candidate rows names
+`hex_cost` (0x593510) alone, clean, in 13 runs (179 s); the other 751 rows together don't
+reproduce it. Neither `wants_to_attack` nor `drone_riot` changes anything these cases see.
+
+Kiousu then kept the Sealurk fix and asked for the pass to test the intended behaviour, so
+`hex_cost`, `wants_to_attack` and `drone_riot` became approved rows (six in all) and
+`clickpass.py reference` rebuilt the reference exe (b394757c) with the harness DLL that has
+`test_hex_cost`; the OpenSMACX exe is unchanged. Pass `2026-10-18-0954` (report:
+`regression-runs/2026-10-18-clickpass-755-approved.md`): every reference recorded again with its
+self-check, 10 pass, end_turn_steam1 included.

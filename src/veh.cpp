@@ -4008,7 +4008,9 @@ BOOL __cdecl abil_cond(int ability_id, int chassis_id, int weapon_id, int armor_
 Purpose: Calculate the movement penalty/cost.
 Original Offset: 00593510
 Return Value: Movement cost
-Status: Complete
+Status: Complete. Deliberately differs from the original (upstream's fix, kept by Kiousu, 2026-10-18):
+        a Sealurk entering fungus on the ocean shelf pays the normal sea cost, as Isle of the Deep
+        does, instead of triple; see "hex_cost Sealurks, 2026-10-18" in docs/regression-testing.md.
 */
 int __cdecl hex_cost(int proto_id, int faction_id, uint32_t x_src, uint32_t y_src, uint32_t x_dst,
                      uint32_t y_dst, BOOL toggle) {
